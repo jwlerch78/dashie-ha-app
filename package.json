@@ -1,0 +1,18 @@
+{
+  "name": "dashie-ha-app",
+  "version": "0.1.0",
+  "description": "Dashie Home Assistant add-on — control center, voice pipeline broker, and HA metrics bridge.",
+  "main": "server/index.js",
+  "private": true,
+  "scripts": {
+    "start": "node server/index.js",
+    "dev": "NODE_ENV=development node server/index.js"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.45.0",
+    "express": "^4.19.2"
+  }
+}
