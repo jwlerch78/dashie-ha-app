@@ -1,4 +1,4 @@
-name: Dashie
+name: Dashie App
 version: "0.1.0"
 slug: dashie
 description: Dashie Control Center — manage your Dashie family dashboard from inside Home Assistant.
