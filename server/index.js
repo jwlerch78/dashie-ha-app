@@ -1,13 +1,32 @@
 // server/index.js
 // Dashie HA add-on — Express server.
 
-const path = require('path');
-const fs = require('fs');
-const express = require('express');
+// Catch ANY error before we even get to Express so it shows up in the add-on Log tab.
+process.on('uncaughtException', (err) => {
+    console.error('[fatal] Uncaught exception:', err?.stack || err);
+    process.exit(1);
+});
+process.on('unhandledRejection', (err) => {
+    console.error('[fatal] Unhandled rejection:', err?.stack || err);
+    process.exit(1);
+});
 
-const { PORT, FRONTEND_DIR, DATA_DIR, SUPABASE_ENV, SUPABASE } = require('./config');
-const authRouter = require('./api/auth');
+let path, fs, express, config, authRouter;
+try {
+    path = require('path');
+    fs = require('fs');
+    express = require('express');
+    config = require('./config');
+    authRouter = require('./api/auth');
+} catch (err) {
+    console.error('[fatal] Failed to load modules:', err?.stack || err);
+    console.error('[fatal] Node version:', process.version);
+    console.error('[fatal] cwd:', process.cwd());
+    console.error('[fatal] __dirname:', __dirname);
+    process.exit(1);
+}
 
+const { PORT, FRONTEND_DIR, DATA_DIR, SUPABASE_ENV, SUPABASE } = config;
 const app = express();
 
 // ------------------------------------------------------------------
@@ -17,13 +36,32 @@ const app = express();
 console.log('='.repeat(60));
 console.log('Dashie HA Add-on');
 console.log('='.repeat(60));
-console.log(`Data dir:        ${DATA_DIR}`);
-console.log(`Frontend dir:    ${FRONTEND_DIR}`);
+console.log(`Node version:    ${process.version}`);
+console.log(`cwd:             ${process.cwd()}`);
+console.log(`Data dir:        ${DATA_DIR} (${fs.existsSync(DATA_DIR) ? 'exists' : 'MISSING'})`);
+console.log(`Frontend dir:    ${FRONTEND_DIR} (${fs.existsSync(FRONTEND_DIR) ? 'exists' : 'MISSING'})`);
 console.log(`Supabase env:    ${SUPABASE_ENV}`);
 console.log(`Supabase URL:    ${SUPABASE.url}`);
 console.log(`Port:            ${PORT}`);
-console.log(`Supervisor tok:  ${process.env.SUPERVISOR_TOKEN ? '(present)' : '(none)'}`);
+console.log(`Supervisor tok:  ${process.env.SUPERVISOR_TOKEN ? '(present, len=' + process.env.SUPERVISOR_TOKEN.length + ')' : '(MISSING)'}`);
+console.log(`INGRESS_PORT:    ${process.env.INGRESS_PORT || '(not set)'}`);
 console.log('='.repeat(60));
+
+// ------------------------------------------------------------------
+//  Fatal checks before starting
+// ------------------------------------------------------------------
+
+if (!fs.existsSync(FRONTEND_DIR)) {
+    console.error(`[fatal] Frontend directory not found: ${FRONTEND_DIR}`);
+    console.error('[fatal] /app contents:');
+    try {
+        const appContents = fs.readdirSync('/app');
+        appContents.forEach(f => console.error(`  ${f}`));
+    } catch (e) {
+        console.error(`  (could not read /app: ${e.message})`);
+    }
+    process.exit(1);
+}
 
 // ------------------------------------------------------------------
 //  API routes
@@ -42,14 +80,8 @@ app.get('/api/runtime', (req, res) => {
 });
 
 // ------------------------------------------------------------------
-//  Frontend static files (dashie-console git submodule)
+//  Frontend static files
 // ------------------------------------------------------------------
-
-if (!fs.existsSync(FRONTEND_DIR)) {
-    console.error(`[fatal] Frontend directory not found: ${FRONTEND_DIR}`);
-    console.error('[fatal] Did you run: git submodule update --init --recursive ?');
-    process.exit(1);
-}
 
 // Serve the frontend at root. HAOS Ingress also serves us at root (after it strips
 // its dynamic /api/hassio_ingress/<token>/ prefix), so relative URLs in the SPA
@@ -80,7 +112,15 @@ app.use((err, req, res, next) => {
 // ------------------------------------------------------------------
 
 // Bind to 0.0.0.0 so HAOS Ingress (running in a sibling container) can reach us.
-// On localhost this still resolves to 127.0.0.1 requests as expected.
-app.listen(PORT, '0.0.0.0', () => {
+const server = app.listen(PORT, '0.0.0.0', () => {
     console.log(`[server] Dashie add-on listening on 0.0.0.0:${PORT}`);
+    console.log('[server] Ready to accept requests from HA Ingress.');
+});
+
+server.on('error', (err) => {
+    console.error('[fatal] Server error:', err?.stack || err);
+    if (err.code === 'EADDRINUSE') {
+        console.error(`[fatal] Port ${PORT} is already in use.`);
+    }
+    process.exit(1);
 });

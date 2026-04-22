@@ -22,7 +22,9 @@ map:
 ingress: true
 ingress_port: 8099
 ingress_entry: /
-panel_icon: mdi:view-dashboard
+# HAOS panel icons can only be Material Design Icons (mdi:...) — not custom images.
+# home-heart is the closest family-dashboard vibe available.
+panel_icon: mdi:home-heart
 panel_title: Dashie
 
 # No external ports exposed — everything flows through Ingress.
