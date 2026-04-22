@@ -1,24 +1,32 @@
-#!/usr/bin/with-contenv bashio
-# shellcheck shell=bash
-set -euo pipefail
+#!/bin/sh
+# Dashie HA add-on entrypoint.
+# Reads config from /data/options.json (auto-mounted by HAOS Supervisor).
 
-# Read add-on config options
-LOG_LEVEL=$(bashio::config 'log_level' 'info')
-SUPABASE_ENV=$(bashio::config 'supabase_env' 'development')
+set -e
 
-bashio::log.level "${LOG_LEVEL}"
+OPTIONS_FILE="/data/options.json"
 
-bashio::log.info "============================================================"
-bashio::log.info "Dashie HA Add-on starting"
-bashio::log.info "============================================================"
-bashio::log.info "Log level:     ${LOG_LEVEL}"
-bashio::log.info "Supabase env:  ${SUPABASE_ENV}"
-bashio::log.info "Supervisor:    $([ -n "${SUPERVISOR_TOKEN:-}" ] && echo 'present' || echo 'missing')"
-bashio::log.info "Ingress port:  ${INGRESS_PORT:-8099}"
-bashio::log.info "============================================================"
+# Defaults — overridden from /data/options.json if available.
+LOG_LEVEL="info"
+SUPABASE_ENV="development"
 
-# Pass config into the Node process via env
-export DASHIE_SUPABASE_ENV="${SUPABASE_ENV}"
+if [ -f "$OPTIONS_FILE" ]; then
+    LOG_LEVEL=$(jq -r '.log_level // "info"' "$OPTIONS_FILE")
+    SUPABASE_ENV=$(jq -r '.supabase_env // "development"' "$OPTIONS_FILE")
+fi
+
+echo "============================================================"
+echo "Dashie HA Add-on — run.sh"
+echo "============================================================"
+echo "Log level:       $LOG_LEVEL"
+echo "Supabase env:    $SUPABASE_ENV"
+echo "Ingress port:    ${INGRESS_PORT:-8099}"
+echo "Supervisor tok:  $( [ -n "$SUPERVISOR_TOKEN" ] && echo 'present' || echo 'missing' )"
+echo "Options file:    $( [ -f "$OPTIONS_FILE" ] && echo 'found' || echo 'missing' )"
+echo "============================================================"
+
+export DASHIE_SUPABASE_ENV="$SUPABASE_ENV"
+export DASHIE_LOG_LEVEL="$LOG_LEVEL"
 export INGRESS_PORT="${INGRESS_PORT:-8099}"
 
 cd /app

@@ -1,8 +1,9 @@
 ARG BUILD_FROM
 FROM ${BUILD_FROM}
 
-# hassio-addons/base is Alpine-based. Add Node.js 20.
-RUN apk add --no-cache nodejs npm
+# Base image is node:20-alpine — no s6-overlay, no bashio. We read HAOS config
+# options from /data/options.json (auto-mounted by Supervisor).
+RUN apk add --no-cache --update jq
 
 WORKDIR /app
 
@@ -10,12 +11,10 @@ WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci --omit=dev && npm cache clean --force
 
-# Copy the rest of the app. frontend/dashie-console is the git submodule — on the
-# local `docker build` path it must be initialized before building.
+# Copy the rest of the app.
 COPY server/ ./server/
 COPY frontend/ ./frontend/
 
-# Entrypoint handled by bashio-enabled run.sh.
 COPY run.sh /
 RUN chmod a+x /run.sh
 

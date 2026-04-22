@@ -1,6 +1,7 @@
-# Multi-arch build config. HAOS Supervisor uses this to select the right
-# base image per CPU architecture when building the add-on image.
+# Multi-arch build config. Uses plain node:20-alpine — no HA-specific base needed
+# since we don't use s6-overlay or bashio. HAOS mounts config options at
+# /data/options.json regardless of base image.
 build_from:
-  aarch64: ghcr.io/hassio-addons/base:17.2.2
-  amd64: ghcr.io/hassio-addons/base:17.2.2
-  armv7: ghcr.io/hassio-addons/base:17.2.2
+  aarch64: node:20-alpine
+  amd64: node:20-alpine
+  armv7: arm32v7/node:20-alpine
