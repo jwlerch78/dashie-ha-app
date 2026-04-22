@@ -1,7 +1,0 @@
-# Multi-arch build config. Uses plain node:20-alpine — no HA-specific base needed
-# since we don't use s6-overlay or bashio. HAOS mounts config options at
-# /data/options.json regardless of base image.
-build_from:
-  aarch64: node:20-alpine
-  amd64: node:20-alpine
-  armv7: arm32v7/node:20-alpine

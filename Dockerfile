@@ -1,9 +1,7 @@
-ARG BUILD_FROM
-FROM ${BUILD_FROM}
+FROM node:20-alpine
 
-# Base image is node:20-alpine — no s6-overlay, no bashio. We read HAOS config
-# options from /data/options.json (auto-mounted by Supervisor).
-RUN apk add --no-cache --update jq
+# jq for parsing /data/options.json (HAOS mounts user config here).
+RUN apk add --no-cache jq
 
 WORKDIR /app
 
