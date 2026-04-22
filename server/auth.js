@@ -12,11 +12,18 @@
 
 const fs = require('fs');
 const crypto = require('crypto');
-const { JWT_FILE, SERVICE_TOKEN_FILE, SUPABASE } = require('./config');
+const { JWT_FILE, SERVICE_TOKEN_FILE, SUPABASE, SUPABASE_ENV } = require('./config');
 
 const REFRESH_THRESHOLD_MS = 24 * 60 * 60 * 1000; // refresh when <24h remain
 const DEVICE_TYPE = 'ha_app';                      // baked into JWT custom claims
 const EDGE_FN_URL = SUPABASE.url + '/functions/v1/jwt-auth';
+
+// Base URL for the verification page — must match the Supabase env so dev JWTs don't
+// flow through prod's (potentially older) auth.html. Prod `auth.html` isn't deployed yet
+// (serves /auth which 404s); dev.dashieapp.com/auth.html works.
+const VERIFICATION_BASE_URL = SUPABASE_ENV === 'production'
+    ? 'https://dashieapp.com'
+    : 'https://dev.dashieapp.com';
 
 // ------------------------------------------------------------------
 //  JWT file I/O
@@ -95,7 +102,7 @@ async function edgeFnCall(operation, data = {}, authHeader = null) {
 async function createDeviceCode({ packageVersion } = {}) {
     const result = await edgeFnCall('create_device_code', {
         device_type: DEVICE_TYPE,
-        base_url: 'https://dashieapp.com',
+        base_url: VERIFICATION_BASE_URL,
         device_info: {
             model: 'Dashie HA Add-on',
             os_version: process.versions?.node ? `node-${process.versions.node}` : 'unknown',
@@ -103,10 +110,19 @@ async function createDeviceCode({ packageVersion } = {}) {
         },
     });
     if (!result.success) throw new Error(`create_device_code failed: ${JSON.stringify(result)}`);
+
+    // The edge function echoes back the base_url in verification_url. In case it's still
+    // returning the prod URL despite our base_url param, rewrite host-side to what matches
+    // our env so the user always lands on a working page.
+    let verification_url = result.verification_url;
+    if (SUPABASE_ENV !== 'production' && verification_url.startsWith('https://dashieapp.com/')) {
+        verification_url = verification_url.replace('https://dashieapp.com/', 'https://dev.dashieapp.com/');
+    }
+
     return {
         device_code: result.device_code,
         user_code: result.user_code,
-        verification_url: result.verification_url,
+        verification_url,
         expires_in: result.expires_in,
         interval: result.interval || 5,
     };
