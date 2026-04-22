@@ -1,0 +1,39 @@
+name: Dashie
+version: "0.1.0"
+slug: dashie
+description: Dashie Control Center — manage your Dashie family dashboard from inside Home Assistant.
+url: https://github.com/jwlerch78/dashie-ha-app
+arch:
+  - aarch64
+  - amd64
+  - armv7
+
+# HA permissions we need
+hassio_api: true                # Access to Supervisor (env: $SUPERVISOR_TOKEN)
+homeassistant_api: true         # Access to HA REST API
+homeassistant: "2024.1.0"       # Min HA version (any recent HA is fine)
+
+# Persistent storage for /data (JWT, service token, config cache)
+map:
+  - data:rw
+
+# Ingress: HA serves the UI at /api/hassio_ingress/<token>/
+# The add-on listens on port 8099 internally; HA proxies external traffic to it.
+ingress: true
+ingress_port: 8099
+ingress_entry: /
+panel_icon: mdi:view-dashboard
+panel_title: Dashie
+
+# No external ports exposed — everything flows through Ingress.
+ports: {}
+
+# User-configurable settings shown in the add-on's Configuration tab.
+# `supabase_env`: 'production' (live Dashie accounts) or 'development' (dev.dashieapp.com testing).
+# `log_level`: verbosity of add-on logs.
+options:
+  supabase_env: development
+  log_level: info
+schema:
+  supabase_env: list(production|development)
+  log_level: list(trace|debug|info|notice|warning|error|fatal)

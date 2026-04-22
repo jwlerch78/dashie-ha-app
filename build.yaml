@@ -1,0 +1,6 @@
+# Multi-arch build config. HAOS Supervisor uses this to select the right
+# base image per CPU architecture when building the add-on image.
+build_from:
+  aarch64: ghcr.io/hassio-addons/base:17.2.2
+  amd64: ghcr.io/hassio-addons/base:17.2.2
+  armv7: ghcr.io/hassio-addons/base:17.2.2

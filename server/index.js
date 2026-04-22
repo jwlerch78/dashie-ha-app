@@ -51,9 +51,9 @@ if (!fs.existsSync(FRONTEND_DIR)) {
     process.exit(1);
 }
 
-// Serve frontend under /console so Ingress root-redirects to the console UI.
-// Also serve at root for convenience in local dev.
-app.use('/console', express.static(FRONTEND_DIR));
+// Serve the frontend at root. HAOS Ingress also serves us at root (after it strips
+// its dynamic /api/hassio_ingress/<token>/ prefix), so relative URLs in the SPA
+// resolve consistently across both local dev and inside HA.
 app.use('/', express.static(FRONTEND_DIR));
 
 // SPA fallback — route non-API, non-file requests to index.html so the frontend
@@ -79,6 +79,8 @@ app.use((err, req, res, next) => {
 //  Start
 // ------------------------------------------------------------------
 
-app.listen(PORT, () => {
-    console.log(`[server] Dashie add-on listening on http://localhost:${PORT}/`);
+// Bind to 0.0.0.0 so HAOS Ingress (running in a sibling container) can reach us.
+// On localhost this still resolves to 127.0.0.1 requests as expected.
+app.listen(PORT, '0.0.0.0', () => {
+    console.log(`[server] Dashie add-on listening on 0.0.0.0:${PORT}`);
 });
