@@ -14,24 +14,36 @@ Dashie HA add-on — browser-based control center for your Dashie family dashboa
 ## Development
 
 ```bash
-git clone --recursive https://github.com/jwlerch78/dashie-ha-app.git
+git clone https://github.com/jwlerch78/dashie-ha-app.git
 cd dashie-ha-app
 npm install
 npm run dev
 # visit http://localhost:7123/
 ```
 
-The `--recursive` flag pulls the `dashie-console` submodule under `frontend/dashie-console`. If you cloned without it:
+## Updating the bundled console
+
+The frontend under `frontend/dashie-console/` is a vendored copy of the private
+[`dashie-console`](https://github.com/jwlerch78/dashie-console) repo. It's vendored
+(not a submodule) because HAOS has no credentials when it clones the add-on repo —
+submodules to a private repo would fail at install time.
+
+To pull in the latest console changes (requires a local clone of `dashie-console`
+at `../dashie-console`):
 
 ```bash
-git submodule update --init --recursive
+./scripts/sync-console.sh
+# Review staged changes, then:
+git add frontend/dashie-console
+git commit -m "Sync dashie-console to <sha>"
+git push
 ```
 
 ## Architecture
 
 Pure Node/Express server that:
-- Serves the Dashie Console frontend (vendored as a git submodule)
-- Handles OAuth exchange + JWT storage in `/data/dashie_auth.json` (persistent in HAOS add-on, or `./data/` for local dev)
+- Serves the Dashie Console frontend (vendored copy at `frontend/dashie-console/`)
+- Handles device-flow sign-in + JWT storage in `/data/dashie_auth.json` (persistent in HAOS add-on, or `./data/` for local dev)
 - Reads HA's Supervisor token from `$SUPERVISOR_TOKEN` env var when running inside HAOS
 - Polls HA's REST API for Dashie entity states and upserts metrics to the Dashie Supabase backend
 
