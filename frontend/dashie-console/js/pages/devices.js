@@ -1,6 +1,14 @@
 /* ============================================================
    Devices Page
-   ============================================================ */
+   ------------------------------------------------------------
+   Three sections on the list view:
+     • Active    — live or recently-seen devices (last_seen_at < 30d)
+     • Discovered — devices HA reports but which aren't in user_devices
+                    for this user (from the add-on's /api/ha/status, so only
+                    shows when running inside the add-on)
+     • Archive   — stale devices (last_seen_at >= 30d), collapsed, hidden
+                    if empty, with per-device Delete
+   ------------------------------------------------------------ */
 
 const DevicesPage = {
     _detailDeviceId: null,
@@ -9,16 +17,22 @@ const DevicesPage = {
     _error: null,
     _saving: {},  // { [deviceId_field]: bool }
 
+    // Phase-2 additions
+    _haStatus: null,        // add-on /api/ha/status response (or null)
+    _haStatusFetchedAt: 0,
+    _archiveExpanded: false,
+    _deletingId: null,      // device_id currently being deleted
+
+    ARCHIVE_THRESHOLD_DAYS: 30,
+    LIVE_THRESHOLD_SECONDS: 90,   // metrics_updated_at newer than this → "live" chip
+
     render() {
-        // Fetch on first render
         if (!this._devices && !this._loading && !this._error) {
             this._fetchDevices();
             return this._renderLoading();
         }
-
         if (this._loading) return this._renderLoading();
         if (this._error) return this._renderError();
-
         if (this._detailDeviceId) return this._renderDetail();
         return this._renderList();
     },
@@ -33,21 +47,27 @@ const DevicesPage = {
 
     topBarSubtitle() {
         if (!this._detailDeviceId) {
-            return this._devices ? `${this._devices.length} device${this._devices.length === 1 ? '' : 's'} registered` : '';
+            if (!this._devices) return '';
+            const active = this._devices.filter(d => !this._isArchived(d)).length;
+            return `${active} active`;
         }
         const device = this._findDevice(this._detailDeviceId);
         return device ? (device.device_type || '') : '';
     },
 
     // =========================================================
+    //  Data
+    // =========================================================
 
     async _fetchDevices() {
         this._loading = true;
         this._error = null;
         try {
-            const result = await DashieAuth.dbRequest('list_devices', {});
-            // Response shape: { success: true, devices: [...] } or { data: [...] }
-            this._devices = result.devices || result.data || [];
+            const [devicesResult] = await Promise.all([
+                DashieAuth.dbRequest('list_devices', { tv_only: false, include_inactive: true }),
+                this._fetchAddonStatus(),  // fire-and-forget inside
+            ]);
+            this._devices = devicesResult.devices || devicesResult.data || [];
             this._loading = false;
             App.renderPage();
         } catch (e) {
@@ -58,10 +78,52 @@ const DevicesPage = {
         }
     },
 
+    /**
+     * Grab the add-on's worker status so we can surface "Discovered but
+     * not claimed" devices. Only meaningful when Console is running inside
+     * the add-on — otherwise _addonUrl resolves to an external path that
+     * won't exist; we swallow the error and show no Discovered section.
+     */
+    async _fetchAddonStatus() {
+        if (!DashieAuth.isAddonMode) {
+            this._haStatus = null;
+            return;
+        }
+        try {
+            const resp = await fetch(DashieAuth._addonUrl('/api/ha/status'), { cache: 'no-store' });
+            if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+            this._haStatus = await resp.json();
+            this._haStatusFetchedAt = Date.now();
+        } catch (e) {
+            console.warn('[DevicesPage] /api/ha/status unavailable:', e.message);
+            this._haStatus = null;
+        }
+    },
+
     _findDevice(deviceId) {
         if (!this._devices) return null;
         return this._devices.find(d => d.device_id === deviceId);
     },
+
+    _isArchived(device) {
+        if (!device.last_seen_at) return false;
+        const age = Date.now() - new Date(device.last_seen_at).getTime();
+        return age > this.ARCHIVE_THRESHOLD_DAYS * 86400 * 1000;
+    },
+
+    _isLive(device) {
+        if (!device.metrics_updated_at) return false;
+        const age = (Date.now() - new Date(device.metrics_updated_at).getTime()) / 1000;
+        return age < this.LIVE_THRESHOLD_SECONDS;
+    },
+
+    _discoveredDevices() {
+        return this._haStatus?.lastRun?.upsertResult?.unmatched || [];
+    },
+
+    // =========================================================
+    //  List render
+    // =========================================================
 
     _renderLoading() {
         return `
@@ -79,7 +141,7 @@ const DevicesPage = {
         return `
             <div class="card">
                 <div class="card-body" style="color: var(--status-error);">
-                    <strong>Failed to load devices:</strong> ${this._error}
+                    <strong>Failed to load devices:</strong> ${this._escape(this._error)}
                     <div style="margin-top: 12px;">
                         <button class="btn btn-secondary btn-sm" onclick="DevicesPage._retry()">Retry</button>
                     </div>
@@ -91,12 +153,14 @@ const DevicesPage = {
     _retry() {
         this._error = null;
         this._devices = null;
+        this._haStatus = null;
         App.renderPage();
     },
 
     _renderList() {
         if (!this._devices || this._devices.length === 0) {
-            return `
+            // Even with zero devices, the Discovered section may still have something
+            return this._renderDiscoveredSection() || `
                 <div class="empty-state">
                     <div class="empty-state-icon">📱</div>
                     <div class="empty-state-text">No devices registered yet.</div>
@@ -107,36 +171,168 @@ const DevicesPage = {
             `;
         }
 
-        const cards = this._devices.map(d => this._renderDeviceCard(d)).join('');
+        const active = this._devices.filter(d => !this._isArchived(d));
+        const archived = this._devices.filter(d => this._isArchived(d));
+
+        return `
+            ${this._renderActiveSection(active)}
+            ${this._renderDiscoveredSection()}
+            ${this._renderArchiveSection(archived)}
+        `;
+    },
+
+    _renderActiveSection(devices) {
+        if (devices.length === 0) {
+            return `<p class="empty-state-text" style="margin: 16px 0;">No active devices in the last ${this.ARCHIVE_THRESHOLD_DAYS} days.</p>`;
+        }
+        const cards = devices.map(d => this._renderDeviceCard(d)).join('');
         return `<div class="card-grid">${cards}</div>`;
+    },
+
+    _renderDiscoveredSection() {
+        const discovered = this._discoveredDevices();
+        if (discovered.length === 0) return '';
+
+        const cards = discovered.map(d => `
+            <div class="card">
+                <div class="card-body device-card">
+                    <div class="device-card-header">
+                        <div class="device-card-icon">🔍</div>
+                        <div class="device-card-info">
+                            <div class="device-card-name">${this._escape(d.device_name || 'Unknown device')}</div>
+                            <div class="device-card-type">Reported by Home Assistant</div>
+                            <div class="device-card-status">
+                                This device is pushing state to HA but isn't linked to your account yet.
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        `).join('');
+
+        return `
+            <div class="section-header" style="margin-top: 32px;">Discovered (${discovered.length})</div>
+            <p class="page-summary" style="margin-top: -4px; margin-bottom: 12px;">
+                Home Assistant sees these devices but they aren't linked to your account.
+                Sign into Dashie on each tablet to register it, or use the Claim flow
+                (coming soon) to link them here.
+            </p>
+            <div class="card-grid">${cards}</div>
+        `;
+    },
+
+    _renderArchiveSection(devices) {
+        if (devices.length === 0) return '';
+
+        const caret = this._archiveExpanded ? '▾' : '▸';
+        if (!this._archiveExpanded) {
+            return `
+                <div class="section-header" style="margin-top: 32px; cursor: pointer;" onclick="DevicesPage._toggleArchive()">
+                    ${caret} Archived (${devices.length})
+                </div>
+            `;
+        }
+
+        const rows = devices.map(d => `
+            <div class="card" style="margin-bottom: 8px;">
+                <div class="card-body" style="display: flex; align-items: center; justify-content: space-between; gap: 12px;">
+                    <div style="display: flex; align-items: center; gap: 12px; min-width: 0;">
+                        <div class="device-card-icon">${this._deviceIcon(d.device_type)}</div>
+                        <div style="min-width: 0;">
+                            <div style="font-weight: 500;">${this._escape(d.device_name || 'Unnamed')}</div>
+                            <div style="color: var(--text-muted); font-size: var(--font-size-sm);">
+                                ${this._escape(d.device_type || '—')} · last seen ${this._formatTime(d.last_seen_at)}
+                            </div>
+                        </div>
+                    </div>
+                    <div style="flex-shrink: 0;">
+                        <button class="btn btn-secondary btn-sm" ${this._deletingId === d.device_id ? 'disabled' : ''}
+                            onclick="DevicesPage._deleteArchived('${this._escape(d.device_id)}', '${this._escape(d.device_name || 'this device')}')">
+                            ${this._deletingId === d.device_id ? 'Deleting…' : 'Delete'}
+                        </button>
+                    </div>
+                </div>
+            </div>
+        `).join('');
+
+        return `
+            <div class="section-header" style="margin-top: 32px; cursor: pointer;" onclick="DevicesPage._toggleArchive()">
+                ${caret} Archived (${devices.length})
+            </div>
+            <div>${rows}</div>
+        `;
+    },
+
+    _toggleArchive() {
+        this._archiveExpanded = !this._archiveExpanded;
+        App.renderPage();
+    },
+
+    async _deleteArchived(deviceId, deviceName) {
+        if (!confirm(`Delete "${deviceName}" from your devices? This cannot be undone.`)) return;
+        this._deletingId = deviceId;
+        App.renderPage();
+        try {
+            await DashieAuth.dbRequest('delete_device', { device_id: deviceId });
+            // Drop it from the local cache
+            this._devices = this._devices.filter(d => d.device_id !== deviceId);
+            Toast.success(`Deleted "${deviceName}"`);
+        } catch (e) {
+            console.error('[DevicesPage] Delete failed:', e);
+            Toast.error(Toast.friendly(e, 'delete this device'));
+        } finally {
+            this._deletingId = null;
+            App.renderPage();
+        }
     },
 
     _renderDeviceCard(device) {
         const icon = this._deviceIcon(device.device_type);
-        const displaySettings = this._getDisplayHighlights(device);
-
+        const live = this._isLive(device);
+        const chips = this._getMetricsChips(device);
+        const statusChip = live
+            ? '<span class="status-dot online"></span> Live'
+            : `<span class="status-dot offline"></span> ${this._formatTime(device.last_seen_at)}`;
         return `
-            <div class="card card-clickable" onclick="DevicesPage.showDetail('${device.device_id}')">
+            <div class="card card-clickable" onclick="DevicesPage.showDetail('${this._escape(device.device_id)}')">
                 <div class="card-body device-card">
                     <div class="device-card-header">
                         <div class="device-card-icon">${icon}</div>
                         <div class="device-card-info">
                             <div class="device-card-name">${this._escape(device.device_name || 'Unnamed Device')}</div>
                             <div class="device-card-type">${this._escape(device.device_type || '—')}</div>
-                            <div class="device-card-status">
-                                Last active: ${this._formatTime(device.last_seen_at)}
-                            </div>
+                            <div class="device-card-status">${statusChip}</div>
                         </div>
                     </div>
-                    ${displaySettings.length ? `
-                        <div class="device-card-details">
-                            ${displaySettings.map(s => `<span class="device-card-detail">${s}</span>`).join('')}
-                        </div>
-                    ` : ''}
+                    ${chips.length ? `<div class="device-card-details">${chips.map(c => `<span class="device-card-detail">${c}</span>`).join('')}</div>` : ''}
                 </div>
             </div>
         `;
     },
+
+    /** Chips built from user_devices.metrics JSONB (populated by the HA add-on worker). */
+    _getMetricsChips(device) {
+        const m = device.metrics || {};
+        const chips = [];
+        if (m.battery?.level != null) {
+            const icon = m.battery.charging ? '⚡' : '🔋';
+            chips.push(`${icon} ${m.battery.level}%`);
+        }
+        if (m.network?.wifi_signal_percent != null) {
+            chips.push(`📶 ${m.network.wifi_signal_percent}%`);
+        }
+        if (m.system?.ram_used_percent != null) {
+            chips.push(`RAM ${m.system.ram_used_percent}%`);
+        }
+        if (m.app?.app_version) {
+            chips.push(`v${this._escape(m.app.app_version)}`);
+        }
+        return chips;
+    },
+
+    // =========================================================
+    //  Detail render (unchanged from previous version)
+    // =========================================================
 
     _renderDetail() {
         const device = this._findDevice(this._detailDeviceId);
@@ -144,14 +340,11 @@ const DevicesPage = {
             return '<div class="empty-state"><div class="empty-state-text">Device not found</div></div>';
         }
 
-        const online = this._isOnline(device);
+        const live = this._isLive(device);
         const settings = device.settings || {};
-
-        // Extract settings by category with fallbacks
         const display = settings.display || {};
         const sleep = settings.sleep || {};
         const aiVoice = settings.aiVoice || {};
-
         const icon = this._deviceIcon(device.device_type);
 
         return `
@@ -163,10 +356,12 @@ const DevicesPage = {
                     <div style="font-size: var(--font-size-xl); font-weight: 600;">${this._escape(device.device_name || 'Device')}</div>
                     <div style="font-size: var(--font-size-sm); color: var(--text-secondary);">
                         ${this._escape(device.device_type || '—')} ·
-                        <span class="status-dot ${online ? 'online' : 'offline'}"></span>${online ? 'Online' : 'Offline'}
+                        <span class="status-dot ${live ? 'online' : 'offline'}"></span>${live ? 'Live' : 'Offline'}
                     </div>
                 </div>
             </div>
+
+            ${this._renderMetricsPanel(device)}
 
             <div class="section-header">Display</div>
             <div class="card">
@@ -226,6 +421,61 @@ const DevicesPage = {
         `;
     },
 
+    /** Live metrics panel on the detail view — null-safe on offline devices. */
+    _renderMetricsPanel(device) {
+        const m = device.metrics;
+        if (!m) return '';
+        const join = arr => arr.filter(Boolean).join(' · ');
+        const rows = [
+            m.battery && ['Battery', join([
+                m.battery.level != null && `${m.battery.level}%`,
+                m.battery.charging && `charging via ${m.battery.plug_source || 'AC'}`,
+            ])],
+            m.system?.ram_used_percent != null && ['RAM', join([
+                `${m.system.ram_used_percent}%`,
+                m.system.ram_total_mb && `${m.system.ram_total_mb} MB total`,
+                m.system.ram_available_mb != null && `${m.system.ram_available_mb} MB free`,
+            ])],
+            m.network?.wifi_signal_percent != null && ['Network', join([
+                `${m.network.wifi_signal_percent}%`,
+                m.network.ip_address,
+                m.network.wifi_ssid && m.network.wifi_ssid !== '<unknown ssid>' && `"${m.network.wifi_ssid}"`,
+            ])],
+            m.storage?.free_gb != null && ['Storage',
+                `${m.storage.free_gb} GB free` + (m.storage.total_gb ? ` of ${m.storage.total_gb} GB` : '')],
+            m.app?.app_version && ['App', join([
+                `v${m.app.app_version}`,
+                m.app.android_version && `Android ${m.app.android_version}`,
+                m.app.device_model,
+            ])],
+            m.app?.current_page && ['Current page', m.app.current_page],
+        ].filter(r => r && r[1]);
+        if (rows.length === 0) return '';
+
+        return `
+            <div class="section-header">Live Metrics</div>
+            <div class="card">
+                <div class="card-body">
+                    <div class="form-grid">
+                        ${rows.map(([label, val]) => `
+                            <div class="form-group">
+                                <label class="form-label">${this._escape(label)}</label>
+                                <div style="font-size: var(--font-size-sm);">${this._escape(val)}</div>
+                            </div>
+                        `).join('')}
+                    </div>
+                    <div style="margin-top: 12px; color: var(--text-muted); font-size: var(--font-size-sm);">
+                        Updated ${this._formatTime(device.metrics_updated_at)}
+                    </div>
+                </div>
+            </div>
+        `;
+    },
+
+    // =========================================================
+    //  Settings edit (unchanged)
+    // =========================================================
+
     _settingSelect(device, category, key, label, currentValue, options) {
         const savingKey = `${device.device_id}_${key}`;
         const isSaving = this._saving[savingKey];
@@ -251,14 +501,11 @@ const DevicesPage = {
         App.renderPage();
 
         try {
-            // Send partial update — only the changed field within the category
             await DashieAuth.dbRequest('update_device_settings', {
                 device_id: deviceId,
                 category: category,
                 value: { [key]: value },
             });
-
-            // Update local cache — merge the new value into the cached device
             const device = this._findDevice(deviceId);
             if (device) {
                 device.settings = device.settings || {};
@@ -285,13 +532,8 @@ const DevicesPage = {
     },
 
     // =========================================================
-
-    _isOnline(device) {
-        if (!device.last_seen_at) return false;
-        const lastSeen = new Date(device.last_seen_at).getTime();
-        const fiveMinsAgo = Date.now() - 5 * 60 * 1000;
-        return lastSeen > fiveMinsAgo;
-    },
+    //  Helpers
+    // =========================================================
 
     _deviceIcon(deviceType) {
         if (!deviceType) return '🖥';
@@ -301,44 +543,16 @@ const DevicesPage = {
         return '🖥';
     },
 
-    _getDisplayHighlights(device) {
-        const highlights = [];
-        const display = device.settings?.display || {};
-        const sleep = device.settings?.sleep || {};
-
-        if (display['preferences.layoutMode']) {
-            const layout = display['preferences.layoutMode'] === 'widgets' ? 'Widgets' : 'Single Panel';
-            highlights.push(`Layout: ${layout}`);
-        }
-        if (display['preferences.theme']) {
-            const theme = display['preferences.theme'];
-            highlights.push(`Theme: ${theme.charAt(0).toUpperCase() + theme.slice(1)}`);
-        }
-        if (sleep['sleep.timerStart']) {
-            highlights.push(`Sleep: ${this._formatTime24(sleep['sleep.timerStart'])}`);
-        }
-        return highlights.slice(0, 3);
-    },
-
-    _formatTime24(time24) {
-        if (!time24) return '';
-        const [h, m] = time24.split(':').map(Number);
-        const period = h >= 12 ? 'PM' : 'AM';
-        const h12 = h % 12 || 12;
-        return `${h12}:${String(m).padStart(2, '0')} ${period}`;
-    },
-
     _formatTime(iso) {
         if (!iso) return '—';
         try {
             const then = new Date(iso).getTime();
             const now = Date.now();
             const diffSec = Math.floor((now - then) / 1000);
-
-            if (diffSec < 60) return `${diffSec} sec ago`;
-            if (diffSec < 3600) return `${Math.floor(diffSec / 60)} min ago`;
-            if (diffSec < 86400) return `${Math.floor(diffSec / 3600)} hr ago`;
-            return `${Math.floor(diffSec / 86400)} days ago`;
+            if (diffSec < 60) return `${diffSec}s ago`;
+            if (diffSec < 3600) return `${Math.floor(diffSec / 60)}m ago`;
+            if (diffSec < 86400) return `${Math.floor(diffSec / 3600)}h ago`;
+            return `${Math.floor(diffSec / 86400)}d ago`;
         } catch (e) {
             return iso;
         }
