@@ -82,11 +82,14 @@ app.use('/api/auth', authRouter);
 
 // Lightweight runtime-info endpoint the frontend uses to detect it's running
 // inside the add-on (vs standalone on dashieapp.com/console).
+// started_at lets us verify a rebuild actually produced a new container.
+const STARTED_AT = new Date().toISOString();
 app.get('/api/runtime', (req, res) => {
     res.json({
         addon: true,
         version: require('../package.json').version,
         supabase_env: SUPABASE_ENV,
+        started_at: STARTED_AT,
     });
 });
 
