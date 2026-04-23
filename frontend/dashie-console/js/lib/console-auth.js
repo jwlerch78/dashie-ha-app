@@ -21,6 +21,11 @@ const DashieAuth = {
     },
 
     _getConfig() {
+        // In add-on mode, prefer the Supabase config the add-on reports (matches
+        // whatever env the add-on's stored JWT was issued against). The add-on
+        // populates this._addonSupabaseConfig in _initAddonMode().
+        if (this._addonSupabaseConfig) return this._addonSupabaseConfig;
+
         const host = window.location.hostname;
         if (host.includes('dev.') || host.includes('local.') || host === 'localhost' || host.startsWith('127.0.0.1')) {
             return this._configs.development;
@@ -29,9 +34,11 @@ const DashieAuth = {
     },
 
     get config() {
-        if (!this._cachedConfig) this._cachedConfig = this._getConfig();
-        return this._cachedConfig;
+        // Don't cache — _addonSupabaseConfig may be populated after first access.
+        return this._getConfig();
     },
+
+    _addonSupabaseConfig: null,
     get edgeFunctionUrl() { return this.config.url + '/functions/v1/jwt-auth'; },
     get databaseOpsUrl() { return this.config.url + '/functions/v1/database-operations'; },
     get anonKey() { return this.config.anonKey; },
@@ -241,6 +248,18 @@ const DashieAuth = {
     async _initAddonMode() {
         try {
             const status = await fetch(this._addonUrl('/api/auth/status')).then(r => r.json());
+
+            // Always capture the add-on's Supabase config (even when not authenticated)
+            // so subsequent edge-function calls target the right project.
+            if (status?.supabase_url && status?.supabase_anon_key) {
+                this._addonSupabaseConfig = {
+                    url: status.supabase_url,
+                    anonKey: status.supabase_anon_key,
+                    googleClientId: this._configs[status.supabase_env === 'production' ? 'production' : 'development'].googleClientId,
+                };
+                console.log('[DashieAuth] Using Supabase from add-on:', status.supabase_env, status.supabase_url);
+            }
+
             if (status?.authenticated) {
                 // Pull the actual JWT from the add-on
                 const jwtResp = await fetch(this._addonUrl('/api/auth/jwt'));
