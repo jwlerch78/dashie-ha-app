@@ -29,6 +29,17 @@ try {
 const { PORT, FRONTEND_DIR, DATA_DIR, SUPABASE_ENV, SUPABASE } = config;
 const app = express();
 
+// Normalize any leading double-slashes in the incoming URL. HA Ingress sometimes
+// routes with paths like //api/runtime (depending on ingress_entry config + how
+// relative URLs resolve in the iframe). Express's route matching is strict about
+// single-leading-slash paths, so collapse duplicates up front.
+app.use((req, res, next) => {
+    if (req.url.startsWith('//')) {
+        req.url = req.url.replace(/^\/+/, '/');
+    }
+    next();
+});
+
 // ------------------------------------------------------------------
 //  Startup banner
 // ------------------------------------------------------------------
@@ -92,7 +103,9 @@ app.use('/', express.static(FRONTEND_DIR));
 // router handles them. Simple heuristic: if the path looks like a file (has a
 // dot) we let it 404 normally; otherwise serve index.html.
 app.get('*', (req, res, next) => {
-    if (req.path.startsWith('/api/')) return next();
+    // Belt-and-suspenders: treat //api/ as /api/ even if the normalizer upstream missed it
+    const normalizedPath = req.path.replace(/^\/+/, '/');
+    if (normalizedPath.startsWith('/api/')) return next();
     if (req.path.includes('.')) return next();
     res.sendFile(path.join(FRONTEND_DIR, 'index.html'));
 });

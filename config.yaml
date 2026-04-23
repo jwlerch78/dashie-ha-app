@@ -21,7 +21,10 @@ map:
 # The add-on listens on port 8099 internally; HA proxies external traffic to it.
 ingress: true
 ingress_port: 8099
-ingress_entry: /
+# Intentionally NOT setting ingress_entry — defaulting to '/'. Setting it to '/'
+# explicitly causes HA to concatenate a double-slash onto the Ingress URL
+# (e.g. /api/hassio_ingress/<token>//), which breaks relative-path routing
+# inside the SPA.
 # HAOS panel icons can only be Material Design Icons (mdi:...) — not custom images.
 # home-heart is the closest family-dashboard vibe available.
 panel_icon: mdi:home-heart
