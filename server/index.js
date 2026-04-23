@@ -11,13 +11,14 @@ process.on('unhandledRejection', (err) => {
     process.exit(1);
 });
 
-let path, fs, express, config, authRouter;
+let path, fs, express, config, authRouter, haWorker;
 try {
     path = require('path');
     fs = require('fs');
     express = require('express');
     config = require('./config');
     authRouter = require('./api/auth');
+    haWorker = require('./ha-worker');
 } catch (err) {
     console.error('[fatal] Failed to load modules:', err?.stack || err);
     console.error('[fatal] Node version:', process.version);
@@ -101,6 +102,16 @@ app.get('/api/runtime', (req, res) => {
     });
 });
 
+// HA worker status + on-demand refresh trigger. Console can call these once
+// Phase D devices UI lands; for now they're useful for debugging.
+app.get('/api/ha/status', (req, res) => {
+    res.json(haWorker.getStatus());
+});
+app.post('/api/ha/refresh', async (req, res) => {
+    haWorker.triggerRefresh('http-trigger');
+    res.json({ triggered: true, status: haWorker.getStatus() });
+});
+
 // ------------------------------------------------------------------
 //  Frontend static files
 // ------------------------------------------------------------------
@@ -139,6 +150,7 @@ app.use((err, req, res, next) => {
 const server = app.listen(PORT, '0.0.0.0', () => {
     console.log(`[server] Dashie add-on listening on 0.0.0.0:${PORT}`);
     console.log('[server] Ready to accept requests from HA Ingress.');
+    haWorker.start();
 });
 
 server.on('error', (err) => {
