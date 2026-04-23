@@ -451,13 +451,14 @@ const DashieAuth = {
     _addonPollTimer: null,
 
     /**
-     * Start the device-flow sign-in. Returns a promise that resolves with
-     * { verification_url, user_code } — caller should open the URL in a new tab.
-     * The promise resolves as soon as the code is generated; polling begins
-     * automatically in the background and onAuthStateChange fires when approved.
+     * Start the device-flow sign-in. Returns { verification_url, user_code }.
+     * DOES NOT open the verification URL — caller (the sign-in UI) renders a
+     * user-clickable anchor instead. Opening programmatically via window.open
+     * is unreliable inside HA Ingress iframes (popup blockers / sandbox may
+     * navigate the parent frame instead, which HA rejects with a 403).
+     * Polling begins automatically; onAuthStateChange fires on approval.
      */
     async _signInAddonMode() {
-        // If already signing in, reuse pending link
         if (this._addonPendingLink && Date.now() < new Date(this._addonPendingLink.expires_at).getTime()) {
             return this._addonPendingLink;
         }
@@ -465,15 +466,6 @@ const DashieAuth = {
         if (!resp.ok) throw new Error(`start-link failed: ${resp.status}`);
         const link = await resp.json();
         this._addonPendingLink = link;
-
-        // Open the verification URL in a new browser tab
-        try {
-            window.open(link.verification_url, '_blank', 'noopener,noreferrer');
-        } catch (e) {
-            console.warn('[DashieAuth] Could not auto-open verification URL', e);
-        }
-
-        // Start polling
         this._startAddonPolling();
         return link;
     },
