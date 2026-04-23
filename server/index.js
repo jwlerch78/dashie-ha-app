@@ -29,13 +29,21 @@ try {
 const { PORT, FRONTEND_DIR, DATA_DIR, SUPABASE_ENV, SUPABASE } = config;
 const app = express();
 
+// Log every incoming request path so we can diagnose what HA Ingress is sending us.
+app.use((req, res, next) => {
+    console.log(`[req] ${req.method} ${req.url}`);
+    next();
+});
+
 // Normalize any leading double-slashes in the incoming URL. HA Ingress sometimes
 // routes with paths like //api/runtime (depending on ingress_entry config + how
 // relative URLs resolve in the iframe). Express's route matching is strict about
 // single-leading-slash paths, so collapse duplicates up front.
 app.use((req, res, next) => {
     if (req.url.startsWith('//')) {
+        const before = req.url;
         req.url = req.url.replace(/^\/+/, '/');
+        console.log(`[normalize] ${before}  →  ${req.url}`);
     }
     next();
 });
