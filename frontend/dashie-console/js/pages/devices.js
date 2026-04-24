@@ -18,13 +18,15 @@ const DevicesPage = {
     _saving: {},  // { [deviceId_field]: bool }
 
     // Phase-2 additions
-    _haStatus: null,        // add-on /api/ha/status response (or null)
+    _haStatus: null,          // add-on /api/ha/status response (or null)
     _haStatusFetchedAt: 0,
+    _haStatusFetching: false, // single-flight guard for background refresh
     _archiveExpanded: false,
-    _deletingId: null,      // device_id currently being deleted
+    _deletingId: null,        // device_id currently being deleted
 
     ARCHIVE_THRESHOLD_DAYS: 30,
     LIVE_THRESHOLD_SECONDS: 90,   // metrics_updated_at newer than this → "live" chip
+    HA_STATUS_MAX_AGE_MS: 15 * 1000, // refetch /api/ha/status if older than this on render
 
     render() {
         if (!this._devices && !this._loading && !this._error) {
@@ -89,6 +91,8 @@ const DevicesPage = {
             this._haStatus = null;
             return;
         }
+        if (this._haStatusFetching) return;
+        this._haStatusFetching = true;
         try {
             const resp = await fetch(DashieAuth._addonUrl('/api/ha/status'), { cache: 'no-store' });
             if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
@@ -97,7 +101,18 @@ const DevicesPage = {
         } catch (e) {
             console.warn('[DevicesPage] /api/ha/status unavailable:', e.message);
             this._haStatus = null;
+        } finally {
+            this._haStatusFetching = false;
         }
+    },
+
+    /** Kick off a background refresh if the cached /api/ha/status is stale. */
+    _maybeRefreshAddonStatus() {
+        if (!DashieAuth.isAddonMode) return;
+        if (this._haStatusFetching) return;
+        const age = Date.now() - this._haStatusFetchedAt;
+        if (age < this.HA_STATUS_MAX_AGE_MS) return;
+        this._fetchAddonStatus().then(() => App.renderPage());
     },
 
     _findDevice(deviceId) {
@@ -158,6 +173,10 @@ const DevicesPage = {
     },
 
     _renderList() {
+        // Background-refresh /api/ha/status if it's gone stale since last fetch.
+        // Self-heals the "page loaded before worker's first poll" race.
+        this._maybeRefreshAddonStatus();
+
         if (!this._devices || this._devices.length === 0) {
             // Even with zero devices, the Discovered section may still have something
             return this._renderDiscoveredSection() || `
