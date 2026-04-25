@@ -55,7 +55,7 @@ const DevicesPage = {
             return `${active} active`;
         }
         const device = this._findDevice(this._detailDeviceId);
-        return device ? (device.device_type || '') : '';
+        return device ? this._typeLabel(device) : '';
     },
 
     async _fetchDevices() {
@@ -321,7 +321,7 @@ const DevicesPage = {
                         <div class="device-card-icon">${icon}</div>
                         <div class="device-card-info">
                             ${DevicesRename.renderNameRow(device, this._conflictHaName(device), 'card')}
-                            <div class="device-card-type">${this._escape(device.device_type || '—')}</div>
+                            <div class="device-card-type">${this._escape(this._typeLabel(device))}</div>
                             <div class="device-card-status">${statusChip}</div>
                         </div>
                     </div>
@@ -380,7 +380,7 @@ const DevicesPage = {
                 <div style="flex: 1; min-width: 0;">
                     ${DevicesRename.renderNameRow(device, conflict, 'detail')}
                     <div style="font-size: var(--font-size-sm); color: var(--text-secondary); margin-top: 4px;">
-                        ${this._escape(device.device_type || '—')} ·
+                        ${this._escape(this._typeLabel(device))} ·
                         <span class="status-dot ${live ? 'online' : 'offline'}"></span>${live ? 'Live' : 'Offline'}
                     </div>
                     ${conflictBadge}
@@ -559,6 +559,18 @@ const DevicesPage = {
         if (lower.includes('fire') || lower.includes('tv')) return '🖥';
         if (lower.includes('tablet') || lower.includes('sm-') || lower.includes('ipad')) return '📱';
         return '🖥';
+    },
+
+    /** Friendly type label combining the registered category prefix with the
+     *  HA-reported model. Examples: "Tablet · SM-X200", "TV · AFTMM". */
+    _typeLabel(device) {
+        const model = device?.metrics?.app?.device_model || device?.device_metadata?.model || null;
+        const raw = device?.device_type || '';
+        const prefix = raw.split('_')[0];
+        const cat = { tv: 'TV', tablet: 'Tablet', computer: 'Computer', phone: 'Phone' }[prefix]
+            || (prefix ? prefix.charAt(0).toUpperCase() + prefix.slice(1) : null);
+        if (model && cat) return `${cat} · ${model}`;
+        return model || raw || '—';
     },
 
     _formatTime(iso) {
