@@ -221,9 +221,23 @@ const DevicesRename = {
                     const body = await resp.text();
                     throw new Error(`HA rename HTTP ${resp.status}: ${body.slice(0, 200)}`);
                 }
-                // Force a status refetch so the conflict banner clears immediately
-                DevicesPage._haStatusFetchedAt = 0;
-                DevicesPage._fetchAddonStatus().then(() => App.renderPage());
+                // Optimistically patch the cached synced[] so the conflict banner
+                // clears immediately. The worker's next poll (already triggered by
+                // /api/ha/rename via triggerRefresh) will confirm.
+                const synced = DevicesPage._haStatus?.lastRun?.upsertResult?.synced;
+                if (Array.isArray(synced)) {
+                    const entry = synced.find(s => s?.device_id === deviceId);
+                    if (entry) {
+                        entry.ha_device_name = trimmed;
+                        entry.supabase_device_name = trimmed;
+                    }
+                }
+                // And queue an actual refresh ~1.5s later so the worker has time
+                // to complete its triggered poll before we read its state again.
+                setTimeout(() => {
+                    DevicesPage._haStatusFetchedAt = 0;
+                    DevicesPage._fetchAddonStatus().then(() => App.renderPage());
+                }, 1500);
             } catch (e) {
                 console.warn('[DevicesRename] HA rename failed (Supabase succeeded):', e.message);
                 if (!silent) Toast.warning(`Saved in Dashie. HA rename failed: ${e.message}`);
