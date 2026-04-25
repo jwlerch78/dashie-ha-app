@@ -78,7 +78,7 @@ const DevicesRename = {
             const haJson = JSON.stringify(haName).replace(/"/g, '&quot;');
             return `
                 <div style="padding: 12px 0; border-bottom: 1px solid var(--border);">
-                    <div style="font-weight: 500; margin-bottom: 8px;">${escape(d.device_type || 'Device')}</div>
+                    <div style="font-weight: 500; margin-bottom: 8px;">${escape(DevicesPage._typeLabel(d))}</div>
                     <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px;">
                         <button class="btn btn-secondary btn-sm" ${busy ? 'disabled' : ''}
                             onclick="DevicesRename.resolve('${idAttr}', ${sbJson})">Keep "${escape(sbName)}"</button>
