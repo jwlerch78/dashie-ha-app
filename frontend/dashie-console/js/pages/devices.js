@@ -444,6 +444,8 @@ const DevicesPage = {
                 Changes apply to the device immediately via Supabase real-time broadcast.
                 Last check-in: ${this._formatTime(device.last_seen_at)}
             </p>
+
+            ${DevicesRename.conflictModal ? DevicesRename.renderModal(this._conflictDevices(), d => this._conflictHaName(d)) : ''}
         `;
     },
 
