@@ -1,5 +1,5 @@
 #!/bin/sh
-# Dashie HA add-on entrypoint.
+# Dashie Hub entrypoint.
 # Reads config from /data/options.json (auto-mounted by HAOS Supervisor).
 
 set -e
@@ -16,7 +16,7 @@ if [ -f "$OPTIONS_FILE" ]; then
 fi
 
 echo "============================================================"
-echo "Dashie HA Add-on — run.sh"
+echo "Dashie Hub — run.sh"
 echo "============================================================"
 echo "Log level:       $LOG_LEVEL"
 echo "Supabase env:    $SUPABASE_ENV"

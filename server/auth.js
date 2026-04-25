@@ -104,7 +104,7 @@ async function createDeviceCode({ packageVersion } = {}) {
         device_type: DEVICE_TYPE,
         base_url: VERIFICATION_BASE_URL,
         device_info: {
-            model: 'Dashie HA Add-on',
+            model: 'Dashie Hub',
             os_version: process.versions?.node ? `node-${process.versions.node}` : 'unknown',
             app_version: packageVersion || require('../package.json').version,
         },

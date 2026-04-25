@@ -1,7 +1,7 @@
-name: Dashie App
-version: "0.1.8"
+name: Dashie Hub
+version: "0.1.9"
 slug: dashie
-description: Dashie Control Center — manage your Dashie family dashboard from inside Home Assistant.
+description: Dashie Hub — manage your Dashie family dashboards from inside Home Assistant.
 url: https://github.com/jwlerch78/dashie-ha-app
 arch:
   - aarch64
@@ -28,7 +28,7 @@ ingress_port: 8099
 # HAOS panel icons can only be Material Design Icons (mdi:...) — not custom images.
 # home-heart is the closest family-dashboard vibe available.
 panel_icon: mdi:home-heart
-panel_title: Dashie
+panel_title: Dashie Hub
 
 # No external ports exposed — everything flows through Ingress.
 ports: {}

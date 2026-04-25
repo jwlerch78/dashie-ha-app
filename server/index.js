@@ -1,5 +1,5 @@
 // server/index.js
-// Dashie HA add-on — Express server.
+// Dashie Hub — Express server.
 
 // Catch ANY error before we even get to Express so it shows up in the add-on Log tab.
 process.on('uncaughtException', (err) => {
@@ -56,7 +56,7 @@ app.use((req, res, next) => {
 // ------------------------------------------------------------------
 
 console.log('='.repeat(60));
-console.log('Dashie HA Add-on');
+console.log('Dashie Hub');
 console.log('='.repeat(60));
 console.log(`Node version:    ${process.version}`);
 console.log(`cwd:             ${process.cwd()}`);

@@ -179,7 +179,7 @@ const DashieAuth = {
 
     // =========================================================
     //  Add-on mode detection
-    //  When served by the Dashie HA add-on (Node/Express), the SPA takes its
+    //  When served by Dashie Hub (Node/Express HA add-on), the SPA takes its
     //  JWT from /api/auth/jwt and drives sign-in via the device-flow
     //  endpoints. In browser-only mode, it uses Google OAuth directly.
     // =========================================================
@@ -206,7 +206,7 @@ const DashieAuth = {
                 if (data?.addon === true) {
                     this._addonMode = true;
                     this._addonRuntimeInfo = data;
-                    console.log('[DashieAuth] Running inside Dashie HA add-on', data);
+                    console.log('[DashieAuth] Running inside Dashie Hub', data);
                     return true;
                 }
             }

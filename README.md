@@ -1,6 +1,6 @@
-# Dashie for Home Assistant
+# Dashie Hub for Home Assistant
 
-Dashie HA add-on — browser-based control center for your Dashie family dashboard, plus voice pipeline broker and live-metrics bridge.
+Dashie Hub — Home Assistant add-on that hosts the browser-based control center for your Dashie family dashboards, plus voice pipeline broker and live-metrics bridge.
 
 **Status:** Early development. Not yet available in HACS.
 
