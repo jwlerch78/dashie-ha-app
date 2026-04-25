@@ -11,14 +11,16 @@ process.on('unhandledRejection', (err) => {
     process.exit(1);
 });
 
-let path, fs, express, config, authRouter, haWorker;
+let path, fs, express, config, authRouter, haRouter, haWorker, haRegistry;
 try {
     path = require('path');
     fs = require('fs');
     express = require('express');
     config = require('./config');
     authRouter = require('./api/auth');
+    haRouter = require('./api/ha');
     haWorker = require('./ha-worker');
+    haRegistry = require('./ha-registry');
 } catch (err) {
     console.error('[fatal] Failed to load modules:', err?.stack || err);
     console.error('[fatal] Node version:', process.version);
@@ -88,6 +90,7 @@ if (!fs.existsSync(FRONTEND_DIR)) {
 // ------------------------------------------------------------------
 
 app.use('/api/auth', authRouter);
+app.use('/api/ha', haRouter);
 
 // Lightweight runtime-info endpoint the frontend uses to detect it's running
 // inside the add-on (vs standalone on dashieapp.com/console).
@@ -102,15 +105,8 @@ app.get('/api/runtime', (req, res) => {
     });
 });
 
-// HA worker status + on-demand refresh trigger. Console can call these once
-// Phase D devices UI lands; for now they're useful for debugging.
-app.get('/api/ha/status', (req, res) => {
-    res.json(haWorker.getStatus());
-});
-app.post('/api/ha/refresh', async (req, res) => {
-    haWorker.triggerRefresh('http-trigger');
-    res.json({ triggered: true, status: haWorker.getStatus() });
-});
+// /api/ha/status, /api/ha/refresh, /api/ha/rename, /api/ha/devices live in
+// server/api/ha.js mounted above.
 
 // ------------------------------------------------------------------
 //  Frontend static files
@@ -151,6 +147,7 @@ const server = app.listen(PORT, '0.0.0.0', () => {
     console.log(`[server] Dashie add-on listening on 0.0.0.0:${PORT}`);
     console.log('[server] Ready to accept requests from HA Ingress.');
     haWorker.start();
+    haRegistry.start();
 });
 
 server.on('error', (err) => {

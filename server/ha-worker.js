@@ -97,7 +97,8 @@ async function runPoll(reason = 'tick') {
             upsertResult = await callDbOp('update_device_metrics', {
                 devices: devices.map(d => ({
                     device_id: d.dashieDeviceId,
-                    device_name: d.deviceName,
+                    device_name: d.deviceName,        // anchor friendly_name minus " Device ID"
+                    ha_device_name: d.deviceName,     // same source; sent so the edge fn / Console can detect collisions
                     metrics: d.metrics,
                     has_live_data: d.hasLiveData,
                 })),

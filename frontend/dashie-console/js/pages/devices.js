@@ -23,6 +23,7 @@ const DevicesPage = {
     _haStatusFetching: false, // single-flight guard for background refresh
     _archiveExpanded: false,
     _deletingId: null,        // device_id currently being deleted
+    // Rename + conflict state lives on DevicesRename (see devices-rename.js).
 
     ARCHIVE_THRESHOLD_DAYS: 30,
     LIVE_THRESHOLD_SECONDS: 90,   // metrics_updated_at newer than this → "live" chip
@@ -56,10 +57,6 @@ const DevicesPage = {
         const device = this._findDevice(this._detailDeviceId);
         return device ? (device.device_type || '') : '';
     },
-
-    // =========================================================
-    //  Data
-    // =========================================================
 
     async _fetchDevices() {
         this._loading = true;
@@ -136,9 +133,10 @@ const DevicesPage = {
         return this._haStatus?.lastRun?.upsertResult?.unmatched || [];
     },
 
-    // =========================================================
-    //  List render
-    // =========================================================
+    _conflictHaName(device) { return DevicesRename.conflictHaName(device, this._haStatus); },
+    _conflictDevices() {
+        return DevicesRename.conflictDevices(this._devices, d => this._isArchived(d), this._haStatus);
+    },
 
     _renderLoading() {
         return `
@@ -193,10 +191,13 @@ const DevicesPage = {
         const active = this._devices.filter(d => !this._isArchived(d));
         const archived = this._devices.filter(d => this._isArchived(d));
 
+        const conflicts = this._conflictDevices();
         return `
+            ${DevicesRename.renderBanner(conflicts)}
             ${this._renderActiveSection(active)}
             ${this._renderDiscoveredSection()}
             ${this._renderArchiveSection(archived)}
+            ${DevicesRename.conflictModal ? DevicesRename.renderModal(conflicts, d => this._conflictHaName(d)) : ''}
         `;
     },
 
@@ -312,13 +313,14 @@ const DevicesPage = {
         const statusChip = live
             ? '<span class="status-dot online"></span> Live'
             : `<span class="status-dot offline"></span> ${this._formatTime(device.last_seen_at)}`;
+        const idAttr = this._escape(device.device_id);
         return `
-            <div class="card card-clickable" onclick="DevicesPage.showDetail('${this._escape(device.device_id)}')">
+            <div class="card card-clickable" onclick="DevicesPage.showDetail('${idAttr}')">
                 <div class="card-body device-card">
                     <div class="device-card-header">
                         <div class="device-card-icon">${icon}</div>
                         <div class="device-card-info">
-                            <div class="device-card-name">${this._escape(device.device_name || 'Unnamed Device')}</div>
+                            ${DevicesRename.renderNameRow(device, this._conflictHaName(device), 'card')}
                             <div class="device-card-type">${this._escape(device.device_type || '—')}</div>
                             <div class="device-card-status">${statusChip}</div>
                         </div>
@@ -349,10 +351,6 @@ const DevicesPage = {
         return chips;
     },
 
-    // =========================================================
-    //  Detail render (unchanged from previous version)
-    // =========================================================
-
     _renderDetail() {
         const device = this._findDevice(this._detailDeviceId);
         if (!device) {
@@ -366,17 +364,26 @@ const DevicesPage = {
         const aiVoice = settings.aiVoice || {};
         const icon = this._deviceIcon(device.device_type);
 
+        const conflict = this._conflictHaName(device);
+        const conflictBadge = conflict ? `
+            <div style="margin-top: 4px; font-size: var(--font-size-sm); color: var(--accent);">
+                ⚠ HA has a different name: "${this._escape(conflict)}".
+                <a href="#" onclick="event.preventDefault(); DevicesRename.openModal()">Resolve</a>
+            </div>
+        ` : '';
+
         return `
             <div class="back-link" onclick="DevicesPage.backToList()">← Back to Devices</div>
 
-            <div style="display: flex; align-items: center; gap: 12px; margin-bottom: 24px;">
-                <div class="device-card-icon" style="width: 48px; height: 48px; font-size: 24px;">${icon}</div>
-                <div>
-                    <div style="font-size: var(--font-size-xl); font-weight: 600;">${this._escape(device.device_name || 'Device')}</div>
-                    <div style="font-size: var(--font-size-sm); color: var(--text-secondary);">
+            <div style="display: flex; align-items: flex-start; gap: 12px; margin-bottom: 24px;">
+                <div class="device-card-icon" style="width: 48px; height: 48px; font-size: 24px; flex-shrink: 0;">${icon}</div>
+                <div style="flex: 1; min-width: 0;">
+                    ${DevicesRename.renderNameRow(device, conflict, 'detail')}
+                    <div style="font-size: var(--font-size-sm); color: var(--text-secondary); margin-top: 4px;">
                         ${this._escape(device.device_type || '—')} ·
                         <span class="status-dot ${live ? 'online' : 'offline'}"></span>${live ? 'Live' : 'Offline'}
                     </div>
+                    ${conflictBadge}
                 </div>
             </div>
 
@@ -491,10 +498,6 @@ const DevicesPage = {
         `;
     },
 
-    // =========================================================
-    //  Settings edit (unchanged)
-    // =========================================================
-
     _settingSelect(device, category, key, label, currentValue, options) {
         const savingKey = `${device.device_id}_${key}`;
         const isSaving = this._saving[savingKey];
@@ -549,10 +552,6 @@ const DevicesPage = {
         this._detailDeviceId = null;
         App.renderPage();
     },
-
-    // =========================================================
-    //  Helpers
-    // =========================================================
 
     _deviceIcon(deviceType) {
         if (!deviceType) return '🖥';
