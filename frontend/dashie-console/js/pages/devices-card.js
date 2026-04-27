@@ -40,24 +40,25 @@ const DevicesCard = {
 
     _renderHeader(device, idAttr, statusBadge, conflict) {
         const icon = DevicesPage._deviceIcon(device.device_type);
-        // HA's switch.<slug>_lock — state 'on' interpreted as "currently locked".
-        // If your devices show inverted, flip this in ha-metrics.js.
+        // HA's switch.<slug>_lock — state 'on' = currently locked.
+        // We always render icon-lock.svg, using opacity to convey state
+        // (icon-unlock.svg looks too similar at 16px to be reliably distinguishable).
         const locked = !!device.metrics?.controls?.lock;
         const lockBusy = !!this._busyControl[`${device.device_id}:lock`];
         const conflictChip = conflict
             ? `<span title="HA: ${DevicesPage._escape(conflict)}" style="color: var(--accent); font-size: 11px; margin-left: 6px;">⚠</span>`
             : '';
-        const lockIconFile = locked ? 'icon-lock.svg' : 'icon-unlock.svg';
+        const lockOpacity = lockBusy ? 0.4 : (locked ? 1 : 0.3);
         return `
             <div style="display: flex; align-items: flex-start; gap: 10px;">
                 <div class="device-card-icon" style="flex-shrink: 0;">${icon}</div>
                 <div style="flex: 1; min-width: 0;">
                     <div style="display: flex; align-items: center; gap: 8px; font-weight: 600;">
                         <span>${DevicesPage._escape(device.device_name || 'Unnamed Device')}</span>
-                        <button title="${locked ? 'Tap to unlock' : 'Tap to lock'}" ${lockBusy ? 'disabled' : ''}
+                        <button title="${locked ? 'Locked — tap to unlock' : 'Unlocked — tap to lock'}" ${lockBusy ? 'disabled' : ''}
                             onclick="event.stopPropagation(); DevicesCard.toggleSwitch('${idAttr}', 'lock', ${locked})"
-                            style="background: none; border: none; cursor: ${lockBusy ? 'wait' : 'pointer'}; padding: 0; opacity: ${lockBusy ? 0.5 : 0.85}; line-height: 0;">
-                            ${iconImg(lockIconFile, 16)}
+                            style="background: none; border: none; cursor: ${lockBusy ? 'wait' : 'pointer'}; padding: 0; line-height: 0;">
+                            ${iconImg('icon-lock.svg', 16, `opacity: ${lockOpacity};`)}
                         </button>
                         ${conflictChip}
                     </div>
@@ -116,75 +117,102 @@ const DevicesCard = {
         const motion = !!m.presence?.motion;
         const face = !!m.presence?.face;
         const reloadBusy = !!this._busyControl[`${device.device_id}:reload`];
+        const screenBusy = !!this._busyControl[`${device.device_id}:screen`];
+        const darkBusy = !!this._busyControl[`${device.device_id}:dark_mode`];
         const camBusy = !!this._busyControl[`${device.device_id}:camera_stream_enabled`];
+
+        const reloadIcon = `
+            <button title="Reload dashboard" ${reloadBusy ? 'disabled' : ''}
+                onclick="event.stopPropagation(); DevicesCard.pressButton('${idAttr}', 'reload')"
+                style="background: none; border: none; cursor: ${reloadBusy ? 'wait' : 'pointer'}; padding: 2px; opacity: ${reloadBusy ? 0.5 : 0.85}; line-height: 0; display: inline-flex; align-items: center;">
+                ${iconImg('icon-reload.svg', 16)}
+            </button>
+        `;
+
+        const screenPill = this._renderPill({
+            idAttr, role: 'screen',
+            currentlyOn: screenOn,
+            label: screenOn ? 'On' : 'Off',
+            iconFile: 'icon-tv.svg',
+            busy: screenBusy,
+            title: screenOn ? 'Screen on — tap to turn off' : 'Screen off — tap to turn on',
+            palette: { onBg: '#10b981', offBg: '#f3f4f6', onText: '#ffffff', offText: '#374151', onBorder: '#10b981', offBorder: '#d1d5db', onIconInvert: true },
+        });
+
+        const lightDarkPill = this._renderPill({
+            idAttr, role: 'dark_mode',
+            currentlyOn: dark,
+            label: dark ? 'Dark' : 'Light',
+            iconFile: dark ? 'icon-moon.svg' : 'icon-sun.svg',
+            busy: darkBusy,
+            title: dark ? 'Dark mode — tap for light' : 'Light mode — tap for dark',
+            palette: { onBg: '#1f2937', offBg: '#ffffff', onText: '#ffffff', offText: '#1f2937', onBorder: '#1f2937', offBorder: '#d1d5db', onIconInvert: true },
+        });
+
+        const cameraIcon = `
+            <button title="${cameraOn ? 'Camera streaming — tap to stop' : 'Camera off — tap to start'}" ${camBusy ? 'disabled' : ''}
+                onclick="event.stopPropagation(); DevicesCard.toggleSwitch('${idAttr}', 'camera_stream_enabled', ${cameraOn})"
+                style="background: none; border: none; cursor: ${camBusy ? 'wait' : 'pointer'}; padding: 2px; line-height: 0; display: inline-flex; align-items: center;">
+                ${iconImg('icon-video-camera.svg', 18, `opacity: ${cameraOn ? 1 : 0.35};`)}
+            </button>
+        `;
+
+        const motionIcon = `
+            <span title="Motion ${motion ? 'detected' : 'idle'}"
+                  style="display: inline-flex; align-items: center; padding: 2px; font-size: 16px; opacity: ${motion ? 1 : 0.35};">
+                🚶
+            </span>
+        `;
+
+        const faceIcon = `
+            <span title="Face ${face ? 'detected' : 'idle'}"
+                  style="display: inline-flex; align-items: center; padding: 2px; line-height: 0;">
+                ${iconImg('icon-profile-round.svg', 18, `opacity: ${face ? 1 : 0.35};`)}
+            </span>
+        `;
+
+        // Three-column layout per media row: left / center / right justified.
+        const controlRow = (left, center, right) => `
+            <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; align-items: center; gap: 4px; margin-top: 8px;">
+                <div style="justify-self: start; display: inline-flex;">${left}</div>
+                <div style="justify-self: center; display: inline-flex;">${center}</div>
+                <div style="justify-self: end; display: inline-flex;">${right}</div>
+            </div>
+        `;
 
         return `
             <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 12px;">
                 <div>
                     <div style="${ph}">screenshot</div>
-                    <div style="display: flex; align-items: center; gap: 8px; margin-top: 8px; flex-wrap: nowrap; font-size: 11px;">
-                        <button title="Reload dashboard" ${reloadBusy ? 'disabled' : ''}
-                            onclick="event.stopPropagation(); DevicesCard.pressButton('${idAttr}', 'reload')"
-                            style="background: none; border: none; cursor: ${reloadBusy ? 'wait' : 'pointer'}; padding: 2px; opacity: ${reloadBusy ? 0.5 : 0.85}; line-height: 0; flex-shrink: 0;">
-                            ${iconImg('icon-reload.svg', 14)}
-                        </button>
-                        ${this._renderTextToggle(idAttr, 'screen', screenOn, 'Screen')}
-                        ${this._renderIconToggle(idAttr, 'dark_mode', dark, 'icon-sun.svg', 'icon-moon.svg', 'Light/dark')}
-                    </div>
+                    ${controlRow(reloadIcon, screenPill, lightDarkPill)}
                 </div>
                 <div>
                     <div style="${ph}">camera</div>
-                    <div style="display: flex; align-items: center; gap: 10px; margin-top: 8px;">
-                        <button title="${cameraOn ? 'Camera streaming' : 'Camera off'}" ${camBusy ? 'disabled' : ''}
-                            onclick="event.stopPropagation(); DevicesCard.toggleSwitch('${idAttr}', 'camera_stream_enabled', ${cameraOn})"
-                            style="background: none; border: none; cursor: ${camBusy ? 'wait' : 'pointer'}; padding: 2px; line-height: 0;">
-                            ${iconImg('icon-video-camera.svg', 16, `opacity: ${cameraOn ? 1 : 0.4};`)}
-                        </button>
-                        <span title="Motion ${motion ? 'detected' : 'idle'}" style="font-size: 14px; opacity: ${motion ? 1 : 0.35};">🚶</span>
-                        <span title="Face ${face ? 'detected' : 'idle'}" style="line-height: 0;">
-                            ${iconImg('icon-profile-round.svg', 14, `opacity: ${face ? 1 : 0.35};`)}
-                        </span>
-                    </div>
+                    ${controlRow(cameraIcon, motionIcon, faceIcon)}
                 </div>
             </div>
         `;
     },
 
-    _renderTextToggle(idAttr, role, isOn, label) {
-        const busy = !!this._busyControl[`${idAttr}:${role}`];
+    /**
+     * Compact pill button. Color/text/icon swap based on `currentlyOn`.
+     * `palette.onIconInvert: true` flips the icon to white (filter) when
+     * the active background is dark/colored — letting us reuse black SVGs
+     * on colored bg without authoring multiple files.
+     */
+    _renderPill({ idAttr, role, currentlyOn, label, iconFile, title, busy = false, palette }) {
+        const p = palette;
+        const bg = currentlyOn ? p.onBg : p.offBg;
+        const text = currentlyOn ? p.onText : p.offText;
+        const border = currentlyOn ? p.onBorder : p.offBorder;
+        const invert = currentlyOn && p.onIconInvert;
         return `
-            <label title="${DevicesPage._escape(label)}" style="display: inline-flex; align-items: center; gap: 4px; cursor: ${busy ? 'wait' : 'pointer'}; opacity: ${busy ? 0.5 : 1}; font-size: 11px; flex-shrink: 0;"
-                onclick="event.stopPropagation();">
+            <button title="${DevicesPage._escape(title)}" ${busy ? 'disabled' : ''}
+                onclick="event.stopPropagation(); DevicesCard.toggleSwitch('${idAttr}', '${role}', ${currentlyOn})"
+                style="display: inline-flex; align-items: center; gap: 4px; padding: 2px 8px; border-radius: 12px; border: 1px solid ${border}; background: ${bg}; color: ${text}; cursor: ${busy ? 'wait' : 'pointer'}; opacity: ${busy ? 0.5 : 1}; font-size: 11px; font-weight: 500; line-height: 1.4;">
+                ${iconImg(iconFile, 11, invert ? 'filter: brightness(0) invert(1);' : '')}
                 <span>${DevicesPage._escape(label)}</span>
-                ${this._renderSwitchInner(idAttr, role, isOn, busy, 24, 12)}
-            </label>
-        `;
-    },
-
-    _renderIconToggle(idAttr, role, isOn, offIconFile, onIconFile, label) {
-        const busy = !!this._busyControl[`${idAttr}:${role}`];
-        return `
-            <label title="${DevicesPage._escape(label)}" style="display: inline-flex; align-items: center; gap: 3px; cursor: ${busy ? 'wait' : 'pointer'}; opacity: ${busy ? 0.5 : 1}; flex-shrink: 0;"
-                onclick="event.stopPropagation();">
-                ${iconImg(offIconFile, 12, `opacity: ${isOn ? 0.35 : 1};`)}
-                ${this._renderSwitchInner(idAttr, role, isOn, busy, 24, 12)}
-                ${iconImg(onIconFile, 12, `opacity: ${isOn ? 1 : 0.35};`)}
-            </label>
-        `;
-    },
-
-    _renderSwitchInner(idAttr, role, isOn, busy, w = 28, h = 16) {
-        const knobSize = h - 4;
-        const knobLeft = isOn ? (w - knobSize - 2) : 2;
-        return `
-            <span style="position: relative; display: inline-block; width: ${w}px; height: ${h}px;">
-                <input type="checkbox" ${isOn ? 'checked' : ''} ${busy ? 'disabled' : ''}
-                    onclick="event.stopPropagation(); DevicesCard.toggleSwitch('${idAttr}', '${role}', ${isOn})"
-                    style="opacity: 0; width: 0; height: 0;">
-                <span style="position: absolute; cursor: ${busy ? 'wait' : 'pointer'}; top: 0; left: 0; right: 0; bottom: 0; background: ${isOn ? 'var(--accent, #3b82f6)' : '#d1d5db'}; transition: 0.2s; border-radius: ${h}px;">
-                    <span style="position: absolute; left: ${knobLeft}px; top: 2px; width: ${knobSize}px; height: ${knobSize}px; background: white; border-radius: 50%; transition: 0.2s;"></span>
-                </span>
-            </span>
+            </button>
         `;
     },
 
