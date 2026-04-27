@@ -62,8 +62,14 @@ const METRIC_MAP = {
     'dark_mode':          s => ({ controls: { dark_mode: s.state === 'on' } }),
     'keep_screen_on':     s => ({ controls: { keep_screen_on: s.state === 'on' } }),
     'auto_brightness':    s => ({ controls: { auto_brightness: s.state === 'on' } }),
-    'volume':             s => ({ controls: { volume: toNum(s.state) } }),
-    'brightness':         s => ({ controls: { brightness: toNum(s.state) } }),
+    'volume':             s => ({ controls: {
+        volume:     toNum(s.state),
+        volume_max: toNum(s.attributes?.max),
+    }}),
+    'brightness':         s => ({ controls: {
+        brightness:     toNum(s.state),
+        brightness_max: toNum(s.attributes?.max),
+    }}),
     // media_player.<slug>_speaker — only matches when integration uses a slug-aligned name
     // (Fire TV, Samsung); legacy devices may have orphan media_players that don't match.
     'speaker':            s => ({ media: {

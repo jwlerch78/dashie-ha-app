@@ -325,3 +325,19 @@ body {
 .sidebar::-webkit-scrollbar-thumb:hover {
     background: var(--text-muted);
 }
+
+/* ============================================================
+   Dashie icons — mask-image based so SVG sources render in
+   currentColor regardless of how their fill/stroke was authored.
+   Use: <span class="dashie-icon" style="--icon: url('...'); --icon-size: 16px"></span>
+   ============================================================ */
+.dashie-icon {
+    display: inline-block;
+    flex-shrink: 0;
+    width: var(--icon-size, 16px);
+    height: var(--icon-size, 16px);
+    background-color: currentColor;
+    mask: var(--icon) center / contain no-repeat;
+    -webkit-mask: var(--icon) center / contain no-repeat;
+    vertical-align: middle;
+}
