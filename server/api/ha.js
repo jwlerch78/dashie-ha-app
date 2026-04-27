@@ -75,6 +75,81 @@ router.post('/rename', requireSignedIn, express.json(), async (req, res) => {
     }
 });
 
+/**
+ * Map of Console-side "role" names to (entity_id suffix, domain, on/off services).
+ * The Console doesn't need to know HA's entity_id naming or service names — it
+ * just sends `{ device_id, role, value }` and the add-on resolves to a
+ * `<domain>.<slug>_<entitySuffix>` entity_id and the appropriate service.
+ *
+ * For numeric entities (volume, brightness), we use number.set_value with `value` as service_data.
+ * For switches, value is boolean → switch.turn_on / switch.turn_off.
+ * For buttons (reload, refresh), value is ignored → button.press.
+ */
+const CONTROL_MAP = {
+    lock:                    { suffix: 'lock', domain: 'switch', kind: 'switch' },
+    screen:                  { suffix: 'screen', domain: 'switch', kind: 'switch' },
+    screensaver:             { suffix: 'screensaver', domain: 'switch', kind: 'switch' },
+    dark_mode:               { suffix: 'dark_mode', domain: 'switch', kind: 'switch' },
+    keep_screen_on:          { suffix: 'keep_screen_on', domain: 'switch', kind: 'switch' },
+    auto_brightness:         { suffix: 'auto_brightness', domain: 'switch', kind: 'switch' },
+    hide_sidebar:            { suffix: 'hide_sidebar', domain: 'switch', kind: 'switch' },
+    hide_tabs:               { suffix: 'hide_tabs', domain: 'switch', kind: 'switch' },
+    start_on_boot:           { suffix: 'start_on_boot', domain: 'switch', kind: 'switch' },
+    camera_stream_enabled:   { suffix: 'camera_stream_enabled', domain: 'switch', kind: 'switch' },
+    camera_software_encoding:{ suffix: 'camera_software_encoding', domain: 'switch', kind: 'switch' },
+    volume:                  { suffix: 'volume', domain: 'number', kind: 'number' },
+    brightness:              { suffix: 'brightness', domain: 'number', kind: 'number' },
+    zoom:                    { suffix: 'zoom', domain: 'number', kind: 'number' },
+    reload:                  { suffix: 'reload_dashboard', domain: 'button', kind: 'button' },
+    relaunch:                { suffix: 'restart_app', domain: 'button', kind: 'button' },
+    refresh:                 { suffix: 'refresh_webview', domain: 'button', kind: 'button' },
+    bring_to_foreground:     { suffix: 'bring_to_foreground', domain: 'button', kind: 'button' },
+    reboot:                  { suffix: 'reboot_device', domain: 'button', kind: 'button' },
+    clear_cache:             { suffix: 'clear_cache', domain: 'button', kind: 'button' },
+    clear_storage:           { suffix: 'clear_storage', domain: 'button', kind: 'button' },
+};
+
+/**
+ * POST /api/ha/control
+ * Body: { device_id: '<dashie hex>', role: 'lock'|'volume'|..., value: bool|number }
+ * Translates to a HA service call. Console doesn't need to know HA naming.
+ */
+router.post('/control', requireSignedIn, express.json(), async (req, res) => {
+    const { device_id, role, value } = req.body || {};
+    if (!device_id) return res.status(400).json({ error: 'device_id required' });
+    if (!role) return res.status(400).json({ error: 'role required' });
+    const map = CONTROL_MAP[role];
+    if (!map) return res.status(400).json({ error: `unknown role: ${role}` });
+
+    const slug = haWorker.getSlugForDevice(device_id);
+    if (!slug) return res.status(404).json({ error: 'device_not_found_or_offline' });
+    const entityId = `${map.domain}.${slug}_${map.suffix}`;
+
+    try {
+        let serviceName, serviceData = {};
+        if (map.kind === 'switch') {
+            serviceName = value ? 'turn_on' : 'turn_off';
+        } else if (map.kind === 'number') {
+            const num = Number(value);
+            if (!Number.isFinite(num)) return res.status(400).json({ error: 'value must be numeric' });
+            serviceName = 'set_value';
+            serviceData.value = num;
+        } else if (map.kind === 'button') {
+            serviceName = 'press';
+        } else {
+            return res.status(500).json({ error: 'unsupported control kind' });
+        }
+
+        await haRegistry.callService(map.domain, serviceName, entityId, serviceData);
+        // Trigger a poll so the next /api/ha/status reflects the new state.
+        haWorker.triggerRefresh(`post-${role}`);
+        res.json({ success: true, entity_id: entityId, service: `${map.domain}.${serviceName}` });
+    } catch (e) {
+        console.warn(`[api/ha] Control ${role}=${value} failed for ${device_id}: ${e.message}`);
+        res.status(500).json({ error: 'ha_control_failed', message: e.message });
+    }
+});
+
 /** GET /api/ha/devices — lookup helper for debugging. Returns the per-Dashie-id map
  *  the Console will use to compute name conflicts. Only readable when signed in. */
 router.get('/devices', requireSignedIn, async (req, res) => {

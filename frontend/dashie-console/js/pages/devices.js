@@ -306,50 +306,7 @@ const DevicesPage = {
         }
     },
 
-    _renderDeviceCard(device) {
-        const icon = this._deviceIcon(device.device_type);
-        const live = this._isLive(device);
-        const chips = this._getMetricsChips(device);
-        const statusChip = live
-            ? '<span class="status-dot online"></span> Live'
-            : `<span class="status-dot offline"></span> ${this._formatTime(device.last_seen_at)}`;
-        const idAttr = this._escape(device.device_id);
-        return `
-            <div class="card card-clickable" onclick="DevicesPage.showDetail('${idAttr}')">
-                <div class="card-body device-card">
-                    <div class="device-card-header">
-                        <div class="device-card-icon">${icon}</div>
-                        <div class="device-card-info">
-                            ${DevicesRename.renderNameRow(device, this._conflictHaName(device), 'card')}
-                            <div class="device-card-type">${this._escape(this._typeLabel(device))}</div>
-                            <div class="device-card-status">${statusChip}</div>
-                        </div>
-                    </div>
-                    ${chips.length ? `<div class="device-card-details">${chips.map(c => `<span class="device-card-detail">${c}</span>`).join('')}</div>` : ''}
-                </div>
-            </div>
-        `;
-    },
-
-    /** Chips built from user_devices.metrics JSONB (populated by the HA add-on worker). */
-    _getMetricsChips(device) {
-        const m = device.metrics || {};
-        const chips = [];
-        if (m.battery?.level != null) {
-            const icon = m.battery.charging ? '⚡' : '🔋';
-            chips.push(`${icon} ${m.battery.level}%`);
-        }
-        if (m.network?.wifi_signal_percent != null) {
-            chips.push(`📶 ${m.network.wifi_signal_percent}%`);
-        }
-        if (m.system?.ram_used_percent != null) {
-            chips.push(`RAM ${m.system.ram_used_percent}%`);
-        }
-        if (m.app?.app_version) {
-            chips.push(`v${this._escape(m.app.app_version)}`);
-        }
-        return chips;
-    },
+    _renderDeviceCard(device) { return DevicesCard.render(device); },
 
     _renderDetail() {
         const device = this._findDevice(this._detailDeviceId);

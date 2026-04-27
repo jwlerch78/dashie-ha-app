@@ -55,6 +55,15 @@ const METRIC_MAP = {
     'motion_detected':    s => ({ presence: { motion: s.state === 'on' } }),
     'face_detected':      s => ({ presence: { face: s.state === 'on' } }),
     'ambient_light':      s => ({ environment: { ambient_light: toNum(s.state) } }),
+    // Toggleable controls (state mirrored so the Console can render their current value)
+    'lock':               s => ({ controls: { lock: s.state === 'on' } }),
+    'screen':             s => ({ controls: { screen: s.state === 'on' } }),
+    'screensaver':        s => ({ controls: { screensaver: s.state === 'on' } }),
+    'dark_mode':          s => ({ controls: { dark_mode: s.state === 'on' } }),
+    'keep_screen_on':     s => ({ controls: { keep_screen_on: s.state === 'on' } }),
+    'auto_brightness':    s => ({ controls: { auto_brightness: s.state === 'on' } }),
+    'volume':             s => ({ controls: { volume: toNum(s.state) } }),
+    'brightness':         s => ({ controls: { brightness: toNum(s.state) } }),
 };
 
 /** Convert HA state string to number; coerce unavailable/unknown/NaN to null. */

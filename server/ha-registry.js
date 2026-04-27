@@ -210,6 +210,23 @@ async function renameDevice(dashieDeviceId, newName) {
     return updated;
 }
 
+/**
+ * Call an HA service (switch.turn_on, number.set_value, button.press, etc.)
+ * targeting a specific entity. Returns whatever HA echoes back.
+ */
+async function callService(domain, service, entityId, serviceData = {}) {
+    if (!domain || !service || !entityId) {
+        throw new Error('callService requires domain, service, entity_id');
+    }
+    return _send({
+        type: 'call_service',
+        domain,
+        service,
+        target: { entity_id: entityId },
+        service_data: serviceData,
+    });
+}
+
 /** Force a re-pull of the device registry (e.g., after we know HA changed). */
 function refresh() {
     registryCache = null;
@@ -238,5 +255,6 @@ module.exports = {
     stop,
     getDeviceByDashieId,
     renameDevice,
+    callService,
     refresh,
 };

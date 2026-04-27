@@ -25,6 +25,7 @@ let queued = false;
 let lastRun = null;       // { at, devices, ok, error? }
 let started = false;
 let lastSkipReason = null;  // de-dupes noisy skip-log spam
+let slugByDashieId = {};    // dashie_device_id → HA entity slug (e.g. 'fire_tv', 'rk3576_u')
 
 function logSkip(reason) {
     if (reason === lastSkipReason) return;
@@ -77,6 +78,12 @@ async function runPoll(reason = 'tick') {
 
         const states = await haClient.getStates();
         const devices = haMetrics.buildDeviceMetrics(states);
+        // Refresh the slug map so /api/ha/control can resolve entity_ids by Dashie device_id.
+        const newSlugMap = {};
+        for (const d of devices) {
+            if (d.dashieDeviceId && d.slug) newSlugMap[d.dashieDeviceId] = d.slug;
+        }
+        slugByDashieId = newSlugMap;
 
         if (devices.length === 0) {
             lastRun = {
@@ -188,4 +195,8 @@ function getStatus() {
     };
 }
 
-module.exports = { start, stop, triggerRefresh, getStatus };
+function getSlugForDevice(dashieDeviceId) {
+    return slugByDashieId[dashieDeviceId] || null;
+}
+
+module.exports = { start, stop, triggerRefresh, getStatus, getSlugForDevice };
