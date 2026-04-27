@@ -64,6 +64,14 @@ const METRIC_MAP = {
     'auto_brightness':    s => ({ controls: { auto_brightness: s.state === 'on' } }),
     'volume':             s => ({ controls: { volume: toNum(s.state) } }),
     'brightness':         s => ({ controls: { brightness: toNum(s.state) } }),
+    // media_player.<slug>_speaker — only matches when integration uses a slug-aligned name
+    // (Fire TV, Samsung); legacy devices may have orphan media_players that don't match.
+    'speaker':            s => ({ media: {
+        state:  s.state,
+        title:  s.attributes?.media_title || null,
+        artist: s.attributes?.media_artist || null,
+        album:  s.attributes?.media_album_name || null,
+    }}),
 };
 
 /** Convert HA state string to number; coerce unavailable/unknown/NaN to null. */
