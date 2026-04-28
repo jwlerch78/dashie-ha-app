@@ -236,6 +236,7 @@ const DevicesPage = {
             ${DevicesRename.conflictModal ? DevicesRename.renderModal(conflicts, d => this._conflictHaName(d)) : ''}
             ${DevicesCard.renderSliderModal()}
             ${DevicesCard.renderScreenshotModal()}
+            ${DevicesCard.renderHistoryModal()}
         `;
     },
 
@@ -443,6 +444,7 @@ const DevicesPage = {
             ${DevicesRename.conflictModal ? DevicesRename.renderModal(this._conflictDevices(), d => this._conflictHaName(d)) : ''}
             ${DevicesCard.renderSliderModal()}
             ${DevicesCard.renderScreenshotModal()}
+            ${DevicesCard.renderHistoryModal()}
         `;
     },
 

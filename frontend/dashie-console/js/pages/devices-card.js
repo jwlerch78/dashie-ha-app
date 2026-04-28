@@ -18,6 +18,7 @@ const DevicesCard = {
     _screenshotTs: {},  // deviceId → ms since-epoch — bumped on screen toggle so the
                         // <img src=…?t=…> cache-busts and grabs a fresh frame
     _screenshotModal: null, // { deviceId, src } when expanded screenshot is open
+    _historyOpen: null,     // { entityId, label } when history graph is open
 
     render(device) {
         const idAttr = DevicesPage._escape(device.device_id);
@@ -82,9 +83,11 @@ const DevicesCard = {
     _renderStatsRow(device, idAttr, m) {
         const chips = [];
         const slug = DevicesPage._haSlugForDevice(device.device_id);
-        // Battery + RAM are clickable when we know the slug → opens HA history graph in new tab.
+        const deviceLabel = device.device_name || 'Device';
+        // Battery / RAM / Wi-Fi chips are clickable when we know the slug → opens
+        // HA's history view in a Console modal (iframe), same origin as HA via Ingress.
         const historyLink = (entitySuffix, label) => slug
-            ? `style="cursor: pointer;" title="${label} — open HA history" onclick="event.stopPropagation(); DevicesCard.openHistory('${slug}', '${entitySuffix}')"`
+            ? `style="cursor: pointer;" title="${label} — open history" onclick="event.stopPropagation(); DevicesCard.openHistory('${slug}', '${entitySuffix}', '${DevicesPage._escape(deviceLabel + ' · ' + label)}')"`
             : '';
         if (m.battery?.level != null) {
             const charge = m.battery.charging ? '⚡' : '🔋';
@@ -351,18 +354,35 @@ const DevicesCard = {
 
     _maybeCloseScreenshot(e) { if (e.target === e.currentTarget) this.closeScreenshotModal(); },
 
-    /** Open HA's built-in history view for a sensor entity in a new tab.
-     *  Inside Ingress, document.baseURI ends with /api/hassio_ingress/<token>/,
-     *  so we resolve relative to window.location.origin (HA's hostname). */
-    openHistory(slug, entitySuffix) {
+    /** Open HA's built-in history view for a sensor entity inside a Console modal.
+     *  We're served via Ingress (same origin as HA), so the iframe inherits HA's
+     *  session cookies — no auth handshake needed. */
+    openHistory(slug, entitySuffix, label) {
         const entityId = `sensor.${slug}_${entitySuffix}`;
-        const url = `/history?entity_id=${encodeURIComponent(entityId)}`;
-        try {
-            window.open(url, '_blank', 'noopener');
-        } catch (e) {
-            console.warn('[DevicesCard] openHistory failed:', e.message);
-        }
+        this._historyOpen = { entityId, label: label || entityId };
+        App.renderPage();
     },
+
+    closeHistory() { this._historyOpen = null; App.renderPage(); },
+
+    renderHistoryModal() {
+        const h = this._historyOpen;
+        if (!h) return '';
+        const url = `/history?entity_id=${encodeURIComponent(h.entityId)}`;
+        return `
+            <div onclick="DevicesCard._maybeCloseHistory(event)" style="position: fixed; inset: 0; background: rgba(0,0,0,0.55); z-index: 1100; display: flex; align-items: center; justify-content: center; padding: 24px;">
+                <div onclick="event.stopPropagation()" class="card" style="width: min(960px, 95vw); max-height: 90vh; display: flex; flex-direction: column;">
+                    <div style="display: flex; align-items: center; justify-content: space-between; padding: 12px 16px; border-bottom: 1px solid var(--border, #e5e7eb);">
+                        <strong>${DevicesPage._escape(h.label)}</strong>
+                        <button onclick="DevicesCard.closeHistory()" style="background: none; border: 1px solid var(--border, #d1d5db); border-radius: 4px; padding: 4px 12px; cursor: pointer;">Close</button>
+                    </div>
+                    <iframe src="${url}" style="flex: 1; min-height: 70vh; border: 0; border-radius: 0 0 6px 6px;"></iframe>
+                </div>
+            </div>
+        `;
+    },
+
+    _maybeCloseHistory(e) { if (e.target === e.currentTarget) this.closeHistory(); },
 
     async pressButton(deviceId, role) {
         const key = `${deviceId}:${role}`;
