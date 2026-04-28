@@ -11,13 +11,16 @@ const DevicesCard = {
     _initialTs: Date.now(),
     _screenshotModal: null,
     _historyOpen: null,
-    _cameraModal: null,
 
     render(device) {
         const idAttr = DevicesPage._escape(device.device_id);
         const live = DevicesPage._isLive(device);
         const conflict = DevicesPage._conflictHaName(device);
-        const m = device.metrics || {};
+        // Prefer the worker's freshly-extracted metrics (refreshed every 5s)
+        // over the Supabase-cached row (refreshed every 30s) so motion/face
+        // and other live bits show up promptly.
+        const fresh = DevicesPage._freshDeviceFor(device.device_id);
+        const m = fresh?.metrics || device.metrics || {};
 
         const statusBadge = live
             ? '<span class="status-dot online" title="Live"></span>'
@@ -163,7 +166,7 @@ const DevicesCard = {
                 <span style="font-size: 11px;">Camera off</span>
             </div>`;
         const cameraPanel = cameraSrc
-            ? `<div style="${panelOuter} cursor: zoom-in;" onclick="event.stopPropagation(); DevicesCard.openCameraModal('${idAttr}')">
+            ? `<div style="${panelOuter} cursor: zoom-in;" onclick="event.stopPropagation(); DevicesCamera.open('${idAttr}')">
                    <img src="${cameraSrc}" alt="camera" style="${imgStyle}" onerror="this.style.display='none'; this.parentElement.querySelector('.placeholder-fallback').style.display='flex';">
                    <span class="placeholder-fallback" style="display: none; position: absolute; inset: 0; align-items: center; justify-content: center; font-size: 11px; color: var(--text-muted);">no camera</span>
                </div>`
@@ -371,23 +374,8 @@ const DevicesCard = {
     },
     _maybeCloseScreenshot(e) { if (e.target === e.currentTarget) this.closeScreenshotModal(); },
 
-    /** Camera live-feed modal — same MJPEG stream HA's more-info dialog uses. */
-    openCameraModal(deviceId) {
-        if (!DashieAuth.isAddonMode) return;
-        this._cameraModal = { deviceId };
-        App.renderPage();
-    },
-    closeCameraModal() { this._cameraModal = null; App.renderPage(); },
-    renderCameraModal() {
-        const m = this._cameraModal;
-        if (!m) return '';
-        const name = (DevicesPage._findDevice(m.deviceId)?.device_name || 'Camera') + ' · Live';
-        // /api/ha/stream/<id> 302-redirects to HA's camera_proxy_stream MJPEG URL.
-        // Browser handles the multipart response natively; no polling needed.
-        const src = DashieAuth._addonUrl(`/api/ha/stream/${encodeURIComponent(m.deviceId)}?t=${Date.now()}`);
-        return this._renderImageModal({ src, name, footer: '', closeFn: 'closeCameraModal', onBackdrop: '_maybeCloseCamera' });
-    },
-    _maybeCloseCamera(e) { if (e.target === e.currentTarget) this.closeCameraModal(); },
+    // Camera modal lives in devices-camera.js (DevicesCamera). Card-side stays minimal.
+    renderCameraModal() { return DevicesCamera.render(); },
 
     _renderImageModal({ src, name, imgId, footer, closeFn, onBackdrop }) {
         const escName = DevicesPage._escape(name);
@@ -405,9 +393,7 @@ const DevicesCard = {
         `;
     },
 
-    /** Open HA's built-in history view for a sensor entity inside a Console modal.
-     *  We're served via Ingress (same origin as HA), so the iframe inherits HA's
-     *  session cookies — no auth handshake needed. */
+    // History modal: HA's /history view in an iframe (same origin via Ingress).
     openHistory(slug, entitySuffix, label) {
         const entityId = `sensor.${slug}_${entitySuffix}`;
         this._historyOpen = { entityId, label: label || entityId };

@@ -28,9 +28,11 @@ const DevicesPage = {
     ARCHIVE_THRESHOLD_DAYS: 30,
     LIVE_THRESHOLD_SECONDS: 90,   // metrics_updated_at newer than this → "live" chip
     HA_STATUS_MAX_AGE_MS: 15 * 1000, // refetch /api/ha/status if older than this on render
-    AUTO_REFRESH_MS: 60 * 1000,   // chip+status poll cadence (doesn't bust screenshot URLs)
+    AUTO_REFRESH_MS: 5 * 1000,    // /api/ha/status poll cadence — fresh presence + chip data
+    LIST_DEVICES_REFRESH_MS: 60 * 1000,  // Supabase list_devices cadence (settings, structural)
 
     _pollTimer: null,
+    _lastListDevicesAt: 0,
 
     render() {
         if (!this._devices && !this._loading && !this._error) {
@@ -92,10 +94,15 @@ const DevicesPage = {
 
     async _refreshSilent() {
         try {
-            const result = await DashieAuth.dbRequest('list_devices', { tv_only: false, include_inactive: true });
-            this._devices = result.devices || result.data || [];
+            // Always refresh /api/ha/status (cheap, local). Skip the heavy list_devices
+            // call unless LIST_DEVICES_REFRESH_MS has elapsed.
             this._haStatusFetchedAt = 0;
             await this._fetchAddonStatus();
+            if (Date.now() - this._lastListDevicesAt >= this.LIST_DEVICES_REFRESH_MS) {
+                this._lastListDevicesAt = Date.now();
+                const result = await DashieAuth.dbRequest('list_devices', { tv_only: false, include_inactive: true });
+                this._devices = result.devices || result.data || [];
+            }
             App.renderPage();
         } catch (e) {
             console.warn('[DevicesPage] auto-refresh failed:', e.message);
@@ -167,6 +174,11 @@ const DevicesPage = {
     },
 
     _isLive(device) {
+        // If the worker has a fresh poll for this device with live data, it's live —
+        // independent of the Supabase metrics_updated_at timestamp (which only
+        // updates on upsert, every 30s).
+        const fresh = this._freshDeviceFor(device.device_id);
+        if (fresh?.has_live_data) return true;
         if (!device.metrics_updated_at) return false;
         const age = (Date.now() - new Date(device.metrics_updated_at).getTime()) / 1000;
         return age < this.LIVE_THRESHOLD_SECONDS;
@@ -182,11 +194,20 @@ const DevicesPage = {
     },
 
     /** Look up the HA entity slug (e.g. 'fire_tv') for a Dashie device_id from
-     *  the worker's last-poll synced[] map. Used to deep-link to HA history. */
+     *  the worker's last-poll synced[] / freshDevices. Used to deep-link to HA. */
     _haSlugForDevice(deviceId) {
+        const fresh = this._freshDeviceFor(deviceId);
+        if (fresh?.slug) return fresh.slug;
         const synced = this._haStatus?.lastRun?.upsertResult?.synced || [];
         const entry = synced.find(s => s?.device_id === deviceId);
         return entry?.ha_slug || null;
+    },
+
+    /** The worker's freshly-extracted per-device record (every 5s) — preferred
+     *  over the Supabase-cached row for live UI bits like motion/face. */
+    _freshDeviceFor(deviceId) {
+        const fresh = this._haStatus?.lastRun?.freshDevices || [];
+        return fresh.find(d => d.device_id === deviceId) || null;
     },
 
     _renderLoading() {

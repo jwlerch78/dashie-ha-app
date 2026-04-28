@@ -212,6 +212,16 @@ async function renameDevice(dashieDeviceId, newName) {
 }
 
 /**
+ * Get the HLS playlist URL for a camera entity. HA spins up its stream
+ * pipeline (RTSP → HLS via the `stream` integration) and returns a
+ * session URL like /api/hls/<token>/master_playlist.m3u8. This is the
+ * same call HA's own more-info dialog makes for the camera player.
+ */
+async function getCameraStreamUrl(entityId, format = 'hls') {
+    return _send({ type: 'camera/stream', entity_id: entityId, format });
+}
+
+/**
  * Call an HA service (switch.turn_on, number.set_value, button.press, etc.)
  * targeting a specific entity. Returns whatever HA echoes back.
  */
@@ -295,6 +305,7 @@ module.exports = {
     getDeviceByDashieId,
     getEntitiesForHaDevice,
     getAllEntities,
+    getCameraStreamUrl,
     renameDevice,
     callService,
     refresh,

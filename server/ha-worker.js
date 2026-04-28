@@ -15,7 +15,13 @@ const haRegistry = require('./ha-registry');
 const auth = require('./auth');
 const { SUPABASE } = require('./config');
 
-const POLL_INTERVAL_MS = 30 * 1000;
+// Worker polls HA every POLL_INTERVAL_MS but only upserts to Supabase every
+// SUPABASE_UPSERT_INTERVAL_MS. The faster local poll keeps lastRun fresh so
+// the Console (which reads /api/ha/status frequently) sees near-live presence
+// values without hammering Supabase.
+const POLL_INTERVAL_MS = 5 * 1000;
+const SUPABASE_UPSERT_INTERVAL_MS = 30 * 1000;
+let lastUpsertAt = 0;
 // Metrics upserts go to the database-operations edge fn (where the device handlers live);
 // auth.js still talks to jwt-auth for login/refresh.
 const DB_OPS_URL = SUPABASE.url + '/functions/v1/database-operations';
@@ -109,6 +115,36 @@ async function runPoll(reason = 'tick') {
             return;
         }
 
+        // Always update freshDevices (in-memory only) so Console can pull
+        // near-live presence/state via /api/ha/status without waiting for the
+        // next Supabase upsert.
+        const freshDevices = devices.map(d => ({
+            device_id: d.dashieDeviceId,
+            device_name: d.deviceName,
+            slug: d.slug,
+            metrics: d.metrics,
+            has_live_data: d.hasLiveData,
+        }));
+
+        // Throttle Supabase upserts to avoid hammering the DB. The fast in-memory
+        // poll runs every POLL_INTERVAL_MS (5s); upserts run every SUPABASE_UPSERT_INTERVAL_MS (30s).
+        const now = Date.now();
+        const shouldUpsert = (now - lastUpsertAt) >= SUPABASE_UPSERT_INTERVAL_MS || reason === 'startup';
+        if (!shouldUpsert) {
+            lastRun = {
+                at: new Date().toISOString(),
+                ok: true,
+                devices: devices.length,
+                live: devices.filter(d => d.hasLiveData).length,
+                durationMs: Date.now() - startedAt,
+                upsertResult: lastRun?.upsertResult,
+                freshDevices,
+                upsertSkipped: 'throttled',
+            };
+            return;
+        }
+        lastUpsertAt = now;
+
         // Upsert metrics via database-operations edge fn. Tolerant of the op not being
         // deployed yet (logs once, keeps looping).
         let upsertResult = null;
@@ -152,6 +188,7 @@ async function runPoll(reason = 'tick') {
             skippedNoId,
             durationMs: Date.now() - startedAt,
             upsertResult,
+            freshDevices,
         };
         console.log(`[ha-worker] Poll ok (${reason}): ${devices.length} device(s), ${lastRun.live} live → ${updated} upserted, ${unmatched} unmatched, ${skippedNoId} no-id, ${lastRun.durationMs}ms`);
         if (unmatched > 0) {
