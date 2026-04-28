@@ -342,9 +342,10 @@ body {
     vertical-align: middle;
 }
 
-/* Devices page: wider cards so the screenshot + camera media area has more room. */
+/* Devices page: matches default card-grid; aliased so we have a hook
+   if we want to tune later without touching every other page. */
 .devices-grid {
     display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(420px, 1fr));
+    grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
     gap: var(--gap);
 }

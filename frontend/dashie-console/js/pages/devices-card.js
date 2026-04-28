@@ -175,8 +175,10 @@ const DevicesCard = {
         `;
 
         // Three-column layout per media row: left / center / right justified.
+        // 10% horizontal padding indents the left+right items inward so they don't sit
+        // flush against the card edge.
         const controlRow = (left, center, right) => `
-            <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; align-items: center; gap: 4px; margin-top: 8px;">
+            <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; align-items: center; gap: 4px; margin-top: 8px; padding: 0 10%;">
                 <div style="justify-self: start; display: inline-flex;">${left}</div>
                 <div style="justify-self: center; display: inline-flex;">${center}</div>
                 <div style="justify-self: end; display: inline-flex;">${right}</div>
