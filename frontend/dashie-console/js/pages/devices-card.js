@@ -48,7 +48,10 @@ const DevicesCard = {
         const conflictChip = conflict
             ? `<span title="HA: ${DevicesPage._escape(conflict)}" style="color: var(--accent); font-size: 11px; margin-left: 6px;">⚠</span>`
             : '';
-        const lockOpacity = lockBusy ? 0.4 : (locked ? 1 : 0.3);
+        const lockIconFile = locked ? 'icon-lock.svg' : 'icon-unlock.svg';
+        // Locked: full opacity. Unlocked: 50% so the two states are clearly distinct
+        // even when the lock vs unlock SVG shapes are subtle differences at 18px.
+        const lockOpacity = lockBusy ? 0.4 : (locked ? 1 : 0.5);
         return `
             <div style="display: flex; align-items: flex-start; gap: 10px;">
                 <div class="device-card-icon" style="flex-shrink: 0;">${icon}</div>
@@ -58,7 +61,7 @@ const DevicesCard = {
                         <button title="${locked ? 'Locked — tap to unlock' : 'Unlocked — tap to lock'}" ${lockBusy ? 'disabled' : ''}
                             onclick="event.stopPropagation(); DevicesCard.toggleSwitch('${idAttr}', 'lock', ${locked})"
                             style="background: none; border: none; cursor: ${lockBusy ? 'wait' : 'pointer'}; padding: 0; line-height: 0;">
-                            ${iconImg('icon-lock.svg', 16, `opacity: ${lockOpacity};`)}
+                            ${iconImg(lockIconFile, 18, `opacity: ${lockOpacity};`)}
                         </button>
                         ${conflictChip}
                     </div>
@@ -159,15 +162,15 @@ const DevicesCard = {
 
         const motionIcon = `
             <span title="Motion ${motion ? 'detected' : 'idle'}"
-                  style="display: inline-flex; align-items: center; padding: 2px; font-size: 16px; opacity: ${motion ? 1 : 0.35};">
-                🚶
+                  style="display: inline-flex; align-items: center; padding: 2px; line-height: 0;">
+                ${iconImg('icon-motion-detection.svg', 20, `opacity: ${motion ? 1 : 0.35};`)}
             </span>
         `;
 
         const faceIcon = `
             <span title="Face ${face ? 'detected' : 'idle'}"
                   style="display: inline-flex; align-items: center; padding: 2px; line-height: 0;">
-                ${iconImg('icon-profile-round.svg', 18, `opacity: ${face ? 1 : 0.35};`)}
+                ${iconImg('icon-face-detection.svg', 20, `opacity: ${face ? 1 : 0.35};`)}
             </span>
         `;
 
@@ -180,13 +183,15 @@ const DevicesCard = {
             </div>
         `;
 
+        // min-width: 0 forces the 1fr grid columns to actually share width equally
+        // (without it, content can push the screenshot column wider than the camera column).
         return `
             <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 12px;">
-                <div>
+                <div style="min-width: 0;">
                     <div style="${ph}">screenshot</div>
                     ${controlRow(reloadIcon, screenPill, lightDarkPill)}
                 </div>
-                <div>
+                <div style="min-width: 0;">
                     <div style="${ph}">camera</div>
                     ${controlRow(cameraIcon, motionIcon, faceIcon)}
                 </div>

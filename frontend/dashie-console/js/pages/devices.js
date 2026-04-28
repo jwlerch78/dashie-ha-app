@@ -207,7 +207,7 @@ const DevicesPage = {
             return `<p class="empty-state-text" style="margin: 16px 0;">No active devices in the last ${this.ARCHIVE_THRESHOLD_DAYS} days.</p>`;
         }
         const cards = devices.map(d => this._renderDeviceCard(d)).join('');
-        return `<div class="card-grid">${cards}</div>`;
+        return `<div class="devices-grid">${cards}</div>`;
     },
 
     _renderDiscoveredSection() {

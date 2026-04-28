@@ -341,3 +341,10 @@ body {
     -webkit-mask: var(--icon) center / contain no-repeat;
     vertical-align: middle;
 }
+
+/* Devices page: wider cards so the screenshot + camera media area has more room. */
+.devices-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(420px, 1fr));
+    gap: var(--gap);
+}
