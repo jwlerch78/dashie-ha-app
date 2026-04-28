@@ -219,17 +219,19 @@ const DevicesCard = {
             </button>
         `;
 
+        // Active = orange-tinted SVG (same filter the camera icon uses for "streaming")
+        // + slight scale bump for emphasis. Idle = faded gray.
+        const detectActiveStyle = cameraOrange + ' transform: scale(1.15);';
         const motionIcon = `
             <span title="Motion ${motion ? 'detected' : 'idle'}"
-                  style="display: inline-flex; align-items: center; padding: 2px; line-height: 0;">
-                ${iconImg('icon-motion-detection.svg', 20, `opacity: ${motion ? 1 : 0.35};`)}
+                  style="display: inline-flex; align-items: center; padding: 2px; line-height: 0; transition: transform 120ms ease;">
+                ${iconImg('icon-motion-detection.svg', 20, motion ? detectActiveStyle : 'opacity: 0.35;')}
             </span>
         `;
-
         const faceIcon = `
             <span title="Face ${face ? 'detected' : 'idle'}"
-                  style="display: inline-flex; align-items: center; padding: 2px; line-height: 0;">
-                ${iconImg('icon-face-detection.svg', 20, `opacity: ${face ? 1 : 0.35};`)}
+                  style="display: inline-flex; align-items: center; padding: 2px; line-height: 0; transition: transform 120ms ease;">
+                ${iconImg('icon-face-detection.svg', 20, face ? detectActiveStyle : 'opacity: 0.35;')}
             </span>
         `;
 

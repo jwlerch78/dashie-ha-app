@@ -41,25 +41,45 @@ const DevicesCamera = {
         const video = document.getElementById('devices-camera-modal-video');
         if (!video) return;
         if (this._hls) { try { this._hls.destroy(); } catch {} this._hls = null; }
+        console.log('[DevicesCamera] attaching HLS:', url);
         if (video.canPlayType('application/vnd.apple.mpegurl')) {
-            video.src = url; video.play().catch(() => {});
+            // Native HLS (Safari).
+            video.src = url;
+            video.play().catch(err => console.warn('[DevicesCamera] native play failed:', err));
         } else if (typeof Hls !== 'undefined' && Hls.isSupported()) {
             const hls = new Hls({ lowLatencyMode: true, backBufferLength: 30 });
-            hls.loadSource(url); hls.attachMedia(video);
-            hls.on(Hls.Events.MANIFEST_PARSED, () => video.play().catch(() => {}));
+            hls.on(Hls.Events.ERROR, (_evt, data) => {
+                console.warn('[DevicesCamera] hls.js error:', data?.type, data?.details, data?.fatal ? '(fatal)' : '');
+                if (data?.fatal && this._open) {
+                    Object.assign(this._open, { error: `${data.type}: ${data.details || 'unknown'}` });
+                    App.renderPage();
+                }
+            });
+            hls.on(Hls.Events.MANIFEST_PARSED, () => {
+                console.log('[DevicesCamera] manifest parsed; starting playback');
+                video.play().catch(err => console.warn('[DevicesCamera] play failed:', err));
+            });
+            hls.loadSource(url);
+            hls.attachMedia(video);
             this._hls = hls;
-        } else { video.src = url; }
+        } else {
+            console.warn('[DevicesCamera] no HLS support; falling back to direct src');
+            video.src = url;
+        }
     },
 
     render() {
         const m = this._open;
         if (!m) return '';
         const name = (DevicesPage._findDevice(m.deviceId)?.device_name || 'Camera') + ' · Live';
+        // Give the video element a real size while waiting for the stream so the
+        // modal doesn't collapse to a tiny default-controls box.
+        const videoSize = 'width: 80vw; max-width: 1200px; aspect-ratio: 16/9; max-height: 80vh; border-radius: 6px; background: #000;';
         const body = m.loading
-            ? `<div style="color: white; padding: 80px 0; text-align: center;">Loading stream…</div>`
+            ? `<div style="${videoSize} display: flex; align-items: center; justify-content: center; color: white; font-size: 14px;">Loading stream…</div>`
             : m.error
-                ? `<div style="color: #f87171; padding: 80px 0; text-align: center;">Stream failed: ${DevicesPage._escape(m.error)}</div>`
-                : `<video id="devices-camera-modal-video" autoplay muted playsinline controls style="max-width: 95vw; max-height: 80vh; border-radius: 6px; background: #000;"></video>`;
+                ? `<div style="${videoSize} display: flex; align-items: center; justify-content: center; color: #f87171; font-size: 14px; padding: 24px; box-sizing: border-box;">Stream failed: ${DevicesPage._escape(m.error)}</div>`
+                : `<video id="devices-camera-modal-video" autoplay muted playsinline controls style="${videoSize} object-fit: contain; display: block;"></video>`;
         return `
             <div onclick="DevicesCamera._maybeClose(event)" style="position: fixed; inset: 0; background: rgba(0,0,0,0.85); z-index: 1100; display: flex; align-items: center; justify-content: center; padding: 24px; cursor: zoom-out;">
                 <div onclick="event.stopPropagation()" style="max-width: 95vw; max-height: 92vh; display: flex; flex-direction: column; gap: 10px;">
