@@ -26,6 +26,9 @@ let ws = null;
 let connectionPromise = null;       // resolves when authed; rejects on auth fail
 let nextMsgId = 1;
 const pending = new Map();          // id → { resolve, reject, timer }
+const eventHandlers = new Map();    // subscription id → handler(eventBody)
+const stateChangeListeners = new Set();
+let stateChangedSubId = null;
 let reconnectAttempts = 0;
 let reconnectTimer = null;
 let registryCache = null;           // { byDashieId: Map, byHaId: Map, fetchedAt }
@@ -93,6 +96,12 @@ function _connect() {
                 sock.close();
                 return;
             }
+            // Subscribed events arrive as type:'event' with the original subscribe id.
+            if (msg.type === 'event' && msg.id != null && eventHandlers.has(msg.id)) {
+                const handler = eventHandlers.get(msg.id);
+                try { handler(msg.event); } catch (e) { console.warn('[ha-registry] event handler threw:', e.message); }
+                return;
+            }
             if (msg.id != null && pending.has(msg.id)) {
                 const { resolve: r, reject: rj, timer } = pending.get(msg.id);
                 clearTimeout(timer);
@@ -116,8 +125,17 @@ function _connect() {
                 rj(new Error('HA WS closed'));
             }
             pending.clear();
+            // Drop the subscription id so listeners get re-subscribed on next connect.
+            if (stateChangedSubId !== null) eventHandlers.delete(stateChangedSubId);
+            stateChangedSubId = null;
             if (!authResolved) reject(new Error('HA WS closed before auth'));
-            if (!stopped) _scheduleReconnect();
+            if (!stopped) {
+                _scheduleReconnect();
+                // After reconnect, re-establish state_changed subscription if anyone wants it.
+                if (stateChangeListeners.size > 0) {
+                    setTimeout(() => _ensureStateChangedSubscription().catch(() => {}), 3000);
+                }
+            }
         });
 
         sock.on('error', (err) => {
@@ -209,6 +227,33 @@ async function renameDevice(dashieDeviceId, newName) {
     // Invalidate so subsequent reads see the new name.
     registryCache = null;
     return updated;
+}
+
+/**
+ * Subscribe to HA's state_changed events. The first call sends the actual WS
+ * subscribe message; subsequent callers piggyback on the same subscription.
+ * Returns an unsubscribe function for the caller's slot.
+ *
+ * Re-establishes the subscription automatically after a WS reconnect, so
+ * callers don't need to re-subscribe.
+ */
+async function subscribeStateChanged(callback) {
+    stateChangeListeners.add(callback);
+    await _ensureStateChangedSubscription();
+    return () => stateChangeListeners.delete(callback);
+}
+
+async function _ensureStateChangedSubscription() {
+    if (stateChangedSubId !== null) return;
+    await _connect();
+    const id = nextMsgId++;
+    stateChangedSubId = id;
+    eventHandlers.set(id, (event) => {
+        for (const cb of stateChangeListeners) {
+            try { cb(event); } catch (e) { console.warn('[ha-registry] listener threw:', e.message); }
+        }
+    });
+    ws.send(JSON.stringify({ id, type: 'subscribe_events', event_type: 'state_changed' }));
 }
 
 /**
@@ -306,6 +351,7 @@ module.exports = {
     getEntitiesForHaDevice,
     getAllEntities,
     getCameraStreamUrl,
+    subscribeStateChanged,
     renameDevice,
     callService,
     refresh,

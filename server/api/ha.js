@@ -236,6 +236,74 @@ router.get('/stream/:deviceId', requireSignedIn, async (req, res) => {
     }
 });
 
+/**
+ * GET /api/ha/events
+ * Server-Sent Events stream of HA state_changed events filtered to Dashie-integration
+ * entities. Each event is enriched with {device_id, role, state, attributes} so the
+ * Console doesn't need entity_registry knowledge to react to a change.
+ *
+ * Same data HA's own UI gets via WebSocket — pushed in real time (~50–200ms latency).
+ */
+const sseClients = new Set();
+let sseUnsubscribe = null;
+
+async function _ensureStateChangedFanout() {
+    if (sseUnsubscribe) return;
+    sseUnsubscribe = await haRegistry.subscribeStateChanged(async (event) => {
+        const data = event?.data;
+        if (!data?.entity_id || !data?.new_state) return;
+        // Resolve to a Dashie device + role using cached entity_registry.
+        try {
+            const entities = await haRegistry.getAllEntities();
+            const entry = entities.find(e => e.entity_id === data.entity_id);
+            if (!entry?.device_id) return;
+            // Find the dashie device_id from the HA device's identifiers tuple.
+            const allDashieIds = haWorker.getStatus().lastRun?.freshDevices?.map(d => d.device_id) || [];
+            let dashieId = null;
+            for (const id of allDashieIds) {
+                const dev = await haRegistry.getDeviceByDashieId(id);
+                if (dev?.id === entry.device_id) { dashieId = id; break; }
+            }
+            if (!dashieId) return;
+            // Role from unique_id ({dashieId}_{role}) — falls back to entity_id suffix.
+            let role = null;
+            if (entry.unique_id?.startsWith(dashieId + '_')) role = entry.unique_id.slice(dashieId.length + 1);
+            const payload = JSON.stringify({
+                type: 'state',
+                device_id: dashieId,
+                role,
+                entity_id: data.entity_id,
+                state: data.new_state.state,
+                attributes: data.new_state.attributes,
+            });
+            for (const res of sseClients) {
+                try { res.write(`data: ${payload}\n\n`); } catch {}
+            }
+        } catch (e) {
+            console.warn('[api/ha/events] event enrich failed:', e.message);
+        }
+    });
+}
+
+router.get('/events', requireSignedIn, async (req, res) => {
+    res.set({
+        'Content-Type': 'text/event-stream',
+        'Cache-Control': 'no-cache, no-transform',
+        'Connection': 'keep-alive',
+        'X-Accel-Buffering': 'no',
+    });
+    res.flushHeaders?.();
+    res.write(': connected\n\n');
+    sseClients.add(res);
+    try { await _ensureStateChangedFanout(); }
+    catch (e) { console.warn('[api/ha/events] subscribe failed:', e.message); }
+
+    const heartbeat = setInterval(() => {
+        try { res.write(': hb\n\n'); } catch { clearInterval(heartbeat); }
+    }, 25 * 1000);
+    req.on('close', () => { clearInterval(heartbeat); sseClients.delete(res); });
+});
+
 /** GET /api/ha/devices — lookup helper for debugging. Returns the per-Dashie-id map
  *  the Console will use to compute name conflicts. Only readable when signed in. */
 router.get('/devices', requireSignedIn, async (req, res) => {

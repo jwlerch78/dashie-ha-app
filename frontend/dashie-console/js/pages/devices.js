@@ -33,6 +33,9 @@ const DevicesPage = {
 
     _pollTimer: null,
     _lastListDevicesAt: 0,
+    /** Live overrides: device_id → { role: { state, attrs } } applied over the
+     *  worker's freshDevices metrics. Updated by SSE state_changed events. */
+    _liveOverrides: {},
 
     render() {
         if (!this._devices && !this._loading && !this._error) {
@@ -74,6 +77,7 @@ const DevicesPage = {
             this._devices = devicesResult.devices || devicesResult.data || [];
             this._loading = false;
             this._startAutoRefresh();
+            DevicesEvents.start();
             App.renderPage();
         } catch (e) {
             console.error('[DevicesPage] Fetch failed:', e);
@@ -203,11 +207,56 @@ const DevicesPage = {
         return entry?.ha_slug || null;
     },
 
-    /** The worker's freshly-extracted per-device record (every 5s) — preferred
-     *  over the Supabase-cached row for live UI bits like motion/face. */
+    /** The worker's freshly-extracted per-device record (every 5s), with any
+     *  live SSE overrides merged in. The merge maps state_changed events to
+     *  the relevant slots in metrics.controls / metrics.presence. */
     _freshDeviceFor(deviceId) {
-        const fresh = this._haStatus?.lastRun?.freshDevices || [];
-        return fresh.find(d => d.device_id === deviceId) || null;
+        const fresh = (this._haStatus?.lastRun?.freshDevices || []).find(d => d.device_id === deviceId);
+        const overrides = this._liveOverrides[deviceId];
+        if (!fresh || !overrides) return fresh || null;
+        const metrics = JSON.parse(JSON.stringify(fresh.metrics || {}));
+        for (const [role, val] of Object.entries(overrides)) this._mergeRoleIntoMetrics(metrics, role, val);
+        return { ...fresh, metrics };
+    },
+
+    /** Apply an incoming SSE state event into _liveOverrides. */
+    _applyLiveOverride(msg) {
+        const cur = this._liveOverrides[msg.device_id] || {};
+        cur[msg.role] = { state: msg.state, attrs: msg.attributes || {} };
+        this._liveOverrides[msg.device_id] = cur;
+    },
+
+    /** Translate a (role, state, attrs) into the metrics shape buildDeviceMetrics produces. */
+    _mergeRoleIntoMetrics(metrics, role, val) {
+        const s = val.state, a = val.attrs || {};
+        const num = v => (v === null || v === undefined || v === 'unavailable' || v === 'unknown' || isNaN(Number(v))) ? null : Number(v);
+        const map = {
+            battery:           () => { metrics.battery = { ...(metrics.battery||{}), level: num(s), plugged: !!a.plugged }; },
+            plugged_in:        () => { metrics.battery = { ...(metrics.battery||{}), charging: s === 'on', plug_source: a.plug_source ?? null }; },
+            ram_usage:         () => { metrics.system = { ...(metrics.system||{}), ram_used_percent: num(s), ram_total_mb: a.total_mb ?? null, ram_available_mb: a.available_mb ?? null, app_pss_mb: a.app_pss_mb ?? null }; },
+            wifi_signal:       () => { metrics.network = { ...(metrics.network||{}), wifi_signal_percent: num(s), wifi_ssid: a.ssid ?? null, ip_address: a.ip_address ?? null, mac_address: a.mac_address ?? null }; },
+            storage_free:      () => { metrics.storage = { ...(metrics.storage||{}), free_gb: num(s), total_gb: a.total_gb ?? null }; },
+            android_version:   () => { metrics.app = { ...(metrics.app||{}), android_version: s, device_model: a.device_model ?? null, device_manufacturer: a.device_manufacturer ?? null }; },
+            app_version:       () => { metrics.app = { ...(metrics.app||{}), app_version: s, version_code: a.version_code ?? null }; },
+            current_page:      () => { metrics.app = { ...(metrics.app||{}), current_page: s }; },
+            screensaver_active:() => { metrics.screensaver = { active: s === 'on' }; },
+            motion_detected:   () => { metrics.presence = { ...(metrics.presence||{}), motion: s === 'on' }; },
+            face_detected:     () => { metrics.presence = { ...(metrics.presence||{}), face: s === 'on' }; },
+            ambient_light:     () => { metrics.environment = { ambient_light: num(s) }; },
+            lock:              () => { metrics.controls = { ...(metrics.controls||{}), lock: s === 'on' }; },
+            screen:            () => { metrics.controls = { ...(metrics.controls||{}), screen: s === 'on' }; },
+            screensaver:       () => { metrics.controls = { ...(metrics.controls||{}), screensaver: s === 'on' }; },
+            dark_mode:         () => { metrics.controls = { ...(metrics.controls||{}), dark_mode: s === 'on' }; },
+            keep_screen_on:    () => { metrics.controls = { ...(metrics.controls||{}), keep_screen_on: s === 'on' }; },
+            auto_brightness:   () => { metrics.controls = { ...(metrics.controls||{}), auto_brightness: s === 'on' }; },
+            volume:            () => { metrics.controls = { ...(metrics.controls||{}), volume: num(s) }; },
+            brightness:        () => { metrics.controls = { ...(metrics.controls||{}), brightness: num(s) }; },
+            camera_stream_url: () => { metrics.controls = { ...(metrics.controls||{}), camera_stream_url: (s && s !== 'unavailable' && s !== 'unknown') ? s : null }; },
+            camera:            () => { metrics.controls = { ...(metrics.controls||{}), camera_streaming: s === 'streaming' }; },
+            rtsp_stream:       () => { metrics.controls = { ...(metrics.controls||{}), camera_stream_enabled: s === 'on' }; },
+        };
+        const fn = map[role];
+        if (fn) fn();
     },
 
     _renderLoading() {
