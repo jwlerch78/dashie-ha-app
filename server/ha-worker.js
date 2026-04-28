@@ -106,6 +106,7 @@ async function runPoll(reason = 'tick') {
                     device_id: d.dashieDeviceId,
                     device_name: d.deviceName,        // anchor friendly_name minus " Device ID"
                     ha_device_name: d.deviceName,     // same source; sent so the edge fn / Console can detect collisions
+                    ha_slug: d.slug,                  // entity_id slug (e.g. 'fire_tv') so Console can deep-link to HA
                     metrics: d.metrics,
                     has_live_data: d.hasLiveData,
                 })),

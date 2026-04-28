@@ -81,15 +81,20 @@ const DevicesCard = {
 
     _renderStatsRow(device, idAttr, m) {
         const chips = [];
+        const slug = DevicesPage._haSlugForDevice(device.device_id);
+        // Battery + RAM are clickable when we know the slug → opens HA history graph in new tab.
+        const historyLink = (entitySuffix, label) => slug
+            ? `style="cursor: pointer;" title="${label} — open HA history" onclick="event.stopPropagation(); DevicesCard.openHistory('${slug}', '${entitySuffix}')"`
+            : '';
         if (m.battery?.level != null) {
             const charge = m.battery.charging ? '⚡' : '🔋';
-            chips.push(`<span class="device-card-detail">${charge} ${m.battery.level}%</span>`);
-        }
-        if (m.network?.wifi_signal_percent != null) {
-            chips.push(`<span class="device-card-detail">📶 ${m.network.wifi_signal_percent}%</span>`);
+            chips.push(`<span class="device-card-detail" ${historyLink('battery', 'Battery')}>${charge} ${m.battery.level}%</span>`);
         }
         if (m.system?.ram_used_percent != null) {
-            chips.push(`<span class="device-card-detail">RAM ${m.system.ram_used_percent}%</span>`);
+            chips.push(`<span class="device-card-detail" ${historyLink('ram_usage', 'RAM')}>RAM ${m.system.ram_used_percent}%</span>`);
+        }
+        if (m.network?.wifi_signal_percent != null) {
+            chips.push(`<span class="device-card-detail" ${historyLink('wifi_signal', 'Wi-Fi')}>📶 ${m.network.wifi_signal_percent}%</span>`);
         }
         const room = device.metrics?.ha_area || device.ha_area;
         if (room) chips.push(`<span class="device-card-detail">🏠 ${DevicesPage._escape(room)}</span>`);
@@ -122,9 +127,10 @@ const DevicesCard = {
     _renderMediaRow(device, idAttr, m) {
         const panelOuter = 'position: relative; background: var(--bg-muted, #f7f7f8); border: 1px dashed var(--border, #e5e7eb); border-radius: 4px; aspect-ratio: 16/9; overflow: hidden;';
         const panelEmpty = panelOuter + 'display: flex; align-items: center; justify-content: center; font-size: 11px; color: var(--text-muted);';
-        // Per-device cache-bust: defaults to a per-minute floor; bumped on screen toggle
-        // (or any other action that should refresh the frame) via toggleSwitch.
-        const ts = this._screenshotTs[device.device_id] || Math.floor(Date.now() / 60000);
+        // Per-device cache-bust: defaults to a per-30-second floor (matches the
+        // page's auto-refresh poll cadence); bumped on screen toggle (or any other
+        // action that should refresh the frame) via toggleSwitch.
+        const ts = this._screenshotTs[device.device_id] || Math.floor(Date.now() / 30000);
         const imageReady = DashieAuth.isAddonMode && device.metrics_updated_at;
         const screenshotSrc = imageReady
             ? DashieAuth._addonUrl(`/api/ha/image/${encodeURIComponent(device.device_id)}/screenshot?t=${ts}`)
@@ -344,6 +350,19 @@ const DevicesCard = {
     },
 
     _maybeCloseScreenshot(e) { if (e.target === e.currentTarget) this.closeScreenshotModal(); },
+
+    /** Open HA's built-in history view for a sensor entity in a new tab.
+     *  Inside Ingress, document.baseURI ends with /api/hassio_ingress/<token>/,
+     *  so we resolve relative to window.location.origin (HA's hostname). */
+    openHistory(slug, entitySuffix) {
+        const entityId = `sensor.${slug}_${entitySuffix}`;
+        const url = `/history?entity_id=${encodeURIComponent(entityId)}`;
+        try {
+            window.open(url, '_blank', 'noopener');
+        } catch (e) {
+            console.warn('[DevicesCard] openHistory failed:', e.message);
+        }
+    },
 
     async pressButton(deviceId, role) {
         const key = `${deviceId}:${role}`;

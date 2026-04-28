@@ -28,6 +28,9 @@ const DevicesPage = {
     ARCHIVE_THRESHOLD_DAYS: 30,
     LIVE_THRESHOLD_SECONDS: 90,   // metrics_updated_at newer than this → "live" chip
     HA_STATUS_MAX_AGE_MS: 15 * 1000, // refetch /api/ha/status if older than this on render
+    AUTO_REFRESH_MS: 30 * 1000,   // poll list_devices + /api/ha/status while page is visible
+
+    _pollTimer: null,
 
     render() {
         if (!this._devices && !this._loading && !this._error) {
@@ -68,12 +71,37 @@ const DevicesPage = {
             ]);
             this._devices = devicesResult.devices || devicesResult.data || [];
             this._loading = false;
+            this._startAutoRefresh();
             App.renderPage();
         } catch (e) {
             console.error('[DevicesPage] Fetch failed:', e);
             this._error = e.message;
             this._loading = false;
             App.renderPage();
+        }
+    },
+
+    /** Background re-fetch of list_devices + /api/ha/status every AUTO_REFRESH_MS
+     *  so the live/offline status, metrics, and screenshots stay current as long
+     *  as the page is visible. Started after first successful load. */
+    _startAutoRefresh() {
+        if (this._pollTimer) return;
+        this._pollTimer = setInterval(() => {
+            if (document.visibilityState === 'hidden') return;
+            this._refreshSilent();
+        }, this.AUTO_REFRESH_MS);
+    },
+
+    async _refreshSilent() {
+        try {
+            const result = await DashieAuth.dbRequest('list_devices', { tv_only: false, include_inactive: true });
+            this._devices = result.devices || result.data || [];
+            // Force the addon-status to refetch on the next render cycle.
+            this._haStatusFetchedAt = 0;
+            await this._fetchAddonStatus();
+            App.renderPage();
+        } catch (e) {
+            console.warn('[DevicesPage] auto-refresh failed:', e.message);
         }
     },
 
@@ -136,6 +164,14 @@ const DevicesPage = {
     _conflictHaName(device) { return DevicesRename.conflictHaName(device, this._haStatus); },
     _conflictDevices() {
         return DevicesRename.conflictDevices(this._devices, d => this._isArchived(d), this._haStatus);
+    },
+
+    /** Look up the HA entity slug (e.g. 'fire_tv') for a Dashie device_id from
+     *  the worker's last-poll synced[] map. Used to deep-link to HA history. */
+    _haSlugForDevice(deviceId) {
+        const synced = this._haStatus?.lastRun?.upsertResult?.synced || [];
+        const entry = synced.find(s => s?.device_id === deviceId);
+        return entry?.ha_slug || null;
     },
 
     _renderLoading() {
