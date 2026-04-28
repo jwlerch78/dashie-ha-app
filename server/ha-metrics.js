@@ -69,6 +69,14 @@ const METRIC_MAP = {
     'camera_stream_url':  s => ({ controls: {
         camera_stream_url: (s.state && s.state !== 'unavailable' && s.state !== 'unknown') ? s.state : null,
     }}),
+    // The camera entity itself — state is 'streaming' / 'idle' / 'unavailable'.
+    // Authoritative signal for "is the camera currently producing frames"
+    // (more reliable than reading the switch state — which has unique_id
+    // 'rtsp_stream' on some devices and 'camera_stream_enabled' on others).
+    'camera':             s => ({ controls: { camera_streaming: s.state === 'streaming' } }),
+    // Legacy unique_id alias: the integration uses 'rtsp_stream' as the
+    // unique_id role for the camera-on/off switch on some devices.
+    'rtsp_stream':        s => ({ controls: { camera_stream_enabled: s.state === 'on' } }),
     'volume':             s => ({ controls: {
         volume:     toNum(s.state),
         volume_max: toNum(s.attributes?.max),

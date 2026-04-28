@@ -144,7 +144,11 @@ const DevicesCard = {
         const screenshotSrc = imageReady
             ? DashieAuth._addonUrl(`/api/ha/image/${encodeURIComponent(device.device_id)}/screenshot?t=${ts}`)
             : null;
-        const cameraSrc = imageReady && m.controls?.camera_stream_enabled
+        // Camera live frame iff the device's camera entity is in 'streaming' state
+        // (camera_streaming) or — fallback for devices that don't surface that —
+        // the camera_stream_enabled switch is on.
+        const cameraLive = m.controls?.camera_streaming || m.controls?.camera_stream_enabled;
+        const cameraSrc = imageReady && cameraLive
             ? DashieAuth._addonUrl(`/api/ha/image/${encodeURIComponent(device.device_id)}/camera?t=${ts}`)
             : null;
         const imgStyle = 'width: 100%; height: 100%; object-fit: cover; display: block;';
@@ -183,7 +187,7 @@ const DevicesCard = {
                 : `<div style="${panelEmpty}">camera</div>`);
         const dark = !!m.controls?.dark_mode;
         const screenOn = m.controls?.screen !== false;
-        const cameraOn = !!m.controls?.camera_stream_enabled;
+        const cameraOn = !!(m.controls?.camera_streaming || m.controls?.camera_stream_enabled);
         const motion = !!m.presence?.motion;
         const face = !!m.presence?.face;
         const reloadBusy = !!this._busyControl[`${device.device_id}:reload`];
