@@ -48,9 +48,11 @@ const DevicesCard = {
         const conflictChip = conflict
             ? `<span title="HA: ${DevicesPage._escape(conflict)}" style="color: var(--accent); font-size: 11px; margin-left: 6px;">⚠</span>`
             : '';
-        const lockIconFile = locked ? 'icon-lock.svg' : 'icon-unlock.svg';
-        // Locked: full opacity. Unlocked: 50% so the two states are clearly distinct
-        // even when the lock vs unlock SVG shapes are subtle differences at 18px.
+        // Use a colored circular badge for locked state vs a dim outline for unlocked —
+        // the SVG lock vs unlock shapes are too similar at small sizes to convey state on their own.
+        const lockBg = locked ? '#f97316' : 'transparent';
+        const lockBorder = locked ? '#f97316' : '#d1d5db';
+        const lockFilter = locked ? 'filter: brightness(0) invert(1);' : '';
         const lockOpacity = lockBusy ? 0.4 : (locked ? 1 : 0.5);
         return `
             <div style="display: flex; align-items: flex-start; gap: 10px;">
@@ -60,8 +62,8 @@ const DevicesCard = {
                         <span>${DevicesPage._escape(device.device_name || 'Unnamed Device')}</span>
                         <button title="${locked ? 'Locked — tap to unlock' : 'Unlocked — tap to lock'}" ${lockBusy ? 'disabled' : ''}
                             onclick="event.stopPropagation(); DevicesCard.toggleSwitch('${idAttr}', 'lock', ${locked})"
-                            style="background: none; border: none; cursor: ${lockBusy ? 'wait' : 'pointer'}; padding: 0; line-height: 0;">
-                            ${iconImg(lockIconFile, 18, `opacity: ${lockOpacity};`)}
+                            style="background: ${lockBg}; border: 1px solid ${lockBorder}; cursor: ${lockBusy ? 'wait' : 'pointer'}; padding: 3px; border-radius: 50%; line-height: 0; opacity: ${lockOpacity};">
+                            ${iconImg('icon-lock.svg', 12, lockFilter)}
                         </button>
                         ${conflictChip}
                     </div>
@@ -113,7 +115,25 @@ const DevicesCard = {
     },
 
     _renderMediaRow(device, idAttr, m) {
-        const ph = 'background: var(--bg-muted, #f7f7f8); border: 1px dashed var(--border, #e5e7eb); border-radius: 4px; aspect-ratio: 16/9; display: flex; align-items: center; justify-content: center; font-size: 11px; color: var(--text-muted);';
+        const ph = 'background: var(--bg-muted, #f7f7f8); border: 1px dashed var(--border, #e5e7eb); border-radius: 4px; aspect-ratio: 16/9; display: flex; align-items: center; justify-content: center; font-size: 11px; color: var(--text-muted); overflow: hidden;';
+        // Live image proxy URLs — only when we're inside the add-on (proxies live there).
+        // Cache-bust per minute so each render reuses the cached frame within a minute,
+        // then fetches fresh on the next minute. Keeps the load reasonable while feeling live.
+        const cacheBust = Math.floor(Date.now() / 60000);
+        const imageReady = DashieAuth.isAddonMode && device.metrics_updated_at;
+        const screenshotSrc = imageReady
+            ? DashieAuth._addonUrl(`/api/ha/image/${encodeURIComponent(device.device_id)}/screenshot?t=${cacheBust}`)
+            : null;
+        const cameraSrc = imageReady && m.controls?.camera_stream_enabled
+            ? DashieAuth._addonUrl(`/api/ha/image/${encodeURIComponent(device.device_id)}/camera?t=${cacheBust}`)
+            : null;
+        const imgStyle = 'width: 100%; height: 100%; object-fit: cover; display: block;';
+        const screenshotPanel = screenshotSrc
+            ? `<div style="${ph}"><img src="${screenshotSrc}" alt="screenshot" style="${imgStyle}" onerror="this.style.display='none'; this.parentElement.textContent='no screenshot';"></div>`
+            : `<div style="${ph}">screenshot</div>`;
+        const cameraPanel = cameraSrc
+            ? `<div style="${ph}"><img src="${cameraSrc}" alt="camera" style="${imgStyle}" onerror="this.style.display='none'; this.parentElement.textContent='no camera';"></div>`
+            : `<div style="${ph}">${m.controls?.camera_stream_enabled === false ? 'camera off' : 'camera'}</div>`;
         const dark = !!m.controls?.dark_mode;
         const screenOn = m.controls?.screen !== false;
         const cameraOn = !!m.controls?.camera_stream_enabled;
@@ -135,21 +155,19 @@ const DevicesCard = {
         const screenPill = this._renderPill({
             idAttr, role: 'screen',
             currentlyOn: screenOn,
-            label: screenOn ? 'On' : 'Off',
             iconFile: 'icon-tv.svg',
             busy: screenBusy,
             title: screenOn ? 'Screen on — tap to turn off' : 'Screen off — tap to turn on',
-            palette: { onBg: '#10b981', offBg: '#f3f4f6', onText: '#ffffff', offText: '#374151', onBorder: '#10b981', offBorder: '#d1d5db', onIconInvert: true },
+            palette: { onBg: '#10b981', offBg: '#f3f4f6', onBorder: '#10b981', offBorder: '#d1d5db', onIconInvert: true },
         });
 
         const lightDarkPill = this._renderPill({
             idAttr, role: 'dark_mode',
             currentlyOn: dark,
-            label: dark ? 'Dark' : 'Light',
             iconFile: dark ? 'icon-moon.svg' : 'icon-sun.svg',
             busy: darkBusy,
             title: dark ? 'Dark mode — tap for light' : 'Light mode — tap for dark',
-            palette: { onBg: '#1f2937', offBg: '#ffffff', onText: '#ffffff', offText: '#1f2937', onBorder: '#1f2937', offBorder: '#d1d5db', onIconInvert: true },
+            palette: { onBg: '#1f2937', offBg: '#ffffff', onBorder: '#1f2937', offBorder: '#d1d5db', onIconInvert: true },
         });
 
         const cameraIcon = `
@@ -190,11 +208,11 @@ const DevicesCard = {
         return `
             <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 12px;">
                 <div style="min-width: 0;">
-                    <div style="${ph}">screenshot</div>
+                    ${screenshotPanel}
                     ${controlRow(reloadIcon, screenPill, lightDarkPill)}
                 </div>
                 <div style="min-width: 0;">
-                    <div style="${ph}">camera</div>
+                    ${cameraPanel}
                     ${controlRow(cameraIcon, motionIcon, faceIcon)}
                 </div>
             </div>
@@ -207,18 +225,16 @@ const DevicesCard = {
      * the active background is dark/colored — letting us reuse black SVGs
      * on colored bg without authoring multiple files.
      */
-    _renderPill({ idAttr, role, currentlyOn, label, iconFile, title, busy = false, palette }) {
+    _renderPill({ idAttr, role, currentlyOn, iconFile, title, busy = false, palette }) {
         const p = palette;
         const bg = currentlyOn ? p.onBg : p.offBg;
-        const text = currentlyOn ? p.onText : p.offText;
         const border = currentlyOn ? p.onBorder : p.offBorder;
         const invert = currentlyOn && p.onIconInvert;
         return `
             <button title="${DevicesPage._escape(title)}" ${busy ? 'disabled' : ''}
                 onclick="event.stopPropagation(); DevicesCard.toggleSwitch('${idAttr}', '${role}', ${currentlyOn})"
-                style="display: inline-flex; align-items: center; gap: 4px; padding: 2px 8px; border-radius: 12px; border: 1px solid ${border}; background: ${bg}; color: ${text}; cursor: ${busy ? 'wait' : 'pointer'}; opacity: ${busy ? 0.5 : 1}; font-size: 11px; font-weight: 500; line-height: 1.4;">
-                ${iconImg(iconFile, 11, invert ? 'filter: brightness(0) invert(1);' : '')}
-                <span>${DevicesPage._escape(label)}</span>
+                style="display: inline-flex; align-items: center; justify-content: center; padding: 4px 10px; border-radius: 999px; border: 1px solid ${border}; background: ${bg}; cursor: ${busy ? 'wait' : 'pointer'}; opacity: ${busy ? 0.5 : 1}; line-height: 0;">
+                ${iconImg(iconFile, 14, invert ? 'filter: brightness(0) invert(1);' : '')}
             </button>
         `;
     },

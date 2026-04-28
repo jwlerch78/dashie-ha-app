@@ -150,6 +150,51 @@ router.post('/control', requireSignedIn, express.json(), async (req, res) => {
     }
 });
 
+/**
+ * GET /api/ha/image/:deviceId/:role
+ * Proxies HA's image_proxy / camera_proxy so the Console can render the latest
+ * screenshot or camera snapshot via a same-origin <img>. Resolves the device's
+ * slug + entity_id, looks up the entity_picture URL via /api/states, then
+ * pipes the bytes back. role = 'screenshot' | 'camera'.
+ */
+const haClient = require('../ha-client');
+router.get('/image/:deviceId/:role', requireSignedIn, async (req, res) => {
+    const { deviceId, role } = req.params;
+    if (role !== 'screenshot' && role !== 'camera') {
+        return res.status(400).json({ error: 'unknown role (screenshot|camera)' });
+    }
+    const slug = haWorker.getSlugForDevice(deviceId);
+    if (!slug) return res.status(404).json({ error: 'device not found or offline' });
+    const entityId = role === 'screenshot' ? `image.${slug}_screenshot` : `camera.${slug}_camera`;
+
+    try {
+        const state = await haClient.getState(entityId);
+        if (!state) return res.status(404).json({ error: 'entity not found' });
+        const entityPicture = state.attributes?.entity_picture;
+        if (!entityPicture) return res.status(404).json({ error: 'entity has no entity_picture' });
+
+        const config = haClient.getConfig();
+        const fullUrl = entityPicture.startsWith('http')
+            ? entityPicture
+            : config.baseUrl + entityPicture;
+        const upstream = await fetch(fullUrl, {
+            headers: { Authorization: `Bearer ${config.token}` },
+        });
+        if (!upstream.ok) {
+            return res.status(502).json({ error: `HA returned ${upstream.status}` });
+        }
+        const ctype = upstream.headers.get('content-type') || 'image/jpeg';
+        res.set('Content-Type', ctype);
+        // Short cache so a periodic timestamp-bust on the Console gets fresh frames.
+        res.set('Cache-Control', 'no-cache, max-age=5');
+        const buf = Buffer.from(await upstream.arrayBuffer());
+        res.send(buf);
+    } catch (e) {
+        console.warn(`[api/ha/image] ${entityId} failed: ${e.message}`);
+        res.status(500).json({ error: 'proxy_failed', message: e.message });
+    }
+});
+
 /** GET /api/ha/devices — lookup helper for debugging. Returns the per-Dashie-id map
  *  the Console will use to compute name conflicts. Only readable when signed in. */
 router.get('/devices', requireSignedIn, async (req, res) => {
