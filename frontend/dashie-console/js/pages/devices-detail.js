@@ -48,6 +48,7 @@ const DevicesDetail = {
             ${DevicesCard.renderSliderModal()}
             ${DevicesCard.renderScreenshotModal()}
             ${DevicesCard.renderHistoryModal()}
+            ${DevicesCard.renderCameraModal()}
         `;
     },
 

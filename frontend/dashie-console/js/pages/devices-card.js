@@ -1,13 +1,5 @@
-/* ============================================================
-   Devices Card — list-view markup + interactive controls.
-   Layout:
-     header: [icon] name [lock]    [status]
-     stats:  battery / wifi / RAM / room / volume / brightness
-     media:  [screenshot]      [camera]
-             [↻ Screen ☀⚪🌙]   [📷 motion face]
-     bottom: Artist — Song (only when playing)
-   ============================================================ */
-
+// Devices card: header [icon name lock status] / stats chips / media row
+// (screenshot+camera with controls) / music strip when playing.
 const ICON = path => `assets/icons/${path}`;
 const iconImg = (path, size = 16, extraStyle = '') =>
     `<img src="${ICON(path)}" alt="" style="width: ${size}px; height: ${size}px; vertical-align: middle; ${extraStyle}">`;
@@ -15,13 +7,12 @@ const iconImg = (path, size = 16, extraStyle = '') =>
 const DevicesCard = {
     _busyControl: {},   // `${deviceId}:${role}` → bool
     _sliderOpen: null,
-    // Per-device screenshot cache-bust timestamp. Defaults to a stable value for
-    // the current page-load session so periodic re-renders don't flash the
-    // thumbnails. Bumped on user-initiated refresh OR after a screen toggle.
-    _screenshotTs: {},
+    _screenshotTs: {},  // per-device cache-bust ts; bumped on manual refresh / post-toggle
     _initialTs: Date.now(),
     _screenshotModal: null,
     _historyOpen: null,
+    _cameraModal: null,
+    _cameraModalTimer: null,
 
     render(device) {
         const idAttr = DevicesPage._escape(device.device_id);
@@ -47,17 +38,12 @@ const DevicesCard = {
 
     _renderHeader(device, idAttr, statusBadge, conflict) {
         const icon = DevicesPage._deviceIcon(device.device_type);
-        // HA's switch.<slug>_lock — state 'on' = currently locked.
-        // We always render icon-lock.svg, using opacity to convey state
-        // (icon-unlock.svg looks too similar at 16px to be reliably distinguishable).
+        // Colored badge for locked, outline+lower-opacity for unlocked.
         const locked = !!device.metrics?.controls?.lock;
         const lockBusy = !!this._busyControl[`${device.device_id}:lock`];
         const conflictChip = conflict
             ? `<span title="HA: ${DevicesPage._escape(conflict)}" style="color: var(--accent); font-size: 11px; margin-left: 6px;">⚠</span>`
             : '';
-        // Colored circular badge for locked state, outline-only for unlocked.
-        // Combined with swapping icon-lock.svg ↔ icon-unlock.svg (now visually distinct)
-        // this gives a clear at-a-glance read at small sizes.
         const lockBg = locked ? '#f97316' : 'transparent';
         const lockBorder = locked ? '#f97316' : '#d1d5db';
         const lockFilter = locked ? 'filter: brightness(0) invert(1);' : '';
@@ -171,20 +157,18 @@ const DevicesCard = {
         // Camera offline = configured but currently off (camera_stream_enabled === false).
         // Show a clear "Camera offline" placeholder with a slashed camera icon.
         const cameraConfigured = m.controls?.camera_stream_enabled !== undefined;
+        const slashSvg = (size, color = '#9ca3af', strokeW = 2.5) => `<span style="position: absolute; inset: 0; pointer-events: none;"><svg viewBox="0 0 ${size} ${size}" style="width: 100%; height: 100%;"><line x1="${size*0.15}" y1="${size*0.85}" x2="${size*0.85}" y2="${size*0.15}" stroke="${color}" stroke-width="${strokeW}" stroke-linecap="round"/></svg></span>`;
+        const cameraOffPanel = `
+            <div style="${panelOuter} display: flex; align-items: center; justify-content: center; flex-direction: column; gap: 6px; color: var(--text-muted);">
+                <span style="position: relative; display: inline-block; line-height: 0; width: 32px; height: 32px;">${iconImg('icon-video-camera.svg', 28, 'opacity: 0.5;')}${slashSvg(32)}</span>
+                <span style="font-size: 11px;">Camera off</span>
+            </div>`;
         const cameraPanel = cameraSrc
-            ? `<div style="${panelOuter}">
+            ? `<div style="${panelOuter} cursor: zoom-in;" onclick="event.stopPropagation(); DevicesCard.openCameraModal('${idAttr}')">
                    <img src="${cameraSrc}" alt="camera" style="${imgStyle}" onerror="this.style.display='none'; this.parentElement.querySelector('.placeholder-fallback').style.display='flex';">
                    <span class="placeholder-fallback" style="display: none; position: absolute; inset: 0; align-items: center; justify-content: center; font-size: 11px; color: var(--text-muted);">no camera</span>
                </div>`
-            : (cameraConfigured && m.controls.camera_stream_enabled === false
-                ? `<div style="${panelOuter} display: flex; align-items: center; justify-content: center; flex-direction: column; gap: 6px; color: var(--text-muted);">
-                       <span style="position: relative; display: inline-block; line-height: 0;">
-                           ${iconImg('icon-video-camera.svg', 28, 'opacity: 0.45;')}
-                           <span style="position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; font-size: 32px; color: #9ca3af; transform: rotate(-15deg);">/</span>
-                       </span>
-                       <span style="font-size: 11px;">Camera offline</span>
-                   </div>`
-                : `<div style="${panelEmpty}">camera</div>`);
+            : cameraOffPanel;
         const dark = !!m.controls?.dark_mode;
         const screenOn = m.controls?.screen !== false;
         const cameraOn = !!(m.controls?.camera_streaming || m.controls?.camera_stream_enabled);
@@ -222,11 +206,14 @@ const DevicesCard = {
             palette: { onBg: '#1f2937', offBg: '#ffffff', onBorder: '#1f2937', offBorder: '#d1d5db', onIconInvert: true },
         });
 
+        // Camera icon: orange (#f97316) filter when streaming; gray + diagonal slash when off.
+        const cameraOrange = 'filter: brightness(0) saturate(100%) invert(54%) sepia(90%) saturate(2018%) hue-rotate(354deg) brightness(101%) contrast(98%);';
         const cameraIcon = `
             <button title="${cameraOn ? 'Camera streaming — tap to stop' : 'Camera off — tap to start'}" ${camBusy ? 'disabled' : ''}
                 onclick="event.stopPropagation(); DevicesCard.toggleSwitch('${idAttr}', 'camera_stream_enabled', ${cameraOn})"
-                style="background: none; border: none; cursor: ${camBusy ? 'wait' : 'pointer'}; padding: 2px; line-height: 0; display: inline-flex; align-items: center;">
-                ${iconImg('icon-video-camera.svg', 18, `opacity: ${cameraOn ? 1 : 0.35};`)}
+                style="background: none; border: none; cursor: ${camBusy ? 'wait' : 'pointer'}; padding: 2px; line-height: 0; display: inline-flex; align-items: center; position: relative;">
+                ${iconImg('icon-video-camera.svg', 18, cameraOn ? cameraOrange : 'opacity: 0.45;')}
+                ${cameraOn ? '' : slashSvg(18, '#9ca3af', 2)}
             </button>
         `;
 
@@ -380,22 +367,52 @@ const DevicesCard = {
     renderScreenshotModal() {
         const m = this._screenshotModal;
         if (!m) return '';
-        const device = DevicesPage._findDevice(m.deviceId);
-        const name = device?.device_name || 'Screenshot';
+        const name = DevicesPage._findDevice(m.deviceId)?.device_name || 'Screenshot';
+        return this._renderImageModal({ src: m.src, name, footer: '', closeFn: 'closeScreenshotModal', onBackdrop: '_maybeCloseScreenshot' });
+    },
+    _maybeCloseScreenshot(e) { if (e.target === e.currentTarget) this.closeScreenshotModal(); },
+
+    /** Camera live-feed modal — refreshes the camera proxy snapshot every 1.5s. */
+    openCameraModal(deviceId) {
+        if (!DashieAuth.isAddonMode) return;
+        this._cameraModal = { deviceId };
+        App.renderPage();
+        if (this._cameraModalTimer) clearInterval(this._cameraModalTimer);
+        this._cameraModalTimer = setInterval(() => {
+            const img = document.getElementById('devices-camera-modal-img');
+            if (!img || !this._cameraModal) { clearInterval(this._cameraModalTimer); this._cameraModalTimer = null; return; }
+            img.src = DashieAuth._addonUrl(`/api/ha/image/${encodeURIComponent(this._cameraModal.deviceId)}/camera?t=${Date.now()}`);
+        }, 1500);
+    },
+    closeCameraModal() {
+        this._cameraModal = null;
+        if (this._cameraModalTimer) { clearInterval(this._cameraModalTimer); this._cameraModalTimer = null; }
+        App.renderPage();
+    },
+    renderCameraModal() {
+        const m = this._cameraModal;
+        if (!m) return '';
+        const name = (DevicesPage._findDevice(m.deviceId)?.device_name || 'Camera') + ' · Live';
+        const src = DashieAuth._addonUrl(`/api/ha/image/${encodeURIComponent(m.deviceId)}/camera?t=${Date.now()}`);
+        return this._renderImageModal({ src, name, imgId: 'devices-camera-modal-img', footer: 'Refreshing every 1.5s', closeFn: 'closeCameraModal', onBackdrop: '_maybeCloseCamera' });
+    },
+    _maybeCloseCamera(e) { if (e.target === e.currentTarget) this.closeCameraModal(); },
+
+    _renderImageModal({ src, name, imgId, footer, closeFn, onBackdrop }) {
+        const escName = DevicesPage._escape(name);
         return `
-            <div onclick="DevicesCard._maybeCloseScreenshot(event)" style="position: fixed; inset: 0; background: rgba(0,0,0,0.85); z-index: 1100; display: flex; align-items: center; justify-content: center; padding: 24px; cursor: zoom-out;">
+            <div onclick="DevicesCard.${onBackdrop}(event)" style="position: fixed; inset: 0; background: rgba(0,0,0,0.85); z-index: 1100; display: flex; align-items: center; justify-content: center; padding: 24px; cursor: zoom-out;">
                 <div onclick="event.stopPropagation()" style="max-width: 95vw; max-height: 92vh; display: flex; flex-direction: column; gap: 10px;">
                     <div style="display: flex; align-items: center; justify-content: space-between; color: white;">
-                        <strong>${DevicesPage._escape(name)}</strong>
-                        <button onclick="DevicesCard.closeScreenshotModal()" style="background: rgba(255,255,255,0.15); color: white; border: 1px solid rgba(255,255,255,0.25); border-radius: 4px; padding: 4px 12px; cursor: pointer;">Close</button>
+                        <strong>${escName}</strong>
+                        <button onclick="DevicesCard.${closeFn}()" style="background: rgba(255,255,255,0.15); color: white; border: 1px solid rgba(255,255,255,0.25); border-radius: 4px; padding: 4px 12px; cursor: pointer;">Close</button>
                     </div>
-                    <img src="${m.src}" alt="${DevicesPage._escape(name)}" style="max-width: 95vw; max-height: 80vh; object-fit: contain; border-radius: 6px; background: #000;">
+                    <img ${imgId ? `id="${imgId}"` : ''} src="${src}" alt="${escName}" style="max-width: 95vw; max-height: 80vh; object-fit: contain; border-radius: 6px; background: #000;">
+                    ${footer ? `<div style="color: rgba(255,255,255,0.65); font-size: 11px; text-align: center;">${footer}</div>` : ''}
                 </div>
             </div>
         `;
     },
-
-    _maybeCloseScreenshot(e) { if (e.target === e.currentTarget) this.closeScreenshotModal(); },
 
     /** Open HA's built-in history view for a sensor entity inside a Console modal.
      *  We're served via Ingress (same origin as HA), so the iframe inherits HA's
@@ -522,14 +539,12 @@ const DevicesCard = {
         `;
     },
 
-    /** Mute = set volume to 0 immediately (no Save needed). */
     async mute() {
         const s = this._sliderOpen;
         if (!s || s.role !== 'volume') return;
         s.value = 0;
         await this._submitSliderValue(0);
     },
-    /** Unmute = set volume to a sensible default (5/10) immediately. */
     async unmute() {
         const s = this._sliderOpen;
         if (!s || s.role !== 'volume') return;

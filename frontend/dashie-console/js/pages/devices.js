@@ -252,6 +252,7 @@ const DevicesPage = {
             ${DevicesCard.renderSliderModal()}
             ${DevicesCard.renderScreenshotModal()}
             ${DevicesCard.renderHistoryModal()}
+            ${DevicesCard.renderCameraModal()}
         `;
     },
 
