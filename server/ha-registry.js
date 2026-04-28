@@ -262,6 +262,15 @@ async function getEntitiesForHaDevice(haDeviceId, { force = false } = {}) {
     return entities;
 }
 
+/** Returns the full HA entity_registry as a flat array (cached). Used by the
+ *  worker to build a per-device metrics view without slug-based heuristics. */
+async function getAllEntities({ force = false } = {}) {
+    if (force || !entityRegistryCache) await _refreshEntityRegistryCache();
+    const all = [];
+    for (const arr of entityRegistryCache.byHaDeviceId.values()) all.push(...arr);
+    return all;
+}
+
 function start() {
     if (!isAvailable()) {
         console.log('[ha-registry] Not configured (no SUPERVISOR_TOKEN or DASHIE_HA_URL+TOKEN); rename will be unavailable.');
@@ -285,6 +294,7 @@ module.exports = {
     stop,
     getDeviceByDashieId,
     getEntitiesForHaDevice,
+    getAllEntities,
     renameDevice,
     callService,
     refresh,

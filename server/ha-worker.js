@@ -11,6 +11,7 @@
 
 const haClient = require('./ha-client');
 const haMetrics = require('./ha-metrics');
+const haRegistry = require('./ha-registry');
 const auth = require('./auth');
 const { SUPABASE } = require('./config');
 
@@ -77,7 +78,18 @@ async function runPoll(reason = 'tick') {
         }
 
         const states = await haClient.getStates();
-        const devices = haMetrics.buildDeviceMetrics(states);
+        // Pull HA's entity_registry so we group entities by HA device_id (the
+        // integration's source of truth) instead of slug-matching. Falls back
+        // to slug-based grouping if the WS isn't available.
+        let entityRegistry = null;
+        if (haRegistry.isAvailable()) {
+            try {
+                entityRegistry = await haRegistry.getAllEntities();
+            } catch (e) {
+                console.warn(`[ha-worker] entity_registry fetch failed; falling back to slug grouping: ${e.message}`);
+            }
+        }
+        const devices = haMetrics.buildDeviceMetrics(states, entityRegistry);
         // Refresh the slug map so /api/ha/control can resolve entity_ids by Dashie device_id.
         const newSlugMap = {};
         for (const d of devices) {

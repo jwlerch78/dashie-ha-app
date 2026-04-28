@@ -1,5 +1,5 @@
 name: Dashie Hub
-version: "0.1.26"
+version: "0.1.27"
 slug: dashie
 description: Dashie Hub — manage your Dashie family dashboards from inside Home Assistant.
 url: https://github.com/jwlerch78/dashie-ha-app

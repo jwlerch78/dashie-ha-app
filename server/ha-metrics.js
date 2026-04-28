@@ -149,20 +149,107 @@ function findAnchors(states) {
  * Turn raw HA /api/states output into an array of per-device records.
  *   [{ deviceName, slug, dashieDeviceId, metrics, entityCount, hasLiveData }, ...]
  *
- * deviceName: the HA device label (anchor's friendly_name minus " Device ID")
- * slug:       e.g. 'fire_tv' — used to group the device's entities
- * dashieDeviceId: 16-hex Android fingerprint, or null if anchor sensor is unavailable
- * metrics:    final JSONB, sanitized
- * entityCount: number of entities matched to this device (for debugging)
- * hasLiveData: true if any key metric (battery/ram/wifi/app) has a non-null value
+ * If `entityRegistry` (a flat array of HA entity_registry entries with
+ * { entity_id, device_id, unique_id }) is provided, group entities by HA's
+ * device_id (the integration's source of truth) and parse roles from
+ * unique_id (`{dashieDeviceId}_{role}`). This handles tablets whose
+ * entity_ids span multiple slug prefixes due to renames or re-registration.
+ *
+ * Without entityRegistry, falls back to slug-based grouping (legacy path).
  */
-function buildDeviceMetrics(states) {
+function buildDeviceMetrics(states, entityRegistry = null) {
+    if (Array.isArray(entityRegistry) && entityRegistry.length > 0) {
+        return _buildViaRegistry(states, entityRegistry);
+    }
+    return _buildViaSlug(states);
+}
+
+function _buildViaRegistry(states, entityRegistry) {
     const anchors = findAnchors(states);
     if (anchors.length === 0) return [];
 
-    // Each anchor contributes a slug. Compute them all up front so we can
-    // disambiguate cases where one slug is a strict prefix of another
-    // (e.g., slug "fire_tv" vs "fire_tv_stick" — we'd want exclusive matching).
+    const stateById = {};
+    for (const s of states) stateById[s.entity_id] = s;
+
+    const regByEntityId = {};
+    for (const e of entityRegistry) regByEntityId[e.entity_id] = e;
+
+    const entitiesByHaDevice = new Map();
+    for (const e of entityRegistry) {
+        if (!e.device_id) continue;
+        if (!entitiesByHaDevice.has(e.device_id)) entitiesByHaDevice.set(e.device_id, []);
+        entitiesByHaDevice.get(e.device_id).push(e);
+    }
+
+    const results = [];
+    for (const anchor of anchors) {
+        const anchorEntry = regByEntityId[anchor.entity_id];
+        if (!anchorEntry?.device_id) continue;
+        const haDeviceId = anchorEntry.device_id;
+
+        const dashieDeviceId = (anchor.state === 'unavailable' || anchor.state === 'unknown' || !anchor.state)
+            ? null
+            : anchor.state;
+
+        // Slug from anchor entity_id — still useful for the api/ha/control flow
+        // (which constructs entity_ids like switch.<slug>_lock).
+        const parsed = splitEntityId(anchor.entity_id);
+        const slug = parsed ? parsed.name.replace(/_device_id$/, '') : null;
+
+        // All entities belonging to this HA device. Bucket by role parsed
+        // from unique_id (`{dashieDeviceId}_{role}`) — robust to entity_id
+        // slug variation across rename/re-register.
+        const deviceEntities = entitiesByHaDevice.get(haDeviceId) || [];
+        const byRole = {};
+        for (const entity of deviceEntities) {
+            if (entity.entity_id === anchor.entity_id) continue;
+            const role = _roleFromUniqueId(entity.unique_id, dashieDeviceId)
+                || (parsed && entity.entity_id.startsWith(parsed.domain + '.' + slug + '_')
+                    ? entity.entity_id.slice(parsed.domain.length + slug.length + 2)
+                    : null);
+            if (!role) continue;
+            const state = stateById[entity.entity_id];
+            if (!state) continue;
+            const existing = byRole[role];
+            byRole[role] = existing ? pickBetter(existing, state) : state;
+        }
+
+        let metrics = {};
+        for (const [role, extractor] of Object.entries(METRIC_MAP)) {
+            const s = byRole[role];
+            if (!s) continue;
+            metrics = deepMerge(metrics, extractor(s));
+        }
+        metrics = sanitizeMetrics(metrics);
+
+        const friendlyName = anchor.attributes?.friendly_name || '';
+        const deviceName = friendlyName.replace(/ Device ID$/, '').trim() || slug || haDeviceId;
+
+        results.push({
+            deviceName,
+            slug,
+            dashieDeviceId,
+            metrics,
+            entityCount: deviceEntities.length,
+            hasLiveData: hasAnyLiveData(metrics),
+        });
+    }
+    results.sort((a, b) => a.deviceName.localeCompare(b.deviceName));
+    return results;
+}
+
+/** Extract role from unique_id of the form `{dashieDeviceId}_{role}`. */
+function _roleFromUniqueId(uniqueId, dashieDeviceId) {
+    if (!uniqueId || !dashieDeviceId) return null;
+    if (!uniqueId.startsWith(dashieDeviceId + '_')) return null;
+    return uniqueId.slice(dashieDeviceId.length + 1);
+}
+
+/** Legacy slug-based grouping (kept as fallback when entity_registry isn't available). */
+function _buildViaSlug(states) {
+    const anchors = findAnchors(states);
+    if (anchors.length === 0) return [];
+
     const anchorSlugs = anchors.map(a => {
         const parsed = splitEntityId(a.entity_id);
         const slug = parsed ? parsed.name.replace(/_device_id$/, '') : null;
@@ -173,11 +260,7 @@ function buildDeviceMetrics(states) {
 
     const results = [];
     for (const { anchor, slug } of anchorSlugs) {
-        // Find every longer slug that starts with this slug + '_' (collision guard).
         const longerSlugs = allSlugs.filter(other => other !== slug && other.startsWith(slug + '_'));
-
-        // All entities belonging to this device: entity_id name starts with slug + '_'
-        // AND does NOT start with any longer slug + '_'.
         const siblings = states.filter(s => {
             if (s === anchor) return false;
             const parsed = splitEntityId(s.entity_id);
@@ -189,9 +272,6 @@ function buildDeviceMetrics(states) {
             return true;
         });
 
-        // Bucket siblings by role (part after slug + '_'). Handle dupes (old + new entities
-        // with same role) by preferring the one with a non-unavailable state, tie-break on
-        // attribute count.
         const byRole = {};
         for (const s of siblings) {
             const parsed = splitEntityId(s.entity_id);
@@ -200,7 +280,6 @@ function buildDeviceMetrics(states) {
             byRole[role] = existing ? pickBetter(existing, s) : s;
         }
 
-        // Apply METRIC_MAP
         let metrics = {};
         for (const [role, extractor] of Object.entries(METRIC_MAP)) {
             const s = byRole[role];
