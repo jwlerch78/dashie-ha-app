@@ -15,10 +15,13 @@ const iconImg = (path, size = 16, extraStyle = '') =>
 const DevicesCard = {
     _busyControl: {},   // `${deviceId}:${role}` → bool
     _sliderOpen: null,
-    _screenshotTs: {},  // deviceId → ms since-epoch — bumped on screen toggle so the
-                        // <img src=…?t=…> cache-busts and grabs a fresh frame
-    _screenshotModal: null, // { deviceId, src } when expanded screenshot is open
-    _historyOpen: null,     // { entityId, label } when history graph is open
+    // Per-device screenshot cache-bust timestamp. Defaults to a stable value for
+    // the current page-load session so periodic re-renders don't flash the
+    // thumbnails. Bumped on user-initiated refresh OR after a screen toggle.
+    _screenshotTs: {},
+    _initialTs: Date.now(),
+    _screenshotModal: null,
+    _historyOpen: null,
 
     render(device) {
         const idAttr = DevicesPage._escape(device.device_id);
@@ -132,11 +135,12 @@ const DevicesCard = {
     _renderMediaRow(device, idAttr, m) {
         const panelOuter = 'position: relative; background: var(--bg-muted, #f7f7f8); border: 1px dashed var(--border, #e5e7eb); border-radius: 4px; aspect-ratio: 16/9; overflow: hidden;';
         const panelEmpty = panelOuter + 'display: flex; align-items: center; justify-content: center; font-size: 11px; color: var(--text-muted);';
-        // Per-device cache-bust: defaults to a per-30-second floor (matches the
-        // page's auto-refresh poll cadence); bumped on screen toggle (or any other
-        // action that should refresh the frame) via toggleSwitch.
-        const ts = this._screenshotTs[device.device_id] || Math.floor(Date.now() / 30000);
-        const imageReady = DashieAuth.isAddonMode && device.metrics_updated_at;
+        // Stable cache-bust per device: same value across re-renders within a
+        // page-load session so auto-refresh doesn't flash the thumbnails. Bumped
+        // by the manual refresh button or after a screen toggle.
+        const ts = this._screenshotTs[device.device_id] || this._initialTs;
+        const isLive = DevicesPage._isLive(device);
+        const imageReady = DashieAuth.isAddonMode && device.metrics_updated_at && isLive;
         const screenshotSrc = imageReady
             ? DashieAuth._addonUrl(`/api/ha/image/${encodeURIComponent(device.device_id)}/screenshot?t=${ts}`)
             : null;
@@ -149,13 +153,17 @@ const DevicesCard = {
         const overlay = screenOff
             ? `<div style="position: absolute; inset: 0; background: rgba(0,0,0,0.55); display: flex; align-items: center; justify-content: center; color: white; font-size: 13px; font-weight: 500; pointer-events: none;">Screen off</div>`
             : '';
-        const screenshotPanel = screenshotSrc
-            ? `<div style="${panelOuter} cursor: zoom-in;" onclick="event.stopPropagation(); DevicesCard.openScreenshotModal('${idAttr}')">
-                   <img src="${screenshotSrc}" alt="screenshot" style="${imgStyle}" onerror="this.style.display='none'; this.parentElement.querySelector('.placeholder-fallback').style.display='flex';">
-                   <span class="placeholder-fallback" style="display: none; position: absolute; inset: 0; align-items: center; justify-content: center; font-size: 11px; color: var(--text-muted);">no screenshot</span>
-                   ${overlay}
+        const screenshotPanel = !isLive
+            ? `<div style="${panelOuter} display: flex; align-items: center; justify-content: center; color: var(--text-muted);">
+                   <span style="font-size: 13px; font-weight: 500;">Offline</span>
                </div>`
-            : `<div style="${panelEmpty}">screenshot</div>`;
+            : screenshotSrc
+                ? `<div style="${panelOuter} cursor: zoom-in;" onclick="event.stopPropagation(); DevicesCard.openScreenshotModal('${idAttr}')">
+                       <img src="${screenshotSrc}" alt="screenshot" style="${imgStyle}" onerror="this.style.display='none'; this.parentElement.querySelector('.placeholder-fallback').style.display='flex';">
+                       <span class="placeholder-fallback" style="display: none; position: absolute; inset: 0; align-items: center; justify-content: center; font-size: 11px; color: var(--text-muted);">no screenshot</span>
+                       ${overlay}
+                   </div>`
+                : `<div style="${panelEmpty}">screenshot</div>`;
         // Camera offline = configured but currently off (camera_stream_enabled === false).
         // Show a clear "Camera offline" placeholder with a slashed camera icon.
         const cameraConfigured = m.controls?.camera_stream_enabled !== undefined;
@@ -234,9 +242,10 @@ const DevicesCard = {
 
         // Three-column layout per media row: left / center / right justified.
         // 10% horizontal padding indents the left+right items inward so they don't sit
-        // flush against the card edge.
+        // flush against the card edge. Offline devices: rows fade to 0.4 + clicks blocked.
+        const offlineStyle = !isLive ? 'opacity: 0.4; pointer-events: none;' : '';
         const controlRow = (left, center, right) => `
-            <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; align-items: center; gap: 4px; margin-top: 8px; padding: 0 10%;">
+            <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; align-items: center; gap: 4px; margin-top: 8px; padding: 0 10%; ${offlineStyle}">
                 <div style="justify-self: start; display: inline-flex;">${left}</div>
                 <div style="justify-self: center; display: inline-flex;">${center}</div>
                 <div style="justify-self: end; display: inline-flex;">${right}</div>
@@ -245,11 +254,11 @@ const DevicesCard = {
 
         // min-width: 0 forces the 1fr grid columns to actually share width equally
         // (without it, content can push the screenshot column wider than the camera column).
-        // If the device has no camera/motion/face entities at all, hide the right
-        // column entirely and let the screenshot fill the available width.
-        const hasCameraSection = m.controls?.camera_stream_enabled !== undefined
-            || m.presence?.motion !== undefined
-            || m.presence?.face !== undefined;
+        // Show the camera column only when this device actually has camera hardware,
+        // detected by the camera_stream_url sensor having a non-empty rtsp:// URL.
+        // (Mio/Fire TV register camera entities by default but have no hardware →
+        // empty stream URL.)
+        const hasCameraSection = !!m.controls?.camera_stream_url;
 
         if (!hasCameraSection) {
             return `

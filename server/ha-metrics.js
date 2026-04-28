@@ -62,6 +62,13 @@ const METRIC_MAP = {
     'dark_mode':          s => ({ controls: { dark_mode: s.state === 'on' } }),
     'keep_screen_on':     s => ({ controls: { keep_screen_on: s.state === 'on' } }),
     'auto_brightness':    s => ({ controls: { auto_brightness: s.state === 'on' } }),
+    // camera_stream_url state is the rtsp://… URL when the device has an actual
+    // camera hardware feed; empty/unavailable when the entity is registered but
+    // no camera exists. The Console uses this to decide whether to even show
+    // the camera column.
+    'camera_stream_url':  s => ({ controls: {
+        camera_stream_url: (s.state && s.state !== 'unavailable' && s.state !== 'unknown') ? s.state : null,
+    }}),
     'volume':             s => ({ controls: {
         volume:     toNum(s.state),
         volume_max: toNum(s.attributes?.max),

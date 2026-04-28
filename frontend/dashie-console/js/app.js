@@ -7,14 +7,16 @@ const App = {
     _sidebarOpen: false,
 
     pages: {
-        devices:   { page: DevicesPage },
-        family:    { page: FamilyPage },
-        calendar:  { page: CalendarPage },
-        chores:    { page: ChoresPage },
-        rewards:   { page: RewardsPage },
-        locations: { page: LocationsPage },
-        photos:    { page: PhotosPage },
-        account:   { page: AccountPage },
+        devices:       { page: DevicesPage },
+        'voice-ai':    { page: VoiceAiPage },
+        'video-feeds': { page: VideoFeedsPage },
+        family:        { page: FamilyPage },
+        calendar:      { page: CalendarPage },
+        chores:        { page: ChoresPage },
+        rewards:       { page: RewardsPage },
+        locations:     { page: LocationsPage },
+        photos:        { page: PhotosPage },
+        account:       { page: AccountPage },
     },
 
     async init() {

@@ -14,6 +14,14 @@ const Sidebar = {
             <div class="sidebar-section">
                 <div class="sidebar-section-label">Manage</div>
                 ${this._navItem('devices', 'Devices', 'icon-tv', activePage)}
+                ${this._navItem('voice-ai', 'Voice & AI', 'icon-ai-chat', activePage)}
+                ${this._navItem('video-feeds', 'Video Feeds', 'icon-video-camera', activePage)}
+            </div>
+
+            <div class="sidebar-divider"></div>
+
+            <div class="sidebar-section">
+                <div class="sidebar-section-label">Dashie Cloud</div>
                 ${this._navItem('family', 'Family', 'icon-profile-round', activePage)}
                 ${this._navItem('calendar', 'Calendar', 'icon-calendar', activePage)}
                 ${this._navItem('chores', 'Chores', 'icon-tasks', activePage)}

@@ -28,7 +28,7 @@ const DevicesPage = {
     ARCHIVE_THRESHOLD_DAYS: 30,
     LIVE_THRESHOLD_SECONDS: 90,   // metrics_updated_at newer than this → "live" chip
     HA_STATUS_MAX_AGE_MS: 15 * 1000, // refetch /api/ha/status if older than this on render
-    AUTO_REFRESH_MS: 30 * 1000,   // poll list_devices + /api/ha/status while page is visible
+    AUTO_REFRESH_MS: 60 * 1000,   // chip+status poll cadence (doesn't bust screenshot URLs)
 
     _pollTimer: null,
 
@@ -81,9 +81,7 @@ const DevicesPage = {
         }
     },
 
-    /** Background re-fetch of list_devices + /api/ha/status every AUTO_REFRESH_MS
-     *  so the live/offline status, metrics, and screenshots stay current as long
-     *  as the page is visible. Started after first successful load. */
+    /** Background re-fetch every AUTO_REFRESH_MS while page is visible. */
     _startAutoRefresh() {
         if (this._pollTimer) return;
         this._pollTimer = setInterval(() => {
@@ -96,12 +94,29 @@ const DevicesPage = {
         try {
             const result = await DashieAuth.dbRequest('list_devices', { tv_only: false, include_inactive: true });
             this._devices = result.devices || result.data || [];
-            // Force the addon-status to refetch on the next render cycle.
             this._haStatusFetchedAt = 0;
             await this._fetchAddonStatus();
             App.renderPage();
         } catch (e) {
             console.warn('[DevicesPage] auto-refresh failed:', e.message);
+        }
+    },
+
+    /** Manual refresh: auto poll + bump every screenshot cache-bust. */
+    _manualRefreshing: false,
+    async _manualRefresh() {
+        if (this._manualRefreshing) return;
+        this._manualRefreshing = true;
+        App.renderPage();
+        try {
+            const now = Date.now();
+            for (const d of (this._devices || [])) {
+                DevicesCard._screenshotTs[d.device_id] = now;
+            }
+            await this._refreshSilent();
+        } finally {
+            this._manualRefreshing = false;
+            App.renderPage();
         }
     },
 
@@ -241,11 +256,21 @@ const DevicesPage = {
     },
 
     _renderActiveSection(devices) {
+        const busy = this._manualRefreshing;
+        const header = `
+            <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px;">
+                <span style="font-size: 11px; font-weight: 600; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px;">Active (${devices.length})</span>
+                <button title="Refresh thumbnails and metrics" onclick="DevicesPage._manualRefresh()" ${busy ? 'disabled' : ''}
+                    style="background: none; border: 1px solid var(--border, #d1d5db); border-radius: 4px; padding: 4px 10px; cursor: ${busy ? 'wait' : 'pointer'}; line-height: 0; opacity: ${busy ? 0.5 : 0.85};">
+                    <img src="assets/icons/icon-reload.svg" alt="Refresh" style="width: 14px; height: 14px; vertical-align: middle;">
+                </button>
+            </div>
+        `;
         if (devices.length === 0) {
-            return `<p class="empty-state-text" style="margin: 16px 0;">No active devices in the last ${this.ARCHIVE_THRESHOLD_DAYS} days.</p>`;
+            return `${header}<p class="empty-state-text" style="margin: 16px 0;">No active devices in the last ${this.ARCHIVE_THRESHOLD_DAYS} days.</p>`;
         }
         const cards = devices.map(d => this._renderDeviceCard(d)).join('');
-        return `<div class="devices-grid">${cards}</div>`;
+        return `${header}<div class="devices-grid">${cards}</div>`;
     },
 
     _renderDiscoveredSection() {
@@ -347,176 +372,7 @@ const DevicesPage = {
 
     _renderDeviceCard(device) { return DevicesCard.render(device); },
 
-    _renderDetail() {
-        const device = this._findDevice(this._detailDeviceId);
-        if (!device) {
-            return '<div class="empty-state"><div class="empty-state-text">Device not found</div></div>';
-        }
-
-        const live = this._isLive(device);
-        const settings = device.settings || {};
-        const display = settings.display || {};
-        const sleep = settings.sleep || {};
-        const aiVoice = settings.aiVoice || {};
-        const icon = this._deviceIcon(device.device_type);
-
-        const conflict = this._conflictHaName(device);
-        const conflictBadge = conflict ? `
-            <div style="margin-top: 4px; font-size: var(--font-size-sm); color: var(--accent);">
-                ⚠ HA has a different name: "${this._escape(conflict)}".
-                <a href="#" onclick="event.preventDefault(); DevicesRename.openModal()">Resolve</a>
-            </div>
-        ` : '';
-
-        return `
-            <div class="back-link" onclick="DevicesPage.backToList()">← Back to Devices</div>
-
-            <div style="display: flex; align-items: flex-start; gap: 12px; margin-bottom: 24px;">
-                <div class="device-card-icon" style="width: 48px; height: 48px; font-size: 24px; flex-shrink: 0;">${icon}</div>
-                <div style="flex: 1; min-width: 0;">
-                    ${DevicesRename.renderNameRow(device, conflict, 'detail')}
-                    <div style="font-size: var(--font-size-sm); color: var(--text-secondary); margin-top: 4px;">
-                        ${this._escape(this._typeLabel(device))} ·
-                        <span class="status-dot ${live ? 'online' : 'offline'}"></span>${live ? 'Live' : 'Offline'}
-                    </div>
-                    ${conflictBadge}
-                </div>
-            </div>
-
-            ${this._renderMetricsPanel(device)}
-
-            <div class="section-header">Display</div>
-            <div class="card">
-                <div class="card-body">
-                    <div class="form-grid">
-                        ${this._settingSelect(device, 'display', 'preferences.layoutMode',
-                            'Layout', display['preferences.layoutMode'] || 'widgets',
-                            [['widgets', 'Widgets'], ['single-panel', 'Single Panel']])}
-                        ${this._settingSelect(device, 'display', 'preferences.theme',
-                            'Theme', display['preferences.theme'] || 'default',
-                            [['default', 'Default'], ['midnight', 'Midnight'], ['ocean', 'Ocean'], ['forest', 'Forest']])}
-                        ${this._settingSelect(device, 'display', 'preferences.dashboardZoom',
-                            'Dashboard Zoom', String(display['preferences.dashboardZoom'] || 100),
-                            [['80', '80%'], ['90', '90%'], ['100', '100%'], ['110', '110%'], ['120', '120%']])}
-                        ${this._settingSelect(device, 'display', 'preferences.sidebarIconSize',
-                            'Sidebar Size', display['preferences.sidebarIconSize'] || 'medium',
-                            [['small', 'Small'], ['medium', 'Medium'], ['large', 'Large']])}
-                    </div>
-                </div>
-            </div>
-
-            <div class="section-header">Sleep & Screensaver</div>
-            <div class="card">
-                <div class="card-body">
-                    <div class="form-grid">
-                        ${this._settingSelect(device, 'sleep', 'sleep.timerStart',
-                            'Sleep Time', sleep['sleep.timerStart'] || '22:00',
-                            [['21:00', '9:00 PM'], ['21:30', '9:30 PM'], ['22:00', '10:00 PM'], ['22:30', '10:30 PM'], ['23:00', '11:00 PM']])}
-                        ${this._settingSelect(device, 'sleep', 'sleep.timerEnd',
-                            'Wake Time', sleep['sleep.timerEnd'] || '07:00',
-                            [['05:30', '5:30 AM'], ['06:00', '6:00 AM'], ['06:30', '6:30 AM'], ['07:00', '7:00 AM'], ['07:30', '7:30 AM']])}
-                        ${this._settingSelect(device, 'sleep', 'sleep.method',
-                            'Sleep Method', sleep['sleep.method'] || 'power-off',
-                            [['power-off', 'Power Off'], ['screen-off', 'Screen Off'], ['screensaver', 'Screensaver']])}
-                    </div>
-                </div>
-            </div>
-
-            <div class="section-header">Voice & AI</div>
-            <div class="card">
-                <div class="card-body">
-                    <div class="form-grid">
-                        ${this._settingSelect(device, 'aiVoice', 'aiVoice.personality',
-                            'AI Personality', aiVoice['aiVoice.personality'] || 'friendly',
-                            [['friendly', 'Friendly'], ['calm', 'Calm'], ['professional', 'Professional'], ['playful', 'Playful']])}
-                        ${this._settingSelect(device, 'aiVoice', 'aiVoice.voice',
-                            'Voice', aiVoice['aiVoice.voice'] || 'rachel',
-                            [['rachel', 'Rachel'], ['adam', 'Adam'], ['aria', 'Aria'], ['thomas', 'Thomas'], ['jessica', 'Jessica']])}
-                    </div>
-                </div>
-            </div>
-
-            <p class="page-summary">
-                Changes apply to the device immediately via Supabase real-time broadcast.
-                Last check-in: ${this._formatTime(device.last_seen_at)}
-            </p>
-
-            ${DevicesRename.conflictModal ? DevicesRename.renderModal(this._conflictDevices(), d => this._conflictHaName(d)) : ''}
-            ${DevicesCard.renderSliderModal()}
-            ${DevicesCard.renderScreenshotModal()}
-            ${DevicesCard.renderHistoryModal()}
-        `;
-    },
-
-    /** Live metrics panel on the detail view — null-safe on offline devices. */
-    _renderMetricsPanel(device) {
-        const m = device.metrics;
-        if (!m) return '';
-        const join = arr => arr.filter(Boolean).join(' · ');
-        const rows = [
-            m.battery && ['Battery', join([
-                m.battery.level != null && `${m.battery.level}%`,
-                m.battery.charging && `charging via ${m.battery.plug_source || 'AC'}`,
-            ])],
-            m.system?.ram_used_percent != null && ['RAM', join([
-                `${m.system.ram_used_percent}%`,
-                m.system.ram_total_mb && `${m.system.ram_total_mb} MB total`,
-                m.system.ram_available_mb != null && `${m.system.ram_available_mb} MB free`,
-            ])],
-            m.network?.wifi_signal_percent != null && ['Network', join([
-                `${m.network.wifi_signal_percent}%`,
-                m.network.ip_address,
-                m.network.wifi_ssid && m.network.wifi_ssid !== '<unknown ssid>' && `"${m.network.wifi_ssid}"`,
-            ])],
-            m.storage?.free_gb != null && ['Storage',
-                `${m.storage.free_gb} GB free` + (m.storage.total_gb ? ` of ${m.storage.total_gb} GB` : '')],
-            m.app?.app_version && ['App', join([
-                `v${m.app.app_version}`,
-                m.app.android_version && `Android ${m.app.android_version}`,
-                m.app.device_model,
-            ])],
-            m.app?.current_page && ['Current page', m.app.current_page],
-        ].filter(r => r && r[1]);
-        if (rows.length === 0) return '';
-
-        return `
-            <div class="section-header">Live Metrics</div>
-            <div class="card">
-                <div class="card-body">
-                    <div class="form-grid">
-                        ${rows.map(([label, val]) => `
-                            <div class="form-group">
-                                <label class="form-label">${this._escape(label)}</label>
-                                <div style="font-size: var(--font-size-sm);">${this._escape(val)}</div>
-                            </div>
-                        `).join('')}
-                    </div>
-                    <div style="margin-top: 12px; color: var(--text-muted); font-size: var(--font-size-sm);">
-                        Updated ${this._formatTime(device.metrics_updated_at)}
-                    </div>
-                </div>
-            </div>
-        `;
-    },
-
-    _settingSelect(device, category, key, label, currentValue, options) {
-        const savingKey = `${device.device_id}_${key}`;
-        const isSaving = this._saving[savingKey];
-        const optionsHtml = options.map(([val, text]) =>
-            `<option value="${val}" ${val === currentValue ? 'selected' : ''}>${text}</option>`
-        ).join('');
-
-        return `
-            <div class="form-group">
-                <label class="form-label">${label} ${isSaving ? '<span style="color: var(--text-muted); font-weight: 400; text-transform: none; font-size: 10px;">saving…</span>' : ''}</label>
-                <select class="form-select"
-                    onchange="DevicesPage._onSettingChange('${device.device_id}', '${category}', '${key}', this.value)"
-                    ${isSaving ? 'disabled' : ''}>
-                    ${optionsHtml}
-                </select>
-            </div>
-        `;
-    },
+    _renderDetail() { return DevicesDetail.render(this._findDevice(this._detailDeviceId)); },
 
     async _onSettingChange(deviceId, category, key, value) {
         const savingKey = `${deviceId}_${key}`;
