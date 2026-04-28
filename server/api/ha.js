@@ -209,6 +209,31 @@ router.get('/image/:deviceId/:role', requireSignedIn, async (req, res) => {
     }
 });
 
+/**
+ * GET /api/ha/stream/:deviceId
+ * Redirects to HA's camera_proxy_stream MJPEG endpoint with a fresh entity-level
+ * access_token. This is the same stream HA's own more-info dialog displays
+ * — the browser receives a multipart MJPEG response and renders live video
+ * natively in an <img> element.
+ *
+ * Relative redirect resolves against HA's hostname via Ingress, so the
+ * stream comes directly from HA — no MJPEG proxying through the add-on.
+ */
+router.get('/stream/:deviceId', requireSignedIn, async (req, res) => {
+    const { deviceId } = req.params;
+    try {
+        const state = await findMediaEntity(deviceId, 'camera');
+        if (!state) return res.status(404).json({ error: 'no camera entity for device' });
+        const token = state.attributes?.access_token;
+        if (!token) return res.status(404).json({ error: 'camera entity has no access_token yet' });
+        const streamUrl = `/api/camera_proxy_stream/${encodeURIComponent(state.entity_id)}?token=${token}`;
+        res.redirect(302, streamUrl);
+    } catch (e) {
+        console.warn(`[api/ha/stream] ${deviceId} failed: ${e.message}`);
+        res.status(500).json({ error: 'stream_resolve_failed', message: e.message });
+    }
+});
+
 /** GET /api/ha/devices — lookup helper for debugging. Returns the per-Dashie-id map
  *  the Console will use to compute name conflicts. Only readable when signed in. */
 router.get('/devices', requireSignedIn, async (req, res) => {

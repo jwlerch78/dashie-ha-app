@@ -1,6 +1,6 @@
 {
   "name": "dashie-ha-app",
-  "version": "0.1.29",
+  "version": "0.1.30",
   "description": "Dashie Home Assistant add-on — control center, voice pipeline broker, and HA metrics bridge.",
   "main": "server/index.js",
   "private": true,

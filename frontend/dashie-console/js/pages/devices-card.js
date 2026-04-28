@@ -12,7 +12,6 @@ const DevicesCard = {
     _screenshotModal: null,
     _historyOpen: null,
     _cameraModal: null,
-    _cameraModalTimer: null,
 
     render(device) {
         const idAttr = DevicesPage._escape(device.device_id);
@@ -372,29 +371,21 @@ const DevicesCard = {
     },
     _maybeCloseScreenshot(e) { if (e.target === e.currentTarget) this.closeScreenshotModal(); },
 
-    /** Camera live-feed modal — refreshes the camera proxy snapshot every 1.5s. */
+    /** Camera live-feed modal — same MJPEG stream HA's more-info dialog uses. */
     openCameraModal(deviceId) {
         if (!DashieAuth.isAddonMode) return;
         this._cameraModal = { deviceId };
         App.renderPage();
-        if (this._cameraModalTimer) clearInterval(this._cameraModalTimer);
-        this._cameraModalTimer = setInterval(() => {
-            const img = document.getElementById('devices-camera-modal-img');
-            if (!img || !this._cameraModal) { clearInterval(this._cameraModalTimer); this._cameraModalTimer = null; return; }
-            img.src = DashieAuth._addonUrl(`/api/ha/image/${encodeURIComponent(this._cameraModal.deviceId)}/camera?t=${Date.now()}`);
-        }, 1500);
     },
-    closeCameraModal() {
-        this._cameraModal = null;
-        if (this._cameraModalTimer) { clearInterval(this._cameraModalTimer); this._cameraModalTimer = null; }
-        App.renderPage();
-    },
+    closeCameraModal() { this._cameraModal = null; App.renderPage(); },
     renderCameraModal() {
         const m = this._cameraModal;
         if (!m) return '';
         const name = (DevicesPage._findDevice(m.deviceId)?.device_name || 'Camera') + ' · Live';
-        const src = DashieAuth._addonUrl(`/api/ha/image/${encodeURIComponent(m.deviceId)}/camera?t=${Date.now()}`);
-        return this._renderImageModal({ src, name, imgId: 'devices-camera-modal-img', footer: 'Refreshing every 1.5s', closeFn: 'closeCameraModal', onBackdrop: '_maybeCloseCamera' });
+        // /api/ha/stream/<id> 302-redirects to HA's camera_proxy_stream MJPEG URL.
+        // Browser handles the multipart response natively; no polling needed.
+        const src = DashieAuth._addonUrl(`/api/ha/stream/${encodeURIComponent(m.deviceId)}?t=${Date.now()}`);
+        return this._renderImageModal({ src, name, footer: '', closeFn: 'closeCameraModal', onBackdrop: '_maybeCloseCamera' });
     },
     _maybeCloseCamera(e) { if (e.target === e.currentTarget) this.closeCameraModal(); },
 
