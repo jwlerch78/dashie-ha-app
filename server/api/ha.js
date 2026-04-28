@@ -265,16 +265,27 @@ router.get('/hls', requireSignedIn, async (req, res) => {
         res.set('Cache-Control', 'no-cache');
 
         if (ctype.includes('mpegurl') || ctype.includes('m3u8') || haPath.endsWith('.m3u8')) {
-            // Rewrite playlist references so each .ts segment / nested .m3u8 also
-            // routes through this proxy with the right `u=` path.
+            // Rewrite playlist references so each .ts segment / nested .m3u8 / init.mp4
+            // also routes through this proxy with the right `u=` path. Two cases:
+            //   1) Bare relative URL line (segment_5.ts, playlist.m3u8)
+            //   2) Directive lines with URI="..." (#EXT-X-MAP:URI="init.mp4",
+            //      #EXT-X-KEY:URI="key.bin"). These start with '#' but still need
+            //      their inner URIs rewritten.
             const txt = await upstream.text();
             const baseDir = haPath.replace(/[^/]+$/, '');  // /api/hls/<token>/
+            const rewriteRef = ref => {
+                if (!ref) return ref;
+                const abs = ref.startsWith('/') ? ref : (baseDir + ref);
+                return 'hls?u=' + encodeURIComponent(abs);
+            };
             const rewritten = txt.split('\n').map(line => {
                 const trim = line.trim();
-                if (!trim || trim.startsWith('#')) return line;
-                // Resolve relative path → absolute /api/hls/<token>/segment.ts
-                const abs = trim.startsWith('/') ? trim : (baseDir + trim);
-                return 'hls?u=' + encodeURIComponent(abs);
+                if (!trim) return line;
+                if (trim.startsWith('#')) {
+                    // Rewrite any URI="..." inside directives.
+                    return line.replace(/URI="([^"]+)"/g, (_m, ref) => `URI="${rewriteRef(ref)}"`);
+                }
+                return rewriteRef(trim);
             }).join('\n');
             res.send(rewritten);
         } else {
