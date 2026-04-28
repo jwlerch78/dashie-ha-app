@@ -219,19 +219,22 @@ const DevicesCard = {
             </button>
         `;
 
-        // Active = orange-tinted SVG (same filter the camera icon uses for "streaming")
-        // + slight scale bump for emphasis. Idle = faded gray.
-        const detectActiveStyle = cameraOrange + ' transform: scale(1.15);';
+        // Active state: orange ring + glow around the icon (the icons have embedded
+        // raster content, so a colorize filter would turn them into solid squares).
+        // The wrapper span is the orange affordance; the icon stays full color.
+        const detectWrapper = active => active
+            ? 'background: rgba(249,115,22,0.15); box-shadow: 0 0 0 2px #f97316, 0 0 8px rgba(249,115,22,0.55); border-radius: 50%; padding: 3px;'
+            : 'padding: 3px;';
         const motionIcon = `
             <span title="Motion ${motion ? 'detected' : 'idle'}"
-                  style="display: inline-flex; align-items: center; padding: 2px; line-height: 0; transition: transform 120ms ease;">
-                ${iconImg('icon-motion-detection.svg', 20, motion ? detectActiveStyle : 'opacity: 0.35;')}
+                  style="display: inline-flex; align-items: center; line-height: 0; transition: box-shadow 120ms ease, background 120ms ease; ${detectWrapper(motion)}">
+                ${iconImg('icon-motion-detection.svg', 18, motion ? '' : 'opacity: 0.4;')}
             </span>
         `;
         const faceIcon = `
             <span title="Face ${face ? 'detected' : 'idle'}"
-                  style="display: inline-flex; align-items: center; padding: 2px; line-height: 0; transition: transform 120ms ease;">
-                ${iconImg('icon-face-detection.svg', 20, face ? detectActiveStyle : 'opacity: 0.35;')}
+                  style="display: inline-flex; align-items: center; line-height: 0; transition: box-shadow 120ms ease, background 120ms ease; ${detectWrapper(face)}">
+                ${iconImg('icon-face-detection.svg', 18, face ? '' : 'opacity: 0.4;')}
             </span>
         `;
 

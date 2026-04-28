@@ -224,15 +224,66 @@ router.get('/stream/:deviceId', requireSignedIn, async (req, res) => {
         if (!state) return res.status(404).json({ error: 'no camera entity for device' });
         const result = await haRegistry.getCameraStreamUrl(state.entity_id);
         if (!result?.url) return res.status(502).json({ error: 'HA did not return a stream URL' });
-        res.json({
-            entity_id: state.entity_id,
-            hls_url: result.url,
-            // Backwards-compat MJPEG snapshot URL (used by the card thumbnail proxy below)
-            poster: state.attributes?.entity_picture || null,
-        });
+        // Rewrite HA's HLS URL through our /api/ha/hls proxy so the browser hits
+        // the add-on (which controls Content-Encoding) instead of going via Ingress
+        // (where compression negotiation has caused ERR_CONTENT_DECODING_FAILED).
+        const proxiedUrl = 'api/ha/hls?u=' + encodeURIComponent(result.url);
+        res.json({ entity_id: state.entity_id, hls_url: proxiedUrl, poster: state.attributes?.entity_picture || null });
     } catch (e) {
         console.warn(`[api/ha/stream] ${deviceId} failed: ${e.message}`);
         res.status(500).json({ error: 'stream_resolve_failed', message: e.message });
+    }
+});
+
+/**
+ * GET /api/ha/hls?u=/api/hls/<token>/master_playlist.m3u8
+ * Fetches an HA HLS resource (manifest or .ts segment) from the supervisor
+ * URL and pipes the bytes back. Forces uncompressed transport so the browser
+ * doesn't hit ERR_CONTENT_DECODING_FAILED (seen in some Ingress configs).
+ *
+ * Manifests reference relative paths (e.g. `playlist.m3u8`, `segment_5.ts`).
+ * For nested fetches, hls.js resolves them relative to the manifest URL —
+ * our proxy URL `/api/ha/hls?u=...` doesn't have a directory structure, so we
+ * rewrite manifest contents to keep all references going through our proxy.
+ */
+router.get('/hls', requireSignedIn, async (req, res) => {
+    const haPath = req.query.u;
+    if (typeof haPath !== 'string' || !haPath.startsWith('/api/hls/')) {
+        return res.status(400).json({ error: 'bad u param' });
+    }
+    const config = haClient.getConfig();
+    try {
+        const upstream = await fetch(config.baseUrl + haPath, {
+            headers: { Authorization: `Bearer ${config.token}` },
+        });
+        if (!upstream.ok) {
+            return res.status(upstream.status).json({ error: `HA returned ${upstream.status}` });
+        }
+        const ctype = upstream.headers.get('content-type') || 'application/octet-stream';
+        res.removeHeader && res.removeHeader('Content-Encoding');
+        res.set('Content-Type', ctype);
+        res.set('Cache-Control', 'no-cache');
+
+        if (ctype.includes('mpegurl') || ctype.includes('m3u8') || haPath.endsWith('.m3u8')) {
+            // Rewrite playlist references so each .ts segment / nested .m3u8 also
+            // routes through this proxy with the right `u=` path.
+            const txt = await upstream.text();
+            const baseDir = haPath.replace(/[^/]+$/, '');  // /api/hls/<token>/
+            const rewritten = txt.split('\n').map(line => {
+                const trim = line.trim();
+                if (!trim || trim.startsWith('#')) return line;
+                // Resolve relative path → absolute /api/hls/<token>/segment.ts
+                const abs = trim.startsWith('/') ? trim : (baseDir + trim);
+                return 'hls?u=' + encodeURIComponent(abs);
+            }).join('\n');
+            res.send(rewritten);
+        } else {
+            const buf = Buffer.from(await upstream.arrayBuffer());
+            res.send(buf);
+        }
+    } catch (e) {
+        console.warn(`[api/ha/hls] ${haPath} failed: ${e.message}`);
+        res.status(500).json({ error: 'hls_proxy_failed', message: e.message });
     }
 });
 
