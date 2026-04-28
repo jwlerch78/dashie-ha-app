@@ -29,6 +29,7 @@ const pending = new Map();          // id → { resolve, reject, timer }
 let reconnectAttempts = 0;
 let reconnectTimer = null;
 let registryCache = null;           // { byDashieId: Map, byHaId: Map, fetchedAt }
+let entityRegistryCache = null;     // { byHaDeviceId: Map<haDeviceId, entity[]>, fetchedAt }
 let stopped = false;
 
 function getWsConfig() {
@@ -230,6 +231,35 @@ async function callService(domain, service, entityId, serviceData = {}) {
 /** Force a re-pull of the device registry (e.g., after we know HA changed). */
 function refresh() {
     registryCache = null;
+    entityRegistryCache = null;
+}
+
+/** Fetch + cache HA's entity_registry. Used to find image/camera entities
+ *  for a device whose entity_ids don't follow the slug_<role> convention
+ *  (Fire Tablet, Mio, etc. have legacy entity names). */
+async function _refreshEntityRegistryCache() {
+    const list = await _send({ type: 'config/entity_registry/list' });
+    const byHaDeviceId = new Map();
+    for (const e of list) {
+        if (!e.device_id) continue;
+        const arr = byHaDeviceId.get(e.device_id) || [];
+        arr.push(e);
+        byHaDeviceId.set(e.device_id, arr);
+    }
+    entityRegistryCache = { byHaDeviceId, fetchedAt: Date.now() };
+    return entityRegistryCache;
+}
+
+/** Returns all entity_registry entries for a HA device id. */
+async function getEntitiesForHaDevice(haDeviceId, { force = false } = {}) {
+    if (!haDeviceId) return [];
+    if (force || !entityRegistryCache) await _refreshEntityRegistryCache();
+    let entities = entityRegistryCache.byHaDeviceId.get(haDeviceId) || [];
+    if (entities.length === 0 && !force) {
+        await _refreshEntityRegistryCache();
+        entities = entityRegistryCache.byHaDeviceId.get(haDeviceId) || [];
+    }
+    return entities;
 }
 
 function start() {
@@ -254,6 +284,7 @@ module.exports = {
     start,
     stop,
     getDeviceByDashieId,
+    getEntitiesForHaDevice,
     renameDevice,
     callService,
     refresh,

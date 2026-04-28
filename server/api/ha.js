@@ -153,25 +153,40 @@ router.post('/control', requireSignedIn, express.json(), async (req, res) => {
 /**
  * GET /api/ha/image/:deviceId/:role
  * Proxies HA's image_proxy / camera_proxy so the Console can render the latest
- * screenshot or camera snapshot via a same-origin <img>. Resolves the device's
- * slug + entity_id, looks up the entity_picture URL via /api/states, then
- * pipes the bytes back. role = 'screenshot' | 'camera'.
+ * screenshot or camera snapshot via a same-origin <img>. role = 'screenshot' | 'camera'.
+ *
+ * Uses the entity_registry to find the right entity for this device, since
+ * legacy installs (Fire Tablet → image.dashie_fire_tablet, Mio → image.mio_15_dashie)
+ * don't follow the modern <slug>_<role> entity-id convention.
  */
 const haClient = require('../ha-client');
+async function findMediaEntity(dashieDeviceId, role) {
+    const entry = await haRegistry.getDeviceByDashieId(dashieDeviceId);
+    if (!entry) return null;
+    const allEntities = await haRegistry.getEntitiesForHaDevice(entry.id);
+    const targetDomain = role === 'screenshot' ? 'image' : 'camera';
+    const candidates = allEntities.filter(e => (e.entity_id || '').startsWith(targetDomain + '.'));
+    for (const c of candidates) {
+        const state = await haClient.getState(c.entity_id);
+        if (state?.attributes?.entity_picture) return state;
+    }
+    // Fallback: state without entity_picture (e.g. recently-added entity); return first
+    if (candidates.length > 0) {
+        return await haClient.getState(candidates[0].entity_id);
+    }
+    return null;
+}
+
 router.get('/image/:deviceId/:role', requireSignedIn, async (req, res) => {
     const { deviceId, role } = req.params;
     if (role !== 'screenshot' && role !== 'camera') {
         return res.status(400).json({ error: 'unknown role (screenshot|camera)' });
     }
-    const slug = haWorker.getSlugForDevice(deviceId);
-    if (!slug) return res.status(404).json({ error: 'device not found or offline' });
-    const entityId = role === 'screenshot' ? `image.${slug}_screenshot` : `camera.${slug}_camera`;
-
     try {
-        const state = await haClient.getState(entityId);
-        if (!state) return res.status(404).json({ error: 'entity not found' });
+        const state = await findMediaEntity(deviceId, role);
+        if (!state) return res.status(404).json({ error: `no ${role} entity found for device` });
         const entityPicture = state.attributes?.entity_picture;
-        if (!entityPicture) return res.status(404).json({ error: 'entity has no entity_picture' });
+        if (!entityPicture) return res.status(404).json({ error: 'entity has no entity_picture yet' });
 
         const config = haClient.getConfig();
         const fullUrl = entityPicture.startsWith('http')
@@ -185,12 +200,11 @@ router.get('/image/:deviceId/:role', requireSignedIn, async (req, res) => {
         }
         const ctype = upstream.headers.get('content-type') || 'image/jpeg';
         res.set('Content-Type', ctype);
-        // Short cache so a periodic timestamp-bust on the Console gets fresh frames.
         res.set('Cache-Control', 'no-cache, max-age=5');
         const buf = Buffer.from(await upstream.arrayBuffer());
         res.send(buf);
     } catch (e) {
-        console.warn(`[api/ha/image] ${entityId} failed: ${e.message}`);
+        console.warn(`[api/ha/image] ${deviceId}/${role} failed: ${e.message}`);
         res.status(500).json({ error: 'proxy_failed', message: e.message });
     }
 });

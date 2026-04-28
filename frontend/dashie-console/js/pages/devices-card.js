@@ -104,10 +104,12 @@ const DevicesCard = {
 
         if (m.controls?.volume != null) {
             const display = this._scaleTo10(m.controls.volume, m.controls.volume_max);
+            const muted = m.controls.volume === 0;
+            const volIcon = muted ? 'icon-volume-mute.svg' : 'icon-volume-high.svg';
             chips.push(`
                 <span class="device-card-detail" style="cursor: pointer; display: inline-flex; align-items: center; gap: 4px;" title="Adjust volume"
                     onclick="event.stopPropagation(); DevicesCard.openSlider('${idAttr}', 'volume', ${m.controls.volume}, ${m.controls.volume_max ?? 'null'})">
-                    ${iconImg('icon-volume-high.svg', 12)}${display}
+                    ${iconImg(volIcon, 12)}${muted ? 'Muted' : display}
                 </span>
             `);
         }
@@ -154,12 +156,23 @@ const DevicesCard = {
                    ${overlay}
                </div>`
             : `<div style="${panelEmpty}">screenshot</div>`;
+        // Camera offline = configured but currently off (camera_stream_enabled === false).
+        // Show a clear "Camera offline" placeholder with a slashed camera icon.
+        const cameraConfigured = m.controls?.camera_stream_enabled !== undefined;
         const cameraPanel = cameraSrc
             ? `<div style="${panelOuter}">
                    <img src="${cameraSrc}" alt="camera" style="${imgStyle}" onerror="this.style.display='none'; this.parentElement.querySelector('.placeholder-fallback').style.display='flex';">
                    <span class="placeholder-fallback" style="display: none; position: absolute; inset: 0; align-items: center; justify-content: center; font-size: 11px; color: var(--text-muted);">no camera</span>
                </div>`
-            : `<div style="${panelEmpty}">${m.controls?.camera_stream_enabled === false ? 'camera off' : 'camera'}</div>`;
+            : (cameraConfigured && m.controls.camera_stream_enabled === false
+                ? `<div style="${panelOuter} display: flex; align-items: center; justify-content: center; flex-direction: column; gap: 6px; color: var(--text-muted);">
+                       <span style="position: relative; display: inline-block; line-height: 0;">
+                           ${iconImg('icon-video-camera.svg', 28, 'opacity: 0.45;')}
+                           <span style="position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; font-size: 32px; color: #9ca3af; transform: rotate(-15deg);">/</span>
+                       </span>
+                       <span style="font-size: 11px;">Camera offline</span>
+                   </div>`
+                : `<div style="${panelEmpty}">camera</div>`);
         const dark = !!m.controls?.dark_mode;
         const screenOn = m.controls?.screen !== false;
         const cameraOn = !!m.controls?.camera_stream_enabled;
@@ -232,6 +245,23 @@ const DevicesCard = {
 
         // min-width: 0 forces the 1fr grid columns to actually share width equally
         // (without it, content can push the screenshot column wider than the camera column).
+        // If the device has no camera/motion/face entities at all, hide the right
+        // column entirely and let the screenshot fill the available width.
+        const hasCameraSection = m.controls?.camera_stream_enabled !== undefined
+            || m.presence?.motion !== undefined
+            || m.presence?.face !== undefined;
+
+        if (!hasCameraSection) {
+            return `
+                <div style="margin-top: 12px;">
+                    <div style="max-width: 50%; margin: 0 auto;">
+                        ${screenshotPanel}
+                        ${controlRow(reloadIcon, screenPill, lightDarkPill)}
+                    </div>
+                </div>
+            `;
+        }
+
         return `
             <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 12px;">
                 <div style="min-width: 0;">
@@ -449,12 +479,21 @@ const DevicesCard = {
     renderSliderModal() {
         const s = this._sliderOpen;
         if (!s) return '';
+        // Volume gets a Mute / Unmute toggle next to the label.
+        const muteBtn = s.role === 'volume'
+            ? (s.value === 0
+                ? `<button class="btn btn-secondary btn-sm" onclick="DevicesCard.unmute()">Unmute</button>`
+                : `<button class="btn btn-secondary btn-sm" onclick="DevicesCard.mute()">Mute</button>`)
+            : '';
         return `
             <div onclick="DevicesCard._maybeClose(event)" style="position: fixed; inset: 0; background: rgba(0,0,0,0.4); z-index: 1000; display: flex; align-items: center; justify-content: center; padding: 24px;">
                 <div onclick="event.stopPropagation()" class="card" style="max-width: 360px; width: 100%;">
                     <div class="card-body">
-                        <strong style="font-size: var(--font-size-lg);">${DevicesPage._escape(s.label)}</strong>
-                        <div style="margin: 16px 0; text-align: center; font-size: 28px; font-weight: 600;" id="devices-slider-value">${s.value}</div>
+                        <div style="display: flex; align-items: center; justify-content: space-between; gap: 8px;">
+                            <strong style="font-size: var(--font-size-lg);">${DevicesPage._escape(s.label)}</strong>
+                            ${muteBtn}
+                        </div>
+                        <div style="margin: 16px 0; text-align: center; font-size: 28px; font-weight: 600;" id="devices-slider-value">${s.value === 0 && s.role === 'volume' ? 'Muted' : s.value}</div>
                         <input type="range" min="0" max="10" step="1" value="${s.value}"
                             oninput="DevicesCard.onSliderInput(this.value)" style="width: 100%;">
                         <div style="display: flex; justify-content: space-between; font-size: 11px; color: var(--text-muted); margin-top: 4px;">
@@ -468,6 +507,45 @@ const DevicesCard = {
                 </div>
             </div>
         `;
+    },
+
+    /** Mute = set volume to 0 immediately (no Save needed). */
+    async mute() {
+        const s = this._sliderOpen;
+        if (!s || s.role !== 'volume') return;
+        s.value = 0;
+        await this._submitSliderValue(0);
+    },
+    /** Unmute = set volume to a sensible default (5/10) immediately. */
+    async unmute() {
+        const s = this._sliderOpen;
+        if (!s || s.role !== 'volume') return;
+        s.value = 5;
+        await this._submitSliderValue(5);
+    },
+    async _submitSliderValue(displayValue) {
+        const s = this._sliderOpen;
+        if (!s) return;
+        const actualValue = s.scaleMax === 10 ? displayValue : Math.round(displayValue / 10 * s.scaleMax);
+        this._sliderOpen = null;
+        const key = `${s.deviceId}:${s.role}`;
+        this._busyControl[key] = true;
+        App.renderPage();
+        try {
+            await this.control(s.deviceId, s.role, actualValue);
+            const device = DevicesPage._findDevice(s.deviceId);
+            if (device) {
+                device.metrics = device.metrics || {};
+                device.metrics.controls = device.metrics.controls || {};
+                device.metrics.controls[s.role] = actualValue;
+            }
+            Toast.success(displayValue === 0 ? `${s.label} muted` : `${s.label} set to ${displayValue}/10`);
+        } catch (e) {
+            Toast.error(Toast.friendly(e, `set ${s.role}`));
+        } finally {
+            delete this._busyControl[key];
+            App.renderPage();
+        }
     },
 
     _maybeClose(e) { if (e.target === e.currentTarget) this.closeSlider(); },
