@@ -39,12 +39,19 @@ const DevicesEvents = {
         try { msg = JSON.parse(e.data); } catch { return; }
         if (msg.type !== 'state' || !msg.device_id || !msg.role) return;
         DevicesPage._applyLiveOverride(msg);
-        // Debounced re-render: bursts of events (e.g. screen turning off triggers
-        // multiple state_changed at once) collapse to a single render.
+        // While the camera modal is open, full-page re-renders tear down the
+        // <video> element (AbortError on play, then a fresh <video> with no
+        // src). Skip the render — overrides keep accumulating, so the next
+        // render after close picks them up.
+        if (DevicesCamera._open) return;
+        // Debounced re-render: bursts of events (a screen toggle triggers many
+        // state_changed events at once) collapse to a single render. 250ms is
+        // long enough that motion-spike bursts don't cause visible flicker.
         if (this._renderTimer) return;
         this._renderTimer = setTimeout(() => {
             this._renderTimer = null;
+            if (DevicesCamera._open) return;
             App.renderPage();
-        }, 80);
+        }, 250);
     },
 };

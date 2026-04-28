@@ -219,21 +219,21 @@ const DevicesCard = {
             </button>
         `;
 
-        // Active state: orange ring + glow around the icon (the icons have embedded
-        // raster content, so a colorize filter would turn them into solid squares).
-        // The wrapper span is the orange affordance; the icon stays full color.
+        // Active state: light orange square fill behind the icon. The icons have
+        // embedded raster content, so a colorize filter would turn them into solid
+        // squares — we keep the icon as-is and put the orange affordance behind it.
         const detectWrapper = active => active
-            ? 'background: rgba(249,115,22,0.15); box-shadow: 0 0 0 2px #f97316, 0 0 8px rgba(249,115,22,0.55); border-radius: 50%; padding: 3px;'
-            : 'padding: 3px;';
+            ? 'background: rgba(249,115,22,0.22); border-radius: 4px; padding: 4px;'
+            : 'padding: 4px;';
         const motionIcon = `
             <span title="Motion ${motion ? 'detected' : 'idle'}"
-                  style="display: inline-flex; align-items: center; line-height: 0; transition: box-shadow 120ms ease, background 120ms ease; ${detectWrapper(motion)}">
+                  style="display: inline-flex; align-items: center; line-height: 0; transition: background 120ms ease; ${detectWrapper(motion)}">
                 ${iconImg('icon-motion-detection.svg', 18, motion ? '' : 'opacity: 0.4;')}
             </span>
         `;
         const faceIcon = `
             <span title="Face ${face ? 'detected' : 'idle'}"
-                  style="display: inline-flex; align-items: center; line-height: 0; transition: box-shadow 120ms ease, background 120ms ease; ${detectWrapper(face)}">
+                  style="display: inline-flex; align-items: center; line-height: 0; transition: background 120ms ease; ${detectWrapper(face)}">
                 ${iconImg('icon-face-detection.svg', 18, face ? '' : 'opacity: 0.4;')}
             </span>
         `;

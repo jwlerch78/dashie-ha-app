@@ -107,6 +107,9 @@ const DevicesPage = {
                 const result = await DashieAuth.dbRequest('list_devices', { tv_only: false, include_inactive: true });
                 this._devices = result.devices || result.data || [];
             }
+            // While the camera modal is open, skip the re-render so the <video>
+            // element doesn't get torn down. Updated state lands on next render.
+            if (typeof DevicesCamera !== 'undefined' && DevicesCamera._open) return;
             App.renderPage();
         } catch (e) {
             console.warn('[DevicesPage] auto-refresh failed:', e.message);
