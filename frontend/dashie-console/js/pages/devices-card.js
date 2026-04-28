@@ -15,6 +15,9 @@ const iconImg = (path, size = 16, extraStyle = '') =>
 const DevicesCard = {
     _busyControl: {},   // `${deviceId}:${role}` → bool
     _sliderOpen: null,
+    _screenshotTs: {},  // deviceId → ms since-epoch — bumped on screen toggle so the
+                        // <img src=…?t=…> cache-busts and grabs a fresh frame
+    _screenshotModal: null, // { deviceId, src } when expanded screenshot is open
 
     render(device) {
         const idAttr = DevicesPage._escape(device.device_id);
@@ -48,12 +51,14 @@ const DevicesCard = {
         const conflictChip = conflict
             ? `<span title="HA: ${DevicesPage._escape(conflict)}" style="color: var(--accent); font-size: 11px; margin-left: 6px;">⚠</span>`
             : '';
-        // Use a colored circular badge for locked state vs a dim outline for unlocked —
-        // the SVG lock vs unlock shapes are too similar at small sizes to convey state on their own.
+        // Colored circular badge for locked state, outline-only for unlocked.
+        // Combined with swapping icon-lock.svg ↔ icon-unlock.svg (now visually distinct)
+        // this gives a clear at-a-glance read at small sizes.
         const lockBg = locked ? '#f97316' : 'transparent';
         const lockBorder = locked ? '#f97316' : '#d1d5db';
         const lockFilter = locked ? 'filter: brightness(0) invert(1);' : '';
-        const lockOpacity = lockBusy ? 0.4 : (locked ? 1 : 0.5);
+        const lockOpacity = lockBusy ? 0.4 : (locked ? 1 : 0.6);
+        const lockIconFile = locked ? 'icon-lock.svg' : 'icon-unlock.svg';
         return `
             <div style="display: flex; align-items: flex-start; gap: 10px;">
                 <div class="device-card-icon" style="flex-shrink: 0;">${icon}</div>
@@ -63,7 +68,7 @@ const DevicesCard = {
                         <button title="${locked ? 'Locked — tap to unlock' : 'Unlocked — tap to lock'}" ${lockBusy ? 'disabled' : ''}
                             onclick="event.stopPropagation(); DevicesCard.toggleSwitch('${idAttr}', 'lock', ${locked})"
                             style="background: ${lockBg}; border: 1px solid ${lockBorder}; cursor: ${lockBusy ? 'wait' : 'pointer'}; padding: 3px; border-radius: 50%; line-height: 0; opacity: ${lockOpacity};">
-                            ${iconImg('icon-lock.svg', 12, lockFilter)}
+                            ${iconImg(lockIconFile, 12, lockFilter)}
                         </button>
                         ${conflictChip}
                     </div>
@@ -115,25 +120,37 @@ const DevicesCard = {
     },
 
     _renderMediaRow(device, idAttr, m) {
-        const ph = 'background: var(--bg-muted, #f7f7f8); border: 1px dashed var(--border, #e5e7eb); border-radius: 4px; aspect-ratio: 16/9; display: flex; align-items: center; justify-content: center; font-size: 11px; color: var(--text-muted); overflow: hidden;';
-        // Live image proxy URLs — only when we're inside the add-on (proxies live there).
-        // Cache-bust per minute so each render reuses the cached frame within a minute,
-        // then fetches fresh on the next minute. Keeps the load reasonable while feeling live.
-        const cacheBust = Math.floor(Date.now() / 60000);
+        const panelOuter = 'position: relative; background: var(--bg-muted, #f7f7f8); border: 1px dashed var(--border, #e5e7eb); border-radius: 4px; aspect-ratio: 16/9; overflow: hidden;';
+        const panelEmpty = panelOuter + 'display: flex; align-items: center; justify-content: center; font-size: 11px; color: var(--text-muted);';
+        // Per-device cache-bust: defaults to a per-minute floor; bumped on screen toggle
+        // (or any other action that should refresh the frame) via toggleSwitch.
+        const ts = this._screenshotTs[device.device_id] || Math.floor(Date.now() / 60000);
         const imageReady = DashieAuth.isAddonMode && device.metrics_updated_at;
         const screenshotSrc = imageReady
-            ? DashieAuth._addonUrl(`/api/ha/image/${encodeURIComponent(device.device_id)}/screenshot?t=${cacheBust}`)
+            ? DashieAuth._addonUrl(`/api/ha/image/${encodeURIComponent(device.device_id)}/screenshot?t=${ts}`)
             : null;
         const cameraSrc = imageReady && m.controls?.camera_stream_enabled
-            ? DashieAuth._addonUrl(`/api/ha/image/${encodeURIComponent(device.device_id)}/camera?t=${cacheBust}`)
+            ? DashieAuth._addonUrl(`/api/ha/image/${encodeURIComponent(device.device_id)}/camera?t=${ts}`)
             : null;
         const imgStyle = 'width: 100%; height: 100%; object-fit: cover; display: block;';
+        // Screen off overlay — fade the screenshot and show "Screen off" text on top.
+        const screenOff = m.controls?.screen === false;
+        const overlay = screenOff
+            ? `<div style="position: absolute; inset: 0; background: rgba(0,0,0,0.55); display: flex; align-items: center; justify-content: center; color: white; font-size: 13px; font-weight: 500; pointer-events: none;">Screen off</div>`
+            : '';
         const screenshotPanel = screenshotSrc
-            ? `<div style="${ph}"><img src="${screenshotSrc}" alt="screenshot" style="${imgStyle}" onerror="this.style.display='none'; this.parentElement.textContent='no screenshot';"></div>`
-            : `<div style="${ph}">screenshot</div>`;
+            ? `<div style="${panelOuter} cursor: zoom-in;" onclick="event.stopPropagation(); DevicesCard.openScreenshotModal('${idAttr}')">
+                   <img src="${screenshotSrc}" alt="screenshot" style="${imgStyle}" onerror="this.style.display='none'; this.parentElement.querySelector('.placeholder-fallback').style.display='flex';">
+                   <span class="placeholder-fallback" style="display: none; position: absolute; inset: 0; align-items: center; justify-content: center; font-size: 11px; color: var(--text-muted);">no screenshot</span>
+                   ${overlay}
+               </div>`
+            : `<div style="${panelEmpty}">screenshot</div>`;
         const cameraPanel = cameraSrc
-            ? `<div style="${ph}"><img src="${cameraSrc}" alt="camera" style="${imgStyle}" onerror="this.style.display='none'; this.parentElement.textContent='no camera';"></div>`
-            : `<div style="${ph}">${m.controls?.camera_stream_enabled === false ? 'camera off' : 'camera'}</div>`;
+            ? `<div style="${panelOuter}">
+                   <img src="${cameraSrc}" alt="camera" style="${imgStyle}" onerror="this.style.display='none'; this.parentElement.querySelector('.placeholder-fallback').style.display='flex';">
+                   <span class="placeholder-fallback" style="display: none; position: absolute; inset: 0; align-items: center; justify-content: center; font-size: 11px; color: var(--text-muted);">no camera</span>
+               </div>`
+            : `<div style="${panelEmpty}">${m.controls?.camera_stream_enabled === false ? 'camera off' : 'camera'}</div>`;
         const dark = !!m.controls?.dark_mode;
         const screenOn = m.controls?.screen !== false;
         const cameraOn = !!m.controls?.camera_stream_enabled;
@@ -144,11 +161,12 @@ const DevicesCard = {
         const darkBusy = !!this._busyControl[`${device.device_id}:dark_mode`];
         const camBusy = !!this._busyControl[`${device.device_id}:camera_stream_enabled`];
 
+        // Reload in a pill so it matches the screen + light/dark visual style.
         const reloadIcon = `
             <button title="Reload dashboard" ${reloadBusy ? 'disabled' : ''}
                 onclick="event.stopPropagation(); DevicesCard.pressButton('${idAttr}', 'reload')"
-                style="background: none; border: none; cursor: ${reloadBusy ? 'wait' : 'pointer'}; padding: 2px; opacity: ${reloadBusy ? 0.5 : 0.85}; line-height: 0; display: inline-flex; align-items: center;">
-                ${iconImg('icon-reload.svg', 16)}
+                style="display: inline-flex; align-items: center; justify-content: center; padding: 4px 10px; border-radius: 999px; border: 1px solid #d1d5db; background: #f3f4f6; cursor: ${reloadBusy ? 'wait' : 'pointer'}; opacity: ${reloadBusy ? 0.5 : 1}; line-height: 0;">
+                ${iconImg('icon-reload.svg', 14)}
             </button>
         `;
 
@@ -274,6 +292,15 @@ const DevicesCard = {
                 device.metrics.controls = device.metrics.controls || {};
                 device.metrics.controls[role] = !currentlyOn;
             }
+            // After a screen toggle, the dashboard's content has changed — bump the
+            // screenshot cache-bust so we re-fetch a fresh frame. Wait ~2s for the HA
+            // integration to capture the new state.
+            if (role === 'screen') {
+                setTimeout(() => {
+                    this._screenshotTs[deviceId] = Date.now();
+                    App.renderPage();
+                }, 2000);
+            }
         } catch (e) {
             console.error(`[DevicesCard] toggle ${role} failed:`, e);
             Toast.error(Toast.friendly(e, `toggle ${role.replace('_', ' ')}`));
@@ -282,6 +309,41 @@ const DevicesCard = {
             App.renderPage();
         }
     },
+
+    // ---- Screenshot enlargement modal ----
+
+    openScreenshotModal(deviceId) {
+        if (!DashieAuth.isAddonMode) return;
+        // Always use a fresh timestamp here so the modal grabs the latest frame.
+        const src = DashieAuth._addonUrl(`/api/ha/image/${encodeURIComponent(deviceId)}/screenshot?t=${Date.now()}`);
+        this._screenshotModal = { deviceId, src };
+        App.renderPage();
+    },
+
+    closeScreenshotModal() {
+        this._screenshotModal = null;
+        App.renderPage();
+    },
+
+    renderScreenshotModal() {
+        const m = this._screenshotModal;
+        if (!m) return '';
+        const device = DevicesPage._findDevice(m.deviceId);
+        const name = device?.device_name || 'Screenshot';
+        return `
+            <div onclick="DevicesCard._maybeCloseScreenshot(event)" style="position: fixed; inset: 0; background: rgba(0,0,0,0.85); z-index: 1100; display: flex; align-items: center; justify-content: center; padding: 24px; cursor: zoom-out;">
+                <div onclick="event.stopPropagation()" style="max-width: 95vw; max-height: 92vh; display: flex; flex-direction: column; gap: 10px;">
+                    <div style="display: flex; align-items: center; justify-content: space-between; color: white;">
+                        <strong>${DevicesPage._escape(name)}</strong>
+                        <button onclick="DevicesCard.closeScreenshotModal()" style="background: rgba(255,255,255,0.15); color: white; border: 1px solid rgba(255,255,255,0.25); border-radius: 4px; padding: 4px 12px; cursor: pointer;">Close</button>
+                    </div>
+                    <img src="${m.src}" alt="${DevicesPage._escape(name)}" style="max-width: 95vw; max-height: 80vh; object-fit: contain; border-radius: 6px; background: #000;">
+                </div>
+            </div>
+        `;
+    },
+
+    _maybeCloseScreenshot(e) { if (e.target === e.currentTarget) this.closeScreenshotModal(); },
 
     async pressButton(deviceId, role) {
         const key = `${deviceId}:${role}`;
