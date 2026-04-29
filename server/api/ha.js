@@ -224,11 +224,12 @@ router.get('/stream/:deviceId', requireSignedIn, async (req, res) => {
         if (!state) return res.status(404).json({ error: 'no camera entity for device' });
         const result = await haRegistry.getCameraStreamUrl(state.entity_id);
         if (!result?.url) return res.status(502).json({ error: 'HA did not return a stream URL' });
-        // Rewrite HA's HLS URL through our /api/ha/hls proxy so the browser hits
-        // the add-on (which controls Content-Encoding) instead of going via Ingress
-        // (where compression negotiation has caused ERR_CONTENT_DECODING_FAILED).
-        const proxiedUrl = 'api/ha/hls?u=' + encodeURIComponent(result.url);
-        res.json({ entity_id: state.entity_id, hls_url: proxiedUrl, poster: state.attributes?.entity_picture || null });
+        // Return HA's HLS URL as an absolute path. We're inside HA Ingress
+        // (same origin as HA itself), so the browser can hit /api/hls/<token>/...
+        // directly — same code path as HA's own integration UI uses, and the
+        // signed token in the URL is sufficient auth (no cookie required).
+        // This avoids fighting Express/Ingress over content-type and compression.
+        res.json({ entity_id: state.entity_id, hls_url: result.url, poster: state.attributes?.entity_picture || null });
     } catch (e) {
         console.warn(`[api/ha/stream] ${deviceId} failed: ${e.message}`);
         res.status(500).json({ error: 'stream_resolve_failed', message: e.message });
@@ -282,12 +283,16 @@ router.get('/hls', requireSignedIn, async (req, res) => {
                 const trim = line.trim();
                 if (!trim) return line;
                 if (trim.startsWith('#')) {
-                    // Rewrite any URI="..." inside directives.
                     return line.replace(/URI="([^"]+)"/g, (_m, ref) => `URI="${rewriteRef(ref)}"`);
                 }
                 return rewriteRef(trim);
             }).join('\n');
-            res.send(rewritten);
+            // Pin the manifest MIME type — Express's res.send(string) can default
+            // to text/html, which makes Safari's native HLS reject the stream
+            // with NotSupportedError. Also send as a Buffer so Express doesn't
+            // re-infer the content-type from the string body.
+            res.set('Content-Type', 'application/vnd.apple.mpegurl');
+            res.send(Buffer.from(rewritten, 'utf8'));
         } else {
             const buf = Buffer.from(await upstream.arrayBuffer());
             res.send(buf);
