@@ -19,7 +19,11 @@
 
     <!-- Supabase JS SDK (for real-time broadcasts) -->
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/hls.js@1.5.13/dist/hls.light.min.js"></script>
+    <!-- Pinned to HA frontend's exact version (see home-assistant/frontend
+         package.json) so we run the same hls.js code HA's <ha-hls-player>
+         uses. Version drift here was producing bufferAppendError on streams
+         that play fine in HA's UI. -->
+    <script src="https://cdn.jsdelivr.net/npm/hls.js@1.6.16/dist/hls.light.min.js"></script>
 
     <!-- Core -->
     <script src="js/lib/console-auth.js"></script>
