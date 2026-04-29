@@ -42,14 +42,14 @@ const DevicesCamera = {
         if (!video) return;
         if (this._hls) { try { this._hls.destroy(); } catch {} this._hls = null; }
         console.log('[DevicesCamera] attaching HLS:', url);
-        if (video.canPlayType('application/vnd.apple.mpegurl')) {
-            // Native HLS (Safari).
-            video.src = url;
-            video.play().catch(err => console.warn('[DevicesCamera] native play failed:', err));
-        } else if (typeof Hls !== 'undefined' && Hls.isSupported()) {
+        // Prefer hls.js over native HLS even on Safari — Safari's native fMP4 HLS
+        // is strict about init-segment timing / content-type and rejected our
+        // proxied stream with NotSupportedError. hls.js is more forgiving and
+        // is what HA's own integration UI uses.
+        if (typeof Hls !== 'undefined' && Hls.isSupported()) {
             const hls = new Hls({ lowLatencyMode: true, backBufferLength: 30 });
             hls.on(Hls.Events.ERROR, (_evt, data) => {
-                console.warn('[DevicesCamera] hls.js error:', data?.type, data?.details, data?.fatal ? '(fatal)' : '');
+                console.warn('[DevicesCamera] hls.js error:', data?.type, data?.details, data?.fatal ? '(fatal)' : '', data);
                 if (data?.fatal && this._open) {
                     Object.assign(this._open, { error: `${data.type}: ${data.details || 'unknown'}` });
                     App.renderPage();
@@ -62,9 +62,17 @@ const DevicesCamera = {
             hls.loadSource(url);
             hls.attachMedia(video);
             this._hls = hls;
-        } else {
-            console.warn('[DevicesCamera] no HLS support; falling back to direct src');
+        } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
+            // Last-resort fallback for browsers without MSE (iOS Safari).
+            console.log('[DevicesCamera] hls.js unavailable; using native HLS');
             video.src = url;
+            video.play().catch(err => console.warn('[DevicesCamera] native play failed:', err));
+        } else {
+            console.warn('[DevicesCamera] no HLS support');
+            if (this._open) {
+                Object.assign(this._open, { error: 'No HLS player available in this browser' });
+                App.renderPage();
+            }
         }
     },
 
