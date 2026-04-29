@@ -1,72 +1,60 @@
 /* ============================================================
-   Devices Camera modal — embeds HA's own UI for the camera entity
-   in an iframe so we use HA's exact <ha-hls-player> code path
-   (same one the integration page uses, which we know works).
+   Devices Camera — opens HA's UI in a popup window so we use HA's
+   exact <ha-hls-player> code path (same one HA's integration page
+   uses, which the user confirmed works reliably).
 
-   Why an iframe instead of our own <video>+hls.js: rebuilding HA's
-   player against arbitrary HA stream backends produced version-
-   sensitive bufferAppend errors that HA's own player handles. Rather
-   than chase parity, we just embed HA's UI directly.
+   Why a popup instead of an inline iframe: HA's frontend, when loaded
+   in an iframe with a deep-link to a more-info dialog, navigates the
+   iframe to the dashboard and opens the dialog there — but the user
+   sees the whole dashboard around the dialog. The integration page
+   itself uses a popup; mirroring that gives the cleanest UX.
+
+   render() is kept as a no-op so existing callers in devices.js still
+   work; there's no in-page modal anymore — the popup is its own window.
    ============================================================ */
 
 const DevicesCamera = {
-    _open: null,  // { deviceId, loading, error?, entityId? }
+    _open: null,  // legacy field, kept so existing render-suppression checks
+                  // in devices-events.js / devices.js continue to be no-ops.
 
     async open(deviceId) {
         if (!DashieAuth.isAddonMode) return;
-        this._open = { deviceId, loading: true, error: null };
-        App.renderPage();
+        // Open popup synchronously inside the click handler so the browser's
+        // popup blocker treats it as user-initiated. We navigate to about:blank
+        // first and update the location once we've resolved the camera entity.
+        const popup = window.open('about:blank', `dashie-camera-${deviceId}`,
+            'width=1000,height=700,resizable=yes,scrollbars=yes');
+        if (!popup) {
+            if (typeof Toast !== 'undefined') {
+                Toast.error('Popup blocked — allow popups for this site to view the camera.');
+            }
+            return;
+        }
+        // Loading hint inside the popup so it doesn't sit blank during the fetch.
         try {
-            // /api/ha/stream resolves the deviceId → HA camera entity_id (and
-            // also kicks off the stream pipeline in HA, same as the integration
-            // page's "play" click). We only need the entity_id from the response.
+            popup.document.write('<title>Loading camera…</title><body style="font-family: sans-serif; padding: 24px; color: #555;">Loading camera…</body>');
+        } catch {}
+        try {
             const resp = await fetch(DashieAuth._addonUrl(`/api/ha/stream/${encodeURIComponent(deviceId)}`));
             if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
             const info = await resp.json();
-            if (this._open?.deviceId !== deviceId) return;
-            Object.assign(this._open, { entityId: info.entity_id, loading: false });
-            App.renderPage();
+            if (popup.closed) return;
+            // HA's overview dashboard with a more-info dialog opens the same
+            // camera viewer the integration page uses. The popup is at HA's
+            // origin (we're inside HA Ingress), so the session cookie is
+            // present and HA's <ha-hls-player> runs in HA's normal frontend.
+            popup.location.href = `/lovelace/0?more-info-entity-id=${encodeURIComponent(info.entity_id)}`;
         } catch (e) {
             console.error('[DevicesCamera] resolve failed:', e);
-            if (this._open?.deviceId === deviceId) {
-                Object.assign(this._open, { error: e.message, loading: false });
-                App.renderPage();
+            if (!popup.closed) {
+                try {
+                    popup.document.body.innerHTML = `<p style="color: #b91c1c;">Could not start stream: ${String(e.message || e)}</p>`;
+                } catch {}
             }
         }
     },
 
-    close() {
-        this._open = null;
-        App.renderPage();
-    },
-
-    _maybeClose(e) { if (e.target === e.currentTarget) this.close(); },
-
-    render() {
-        const m = this._open;
-        if (!m) return '';
-        const name = (DevicesPage._findDevice(m.deviceId)?.device_name || 'Camera') + ' · Live';
-        // HA's overview dashboard with a more-info dialog for the entity opens
-        // the same camera view the integration page uses. Same origin as us
-        // (we're inside HA Ingress), so the iframe inherits HA's session
-        // cookie and HA's <ha-hls-player> runs natively inside it.
-        const haPath = m.entityId ? `/lovelace/0?more-info-entity-id=${encodeURIComponent(m.entityId)}` : null;
-        const frameSize = 'width: 90vw; max-width: 1200px; height: 80vh; border: 0; border-radius: 6px; background: #fff;';
-        const body = m.loading
-            ? `<div style="${frameSize} display: flex; align-items: center; justify-content: center; color: white; font-size: 14px; background: #111;">Loading…</div>`
-            : m.error
-                ? `<div style="${frameSize} display: flex; align-items: center; justify-content: center; color: #f87171; font-size: 14px; padding: 24px; box-sizing: border-box; background: #111;">Stream failed: ${DevicesPage._escape(m.error)}</div>`
-                : `<iframe src="${haPath}" style="${frameSize}" allow="autoplay; fullscreen; encrypted-media"></iframe>`;
-        return `
-            <div onclick="DevicesCamera._maybeClose(event)" style="position: fixed; inset: 0; background: rgba(0,0,0,0.85); z-index: 1100; display: flex; align-items: center; justify-content: center; padding: 24px; cursor: zoom-out;">
-                <div onclick="event.stopPropagation()" style="max-width: 95vw; max-height: 92vh; display: flex; flex-direction: column; gap: 10px;">
-                    <div style="display: flex; align-items: center; justify-content: space-between; color: white;">
-                        <strong>${DevicesPage._escape(name)}</strong>
-                        <button onclick="DevicesCamera.close()" style="background: rgba(255,255,255,0.15); color: white; border: 1px solid rgba(255,255,255,0.25); border-radius: 4px; padding: 4px 12px; cursor: pointer;">Close</button>
-                    </div>
-                    ${body}
-                </div>
-            </div>
-        `;
-    },
+    // No-op — there's no inline modal anymore. Kept so devices.js's
+    // ${DevicesCard.renderCameraModal()} call (which delegates here) is safe.
+    render() { return ''; },
 };

@@ -34,14 +34,12 @@ const DevicesEvents = {
         if (this._renderTimer) { clearTimeout(this._renderTimer); this._renderTimer = null; }
     },
 
-    // Roles whose state changes should re-render the cards. Battery / RAM /
-    // wifi_signal etc. update every few seconds in HA — re-rendering on each
-    // tears down all <img> elements (screenshot, camera) and causes visible
-    // flashing. Those numeric values still update internally via
-    // _applyLiveOverride and surface on the next render that fires for some
-    // other reason (or via the 30s auto-refresh hash diff).
+    // Roles whose state changes should trigger a full-page re-render. Anything
+    // not in this set either (a) handled via targeted DOM update below, or
+    // (b) noisy numeric values (battery, ram_usage, wifi_signal) that don't
+    // need a repaint — they still update internally and surface on the next
+    // render that fires for any reason.
     STRUCTURAL_ROLES: new Set([
-        'motion_detected', 'face_detected',
         'lock', 'screen', 'screensaver', 'screensaver_active',
         'dark_mode', 'keep_screen_on', 'auto_brightness',
         'volume', 'brightness',
@@ -53,9 +51,17 @@ const DevicesEvents = {
         try { msg = JSON.parse(e.data); } catch { return; }
         if (msg.type !== 'state' || !msg.device_id || !msg.role) return;
         DevicesPage._applyLiveOverride(msg);
+
+        // Motion / face fire frequently. Update just the affected icon's DOM
+        // in place — no full re-render, so all other <img>s on the page stay
+        // intact (no thumbnail flash on every detection event).
+        if (msg.role === 'motion_detected' || msg.role === 'face_detected') {
+            const role = msg.role === 'motion_detected' ? 'motion' : 'face';
+            DevicesCard.updateDetectIcon(msg.device_id, role, msg.state === 'on');
+            return;
+        }
+
         if (DevicesCamera._open) return;
-        // Only re-render for state changes that visibly affect the card. All
-        // other override changes accumulate silently and surface on next render.
         if (!this.STRUCTURAL_ROLES.has(msg.role)) return;
         if (this._renderTimer) return;
         this._renderTimer = setTimeout(() => {

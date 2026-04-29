@@ -220,21 +220,22 @@ const DevicesCard = {
         `;
 
         // Active state: thin orange border + light semi-transparent orange fill
-        // around the icon. Padding bumped down by 1px when active to compensate
-        // for the 1px border so the overall footprint stays consistent.
-        const detectWrapper = active => active
-            ? 'background: rgba(249,115,22,0.18); border: 1px solid #f97316; border-radius: 4px; padding: 3px;'
-            : 'padding: 4px;';
+        // covering BOTH the padding area and the icon itself, via an absolutely-
+        // positioned overlay layer above the icon. data-detect-* attrs let
+        // SSE handlers update these spans in place without a full re-render
+        // (motion/face fire frequently and re-rendering tears down all <img>s).
         const motionIcon = `
-            <span title="Motion ${motion ? 'detected' : 'idle'}"
-                  style="display: inline-flex; align-items: center; line-height: 0; transition: background 120ms ease; ${detectWrapper(motion)}">
+            <span data-card-id="${idAttr}" data-detect-role="motion" title="Motion ${motion ? 'detected' : 'idle'}"
+                  style="${this._detectIconStyle(motion)}">
                 ${iconImg('icon-motion-detection.svg', 18, motion ? '' : 'opacity: 0.4;')}
+                <span data-detect-overlay style="${this._detectOverlayStyle(motion)}"></span>
             </span>
         `;
         const faceIcon = `
-            <span title="Face ${face ? 'detected' : 'idle'}"
-                  style="display: inline-flex; align-items: center; line-height: 0; transition: background 120ms ease; ${detectWrapper(face)}">
+            <span data-card-id="${idAttr}" data-detect-role="face" title="Face ${face ? 'detected' : 'idle'}"
+                  style="${this._detectIconStyle(face)}">
                 ${iconImg('icon-face-detection.svg', 18, face ? '' : 'opacity: 0.4;')}
+                <span data-detect-overlay style="${this._detectOverlayStyle(face)}"></span>
             </span>
         `;
 
@@ -315,6 +316,41 @@ const DevicesCard = {
                 <span style="overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${DevicesPage._escape(text)}</span>
             </div>
         `;
+    },
+
+    /** Inline style for the motion/face icon wrapper, by active state. */
+    _detectIconStyle(active) {
+        const base = 'display: inline-flex; align-items: center; line-height: 0; position: relative; transition: background 120ms ease;';
+        return active
+            ? `${base} background: rgba(249,115,22,0.18); border: 1px solid #f97316; border-radius: 4px; padding: 3px;`
+            : `${base} padding: 4px;`;
+    },
+
+    /** Inline style for the orange tint overlay layer (above the icon img). */
+    _detectOverlayStyle(active) {
+        const base = 'position: absolute; inset: 0; border-radius: 3px; pointer-events: none;';
+        return active
+            ? `${base} background: rgba(249,115,22,0.35);`
+            : `${base} background: transparent;`;
+    },
+
+    /**
+     * Targeted DOM update for motion/face detection state. Finds the icon
+     * wrapper for the given device + role and updates its style in place,
+     * along with the overlay layer's tint. No full re-render — preserves
+     * all <img> elements (screenshots, cameras) on the page.
+     */
+    updateDetectIcon(deviceId, role, active) {
+        if (role !== 'motion' && role !== 'face') return;
+        const sel = `[data-card-id="${CSS.escape(deviceId)}"][data-detect-role="${role}"]`;
+        const wrapper = document.querySelector(sel);
+        if (!wrapper) return;
+        wrapper.setAttribute('style', this._detectIconStyle(active));
+        wrapper.setAttribute('title', `${role === 'motion' ? 'Motion' : 'Face'} ${active ? 'detected' : 'idle'}`);
+        const img = wrapper.querySelector('img');
+        if (img) img.style.opacity = active ? '' : '0.4';
+        const overlay = wrapper.querySelector('[data-detect-overlay]');
+        if (overlay) overlay.setAttribute('style', this._detectOverlayStyle(active));
     },
 
     _scaleTo10(value, max) {
