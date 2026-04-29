@@ -219,15 +219,11 @@ const DevicesCard = {
             </button>
         `;
 
-        // Active state: solid orange square (#f97316). The icon files are SVG
-        // wrappers around a base64 PNG with luminance-mask filters — any CSS
-        // filter we add paints the whole bounding box (the user saw "icons turned
-        // into orange squares"). So we add NO filter and let the icon's natural
-        // light pixels render on top of the orange background. Inline MDI-style
-        // vector icons would let us control fill, but these PNG-backed icons
-        // we have only render correctly without filtering.
+        // Active state: thin orange border + light semi-transparent orange fill
+        // around the icon. Padding bumped down by 1px when active to compensate
+        // for the 1px border so the overall footprint stays consistent.
         const detectWrapper = active => active
-            ? 'background: #f97316; border-radius: 4px; padding: 4px;'
+            ? 'background: rgba(249,115,22,0.18); border: 1px solid #f97316; border-radius: 4px; padding: 3px;'
             : 'padding: 4px;';
         const motionIcon = `
             <span title="Motion ${motion ? 'detected' : 'idle'}"
