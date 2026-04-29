@@ -82,9 +82,31 @@ const DevicesCamera = {
             hls.on(Hls.Events.MANIFEST_PARSED, () => {
                 console.log('[DevicesCamera] manifest parsed');
             });
-            // Same recovery strategy HA uses: ignore non-fatal errors, recover
-            // from media errors, restart loading on network errors, only treat
-            // genuinely unrecoverable errors as fatal.
+            // Standard hls.js 2-stage media recovery: first try recoverMediaError,
+            // if that fails again within 3s try swapAudioCodec + recoverMediaError,
+            // then give up. Without escalation we'd just loop on the same error
+            // forever (which is what we were seeing: bufferAppendError on repeat).
+            let recoverDecodeAt = 0, recoverSwapAt = 0;
+            const recoverMedia = () => {
+                const now = performance.now();
+                if (now - recoverDecodeAt > 3000) {
+                    recoverDecodeAt = now;
+                    console.log('[DevicesCamera] recovering media error (attempt 1)');
+                    hls.recoverMediaError();
+                } else if (now - recoverSwapAt > 3000) {
+                    recoverSwapAt = now;
+                    console.log('[DevicesCamera] swapAudioCodec + recover (attempt 2)');
+                    hls.swapAudioCodec();
+                    hls.recoverMediaError();
+                } else {
+                    console.warn('[DevicesCamera] media recovery exhausted; giving up');
+                    if (this._open) {
+                        Object.assign(this._open, { error: 'Stream playback error (codec)' });
+                        App.renderPage();
+                    }
+                    try { hls.destroy(); } catch {}
+                }
+            };
             hls.on(Hls.Events.ERROR, (_evt, data) => {
                 if (!data?.fatal) {
                     console.log('[DevicesCamera] hls.js (non-fatal):', data?.type, data?.details);
@@ -94,7 +116,7 @@ const DevicesCamera = {
                 if (data.type === Hls.ErrorTypes.NETWORK_ERROR) {
                     hls.startLoad();
                 } else if (data.type === Hls.ErrorTypes.MEDIA_ERROR) {
-                    hls.recoverMediaError();
+                    recoverMedia();
                 } else if (this._open) {
                     Object.assign(this._open, { error: `${data.type}: ${data.details || 'unknown'}` });
                     App.renderPage();

@@ -127,13 +127,29 @@ const DevicesPage = {
     },
 
     /** Stable hash of the parts of /api/ha/status that affect what we render.
-     *  Used to skip no-op renders during auto-refresh. */
+     *  Excludes noisy numeric values (battery, ram, wifi_signal) so frequent
+     *  small changes don't cause repaints that flash screenshots/cameras.
+     *  Those values still update internally and surface on the next render. */
     _haStatusHash() {
         const fresh = this._haStatus?.lastRun?.freshDevices || [];
         try {
-            return JSON.stringify(fresh.map(d => ({
-                id: d.device_id, m: d.metrics, hl: d.has_live_data, slug: d.slug,
-            })));
+            return JSON.stringify(fresh.map(d => {
+                const m = d.metrics || {};
+                const c = m.controls || {};
+                const p = m.presence || {};
+                return {
+                    id: d.device_id,
+                    hl: d.has_live_data,
+                    slug: d.slug,
+                    lock: c.lock, screen: c.screen, dark_mode: c.dark_mode,
+                    screensaver: c.screensaver,
+                    keep_screen_on: c.keep_screen_on, auto_brightness: c.auto_brightness,
+                    volume: c.volume, brightness: c.brightness,
+                    motion: p.motion, face: p.face,
+                    cam_on: c.camera_streaming || c.camera_stream_enabled,
+                    cam_url: c.camera_stream_url ? 'set' : 'none',
+                };
+            }));
         } catch { return ''; }
     },
 
