@@ -28,8 +28,11 @@ const DevicesPage = {
     ARCHIVE_THRESHOLD_DAYS: 30,
     LIVE_THRESHOLD_SECONDS: 90,   // metrics_updated_at newer than this → "live" chip
     HA_STATUS_MAX_AGE_MS: 15 * 1000, // refetch /api/ha/status if older than this on render
-    AUTO_REFRESH_MS: 5 * 1000,    // /api/ha/status poll cadence — fresh presence + chip data
-    LIST_DEVICES_REFRESH_MS: 60 * 1000,  // Supabase list_devices cadence (settings, structural)
+    // SSE pushes per-state changes in real time, so this poll just acts as a
+    // backstop. 30s is plenty — at 5s we were re-rendering the entire page
+    // every 5s for no visible change, which caused the visible "flashing".
+    AUTO_REFRESH_MS: 30 * 1000,
+    LIST_DEVICES_REFRESH_MS: 5 * 60 * 1000,  // Supabase list_devices (settings, structural)
 
     _pollTimer: null,
     _lastListDevicesAt: 0,
@@ -101,19 +104,37 @@ const DevicesPage = {
             // Always refresh /api/ha/status (cheap, local). Skip the heavy list_devices
             // call unless LIST_DEVICES_REFRESH_MS has elapsed.
             this._haStatusFetchedAt = 0;
+            const before = this._haStatusHash();
             await this._fetchAddonStatus();
+            const after = this._haStatusHash();
+            let listChanged = false;
             if (Date.now() - this._lastListDevicesAt >= this.LIST_DEVICES_REFRESH_MS) {
                 this._lastListDevicesAt = Date.now();
                 const result = await DashieAuth.dbRequest('list_devices', { tv_only: false, include_inactive: true });
-                this._devices = result.devices || result.data || [];
+                const newList = result.devices || result.data || [];
+                if (JSON.stringify(newList) !== JSON.stringify(this._devices)) listChanged = true;
+                this._devices = newList;
             }
-            // While the camera modal is open, skip the re-render so the <video>
-            // element doesn't get torn down. Updated state lands on next render.
+            // Skip render if camera modal is open (would tear down <video>) or
+            // if nothing visibly changed since last poll. SSE handles real-time
+            // updates between polls, so a quiet status check shouldn't repaint.
             if (typeof DevicesCamera !== 'undefined' && DevicesCamera._open) return;
+            if (before === after && !listChanged) return;
             App.renderPage();
         } catch (e) {
             console.warn('[DevicesPage] auto-refresh failed:', e.message);
         }
+    },
+
+    /** Stable hash of the parts of /api/ha/status that affect what we render.
+     *  Used to skip no-op renders during auto-refresh. */
+    _haStatusHash() {
+        const fresh = this._haStatus?.lastRun?.freshDevices || [];
+        try {
+            return JSON.stringify(fresh.map(d => ({
+                id: d.device_id, m: d.metrics, hl: d.has_live_data, slug: d.slug,
+            })));
+        } catch { return ''; }
     },
 
     /** Manual refresh: auto poll + bump every screenshot cache-bust. */

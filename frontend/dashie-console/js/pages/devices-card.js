@@ -219,24 +219,26 @@ const DevicesCard = {
             </button>
         `;
 
-        // Active state: solid orange square (#f97316) with the icon also tinted
-        // orange via a brightness/saturate filter chain. The icons have embedded
-        // raster content, so the filter colorizes the whole bounding box — that's
-        // intentional here, the active affordance reads as a solid orange chip.
-        const orangeTint = 'filter: brightness(0) saturate(100%) invert(54%) sepia(90%) saturate(2018%) hue-rotate(354deg) brightness(101%) contrast(98%);';
+        // Active state: solid orange square (#f97316). The icon files are SVG
+        // wrappers around a base64 PNG with luminance-mask filters — any CSS
+        // filter we add paints the whole bounding box (the user saw "icons turned
+        // into orange squares"). So we add NO filter and let the icon's natural
+        // light pixels render on top of the orange background. Inline MDI-style
+        // vector icons would let us control fill, but these PNG-backed icons
+        // we have only render correctly without filtering.
         const detectWrapper = active => active
             ? 'background: #f97316; border-radius: 4px; padding: 4px;'
             : 'padding: 4px;';
         const motionIcon = `
             <span title="Motion ${motion ? 'detected' : 'idle'}"
                   style="display: inline-flex; align-items: center; line-height: 0; transition: background 120ms ease; ${detectWrapper(motion)}">
-                ${iconImg('icon-motion-detection.svg', 18, motion ? orangeTint : 'opacity: 0.4;')}
+                ${iconImg('icon-motion-detection.svg', 18, motion ? '' : 'opacity: 0.4;')}
             </span>
         `;
         const faceIcon = `
             <span title="Face ${face ? 'detected' : 'idle'}"
                   style="display: inline-flex; align-items: center; line-height: 0; transition: background 120ms ease; ${detectWrapper(face)}">
-                ${iconImg('icon-face-detection.svg', 18, face ? orangeTint : 'opacity: 0.4;')}
+                ${iconImg('icon-face-detection.svg', 18, face ? '' : 'opacity: 0.4;')}
             </span>
         `;
 

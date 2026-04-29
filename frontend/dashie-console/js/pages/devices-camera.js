@@ -37,38 +37,79 @@ const DevicesCamera = {
 
     _maybeClose(e) { if (e.target === e.currentTarget) this.close(); },
 
-    _attach(url) {
+    /**
+     * Replicates HA's ha-hls-player.ts approach as closely as possible:
+     *  - Pre-fetch the master playlist, extract the single variant playlist URL
+     *    so hls.js doesn't have to parse the master itself.
+     *  - hls.js config copied from HA's player (longer timeouts, no LL-HLS by
+     *    default, larger backBufferLength).
+     *  - attachMedia → on MEDIA_ATTACHED, loadSource (HA's order).
+     *  - Recover from MEDIA / NETWORK errors before treating as fatal.
+     */
+    async _attach(url) {
         const video = document.getElementById('devices-camera-modal-video');
         if (!video) return;
         if (this._hls) { try { this._hls.destroy(); } catch {} this._hls = null; }
         console.log('[DevicesCamera] attaching HLS:', url);
-        // Prefer hls.js over native HLS even on Safari — Safari's native fMP4 HLS
-        // is strict about init-segment timing / content-type and rejected our
-        // proxied stream with NotSupportedError. hls.js is more forgiving and
-        // is what HA's own integration UI uses.
+
+        // Pre-fetch master playlist and extract the variant URL (HA pattern).
+        let playlistUrl = url;
+        try {
+            const txt = await (await fetch(url)).text();
+            const re = /#EXT-X-STREAM-INF:.*?(?:\n|\r\n)(.+)/g;
+            const m1 = re.exec(txt);
+            const m2 = re.exec(txt);
+            if (m1 && !m2) playlistUrl = new URL(m1[1].trim(), new URL(url, location.href)).href;
+        } catch (e) {
+            console.warn('[DevicesCamera] master pre-fetch failed; falling back to master URL:', e.message);
+        }
+
         if (typeof Hls !== 'undefined' && Hls.isSupported()) {
-            const hls = new Hls({ lowLatencyMode: true, backBufferLength: 30 });
+            const hls = new Hls({
+                backBufferLength: 60,
+                fragLoadingTimeOut: 30000,
+                manifestLoadingTimeOut: 30000,
+                levelLoadingTimeOut: 30000,
+                maxLiveSyncPlaybackRate: 2,
+                lowLatencyMode: false,  // HA only enables this with http/2; safe default off.
+            });
+            this._hls = hls;
+            hls.attachMedia(video);
+            hls.on(Hls.Events.MEDIA_ATTACHED, () => {
+                console.log('[DevicesCamera] media attached; loading source:', playlistUrl);
+                hls.loadSource(playlistUrl);
+            });
+            hls.on(Hls.Events.MANIFEST_PARSED, () => {
+                console.log('[DevicesCamera] manifest parsed');
+            });
+            // Same recovery strategy HA uses: ignore non-fatal errors, recover
+            // from media errors, restart loading on network errors, only treat
+            // genuinely unrecoverable errors as fatal.
             hls.on(Hls.Events.ERROR, (_evt, data) => {
-                console.warn('[DevicesCamera] hls.js error:', data?.type, data?.details, data?.fatal ? '(fatal)' : '', data);
-                if (data?.fatal && this._open) {
+                if (!data?.fatal) {
+                    console.log('[DevicesCamera] hls.js (non-fatal):', data?.type, data?.details);
+                    return;
+                }
+                console.warn('[DevicesCamera] hls.js fatal:', data.type, data.details);
+                if (data.type === Hls.ErrorTypes.NETWORK_ERROR) {
+                    hls.startLoad();
+                } else if (data.type === Hls.ErrorTypes.MEDIA_ERROR) {
+                    hls.recoverMediaError();
+                } else if (this._open) {
                     Object.assign(this._open, { error: `${data.type}: ${data.details || 'unknown'}` });
                     App.renderPage();
                 }
             });
-            hls.on(Hls.Events.MANIFEST_PARSED, () => {
-                console.log('[DevicesCamera] manifest parsed; starting playback');
+            // Play once metadata is loaded (HA pattern: loadeddata).
+            video.addEventListener('loadeddata', () => {
                 video.play().catch(err => console.warn('[DevicesCamera] play failed:', err));
-            });
-            hls.loadSource(url);
-            hls.attachMedia(video);
-            this._hls = hls;
+            }, { once: true });
         } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
-            // Last-resort fallback for browsers without MSE (iOS Safari).
+            // Last-resort native HLS for browsers without MSE (iOS Safari).
             console.log('[DevicesCamera] hls.js unavailable; using native HLS');
-            video.src = url;
-            video.play().catch(err => console.warn('[DevicesCamera] native play failed:', err));
+            video.src = playlistUrl;
+            video.addEventListener('loadedmetadata', () => video.play().catch(() => {}), { once: true });
         } else {
-            console.warn('[DevicesCamera] no HLS support');
             if (this._open) {
                 Object.assign(this._open, { error: 'No HLS player available in this browser' });
                 App.renderPage();
