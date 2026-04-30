@@ -62,12 +62,22 @@ const METRIC_MAP = {
     'dark_mode':          s => ({ controls: { dark_mode: s.state === 'on' } }),
     'keep_screen_on':     s => ({ controls: { keep_screen_on: s.state === 'on' } }),
     'auto_brightness':    s => ({ controls: { auto_brightness: s.state === 'on' } }),
-    // camera_stream_url state is the rtsp://… URL when the device has an actual
-    // camera hardware feed; empty/unavailable when the entity is registered but
-    // no camera exists. The Console uses this to decide whether to even show
-    // the camera column.
+    // camera_stream_url state is the rtsp://… URL when streaming, null when
+    // not currently streaming. NOT a reliable hardware-presence signal —
+    // turning the camera off zeroes it out. Use camera_resolution for that.
     'camera_stream_url':  s => ({ controls: {
         camera_stream_url: (s.state && s.state !== 'unavailable' && s.state !== 'unknown') ? s.state : null,
+    }}),
+    // camera_resolution / camera_frame_rate come from the device's
+    // getRtspConfig API and reflect hardware capability — they're populated
+    // for devices with a real camera regardless of streaming state, and stay
+    // null/unavailable for devices without one. This is what the Console
+    // gates the camera column on.
+    'camera_resolution':  s => ({ controls: {
+        camera_resolution: (s.state && s.state !== 'unavailable' && s.state !== 'unknown') ? s.state : null,
+    }}),
+    'camera_frame_rate':  s => ({ controls: {
+        camera_frame_rate: (s.state && s.state !== 'unavailable' && s.state !== 'unknown') ? Number(s.state) : null,
     }}),
     // The camera entity itself — state is 'streaming' / 'idle' / 'unavailable'.
     // Authoritative signal for "is the camera currently producing frames"
