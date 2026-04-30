@@ -11,27 +11,6 @@ const DevicesCard = {
     _initialTs: Date.now(),
     _screenshotModal: null,
     _historyOpen: null,
-    // Sticky set of device_ids that have ever reported a non-null
-    // camera_stream_url. Once we know a device has the hardware, keep showing
-    // the camera section even when the user turns the camera off (URL → null
-    // when off, which would otherwise hide the toggle button — no way to
-    // re-enable from the Console).
-    _CAMERA_HW_KEY: 'dashie_devices_camera_hw',
-    _hwCameraSet: null,
-    _loadCameraHw() {
-        if (this._hwCameraSet) return this._hwCameraSet;
-        try {
-            this._hwCameraSet = new Set(JSON.parse(localStorage.getItem(this._CAMERA_HW_KEY) || '[]'));
-        } catch { this._hwCameraSet = new Set(); }
-        return this._hwCameraSet;
-    },
-    _markCameraHw(deviceId) {
-        const s = this._loadCameraHw();
-        if (s.has(deviceId)) return;
-        s.add(deviceId);
-        try { localStorage.setItem(this._CAMERA_HW_KEY, JSON.stringify([...s])); } catch {}
-    },
-    _hasCameraHw(deviceId) { return this._loadCameraHw().has(deviceId); },
 
     render(device) {
         const idAttr = DevicesPage._escape(device.device_id);
@@ -272,15 +251,14 @@ const DevicesCard = {
             </div>
         `;
 
-        // Show the camera column when this device has camera hardware. We can
-        // only positively detect hardware when camera_stream_url is non-null
-        // (Mio/Fire TV register the camera entity but report empty URL — no
-        // hardware). Once we've seen a URL for a device, mark it sticky in
-        // localStorage so the section keeps showing after the user turns the
-        // camera off (URL goes null when off, which would otherwise hide the
-        // toggle button — leaving no way to turn it back on from the Console).
-        if (m.controls?.camera_stream_url) this._markCameraHw(device.device_id);
-        const hasCameraSection = this._hasCameraHw(device.device_id);
+        // Show the camera column when the device has actual camera hardware.
+        // camera_resolution comes from the device's getRtspConfig API and is
+        // populated for any device with a real camera — independent of whether
+        // the camera is currently streaming or off. Stays null for Mio / Fire
+        // TV / etc. that don't have one. (camera_stream_url alone wasn't
+        // reliable: it goes null when the user turns the camera off, which
+        // hid the toggle button along with the section.)
+        const hasCameraSection = !!m.controls?.camera_resolution;
 
         if (!hasCameraSection) {
             return `

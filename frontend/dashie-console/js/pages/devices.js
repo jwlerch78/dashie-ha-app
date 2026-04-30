@@ -292,6 +292,8 @@ const DevicesPage = {
             volume:            () => { metrics.controls = { ...(metrics.controls||{}), volume: num(s) }; },
             brightness:        () => { metrics.controls = { ...(metrics.controls||{}), brightness: num(s) }; },
             camera_stream_url: () => { metrics.controls = { ...(metrics.controls||{}), camera_stream_url: (s && s !== 'unavailable' && s !== 'unknown') ? s : null }; },
+            camera_resolution: () => { metrics.controls = { ...(metrics.controls||{}), camera_resolution: (s && s !== 'unavailable' && s !== 'unknown') ? s : null }; },
+            camera_frame_rate: () => { metrics.controls = { ...(metrics.controls||{}), camera_frame_rate: (s && s !== 'unavailable' && s !== 'unknown') ? Number(s) : null }; },
             camera:            () => { metrics.controls = { ...(metrics.controls||{}), camera_streaming: s === 'streaming' }; },
             rtsp_stream:       () => { metrics.controls = { ...(metrics.controls||{}), camera_stream_enabled: s === 'on' }; },
         };
