@@ -62,6 +62,13 @@ const METRIC_MAP = {
     'dark_mode':          s => ({ controls: { dark_mode: s.state === 'on' } }),
     'keep_screen_on':     s => ({ controls: { keep_screen_on: s.state === 'on' } }),
     'auto_brightness':    s => ({ controls: { auto_brightness: s.state === 'on' } }),
+    // motion_wake_mode determines whether motion / face detection are actually
+    // running on the device. State is one of the labels from MOTION_WAKE_MODES
+    // in the integration: "Disabled" (neither active), "Brightness Sensor"
+    // (motion via ambient light only — face inactive), "Camera-based" (both
+    // motion and face active). Console uses this to distinguish "active+clear"
+    // from "inactive" on the motion/face icons.
+    'motion_wake_mode':   s => ({ controls: { motion_wake_mode: s.state || null } }),
     // camera_stream_url state is the rtsp://… URL when streaming, null when
     // not currently streaming. NOT a reliable hardware-presence signal —
     // turning the camera off zeroes it out. Use camera_resolution for that.
