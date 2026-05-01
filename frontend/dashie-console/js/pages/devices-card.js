@@ -176,15 +176,13 @@ const DevicesCard = {
         const cameraOn = !!(m.controls?.camera_streaming || m.controls?.camera_stream_enabled);
         const motion = !!m.presence?.motion;
         const face = !!m.presence?.face;
-        // motionWakeMode tells us whether detection is even running:
-        //   "Disabled"        → neither motion nor face active (we're not detecting)
-        //   "Brightness Sensor" → motion via ambient light, face inactive
-        //   "Camera-based"    → both motion and face active
-        // When inactive we show a slash overlay so the user can see the icon
-        // is off entirely (vs idle / no detection right now).
-        const wakeMode = m.controls?.motion_wake_mode;
-        const motionActive = wakeMode && wakeMode !== 'Disabled';
-        const faceActive = wakeMode === 'Camera-based';
+        // *_active comes from whether HA reports the binary sensor as
+        // available — the device sets it unavailable when the corresponding
+        // detection toggle is off (no scanning). When the flag is missing
+        // (older states / no observation yet) default to true so existing
+        // devices show the active+clear/detected look rather than the slash.
+        const motionActive = m.presence?.motion_active !== false;
+        const faceActive = m.presence?.face_active !== false;
         const reloadBusy = !!this._busyControl[`${device.device_id}:reload`];
         const screenBusy = !!this._busyControl[`${device.device_id}:screen`];
         const darkBusy = !!this._busyControl[`${device.device_id}:dark_mode`];

@@ -43,10 +43,9 @@ const DevicesEvents = {
         'lock', 'screen', 'screensaver', 'screensaver_active',
         'dark_mode', 'keep_screen_on', 'auto_brightness',
         'volume', 'brightness',
+        // RTSP/camera state is what gates the motion/face slash overlay too,
+        // so any of these changing should re-render to flip those icons.
         'camera', 'camera_stream_url', 'rtsp_stream', 'camera_stream_enabled',
-        // motion_wake_mode changes the slash overlay on motion/face icons —
-        // rare, but worth a re-render so the inactive/active state visual updates.
-        'motion_wake_mode',
     ]),
 
     _onMessage(e) {
@@ -60,14 +59,13 @@ const DevicesEvents = {
         // intact (no thumbnail flash on every detection event).
         if (msg.role === 'motion_detected' || msg.role === 'face_detected') {
             const role = msg.role === 'motion_detected' ? 'motion' : 'face';
-            // Look up active state from current device metrics so the icon
-            // opacity reflects the right 3-state (detected / active+clear /
-            // inactive). If we don't have wakeMode yet, assume active (true).
+            // The *_active flag tracks whether the device is actually scanning
+            // for this signal. It's "off" only when HA reports the sensor as
+            // unavailable (= detection toggle off). _applyLiveOverride above
+            // already updated metrics.presence.{motion,face}_active based on
+            // this very event's state, so just read it back.
             const fresh = DevicesPage._freshDeviceFor(msg.device_id);
-            const wakeMode = fresh?.metrics?.controls?.motion_wake_mode;
-            const active = role === 'face'
-                ? wakeMode === 'Camera-based'
-                : (wakeMode && wakeMode !== 'Disabled');
+            const active = fresh?.metrics?.presence?.[`${role}_active`] !== false;
             DevicesCard.updateDetectIcon(msg.device_id, role, msg.state === 'on', active);
             return;
         }
