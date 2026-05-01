@@ -159,7 +159,7 @@ const DevicesCard = {
         // Camera offline = configured but currently off (camera_stream_enabled === false).
         // Show a clear "Camera offline" placeholder with a slashed camera icon.
         const cameraConfigured = m.controls?.camera_stream_enabled !== undefined;
-        const slashSvg = (size, color = '#9ca3af', strokeW = 2.5) => `<span style="position: absolute; inset: 0; pointer-events: none;"><svg viewBox="0 0 ${size} ${size}" style="width: 100%; height: 100%;"><line x1="${size*0.15}" y1="${size*0.85}" x2="${size*0.85}" y2="${size*0.15}" stroke="${color}" stroke-width="${strokeW}" stroke-linecap="round"/></svg></span>`;
+        const slashSvg = (size, color = '#9ca3af', strokeW = 2.5, opacity = 1) => `<span style="position: absolute; inset: 0; pointer-events: none; opacity: ${opacity};"><svg viewBox="0 0 ${size} ${size}" style="width: 100%; height: 100%;"><line x1="${size*0.15}" y1="${size*0.85}" x2="${size*0.85}" y2="${size*0.15}" stroke="${color}" stroke-width="${strokeW}" stroke-linecap="round"/></svg></span>`;
         const cameraOffPanel = `
             <div style="${panelOuter} display: flex; align-items: center; justify-content: center; flex-direction: column; gap: 6px; color: var(--text-muted);">
                 <span style="position: relative; display: inline-block; line-height: 0; width: 32px; height: 32px;">${iconImg('icon-video-camera.svg', 28, 'opacity: 0.5;')}${slashSvg(32)}</span>
@@ -237,7 +237,7 @@ const DevicesCard = {
                   style="${this._detectIconStyle(motion)}">
                 ${iconImg('icon-motion-detection.svg', 18, this._detectIconOpacity(motion, motionActive))}
                 <span data-detect-overlay style="${this._detectOverlayStyle(motion)}"></span>
-                ${!motionActive ? slashSvg(18, '#9ca3af', 2) : ''}
+                ${!motionActive ? slashSvg(18, '#9ca3af', 1, 0.4) : ''}
             </span>
         `;
         const faceIcon = `
@@ -245,7 +245,7 @@ const DevicesCard = {
                   style="${this._detectIconStyle(face)}">
                 ${iconImg('icon-face-detection.svg', 18, this._detectIconOpacity(face, faceActive))}
                 <span data-detect-overlay style="${this._detectOverlayStyle(face)}"></span>
-                ${!faceActive ? slashSvg(18, '#9ca3af', 2) : ''}
+                ${!faceActive ? slashSvg(18, '#9ca3af', 1, 0.4) : ''}
             </span>
         `;
 
