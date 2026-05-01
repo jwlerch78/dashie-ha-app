@@ -43,7 +43,13 @@ const DevicesCamera = {
             // camera viewer the integration page uses. The popup is at HA's
             // origin (we're inside HA Ingress), so the session cookie is
             // present and HA's <ha-hls-player> runs in HA's normal frontend.
-            popup.location.href = `/lovelace/0?more-info-entity-id=${encodeURIComponent(info.entity_id)}`;
+            // Root URL with the more-info query param. /lovelace/0 doesn't
+            // exist for users who've renamed their default dashboard (e.g.
+            // /home), and HA's HTTP redirect to the user's default dashboard
+            // strips query strings — leaving them at the dashboard with no
+            // dialog open. Hitting `/` instead lets HA's frontend handle the
+            // routing client-side via pushState, which preserves the query.
+            popup.location.href = `/?more-info-entity-id=${encodeURIComponent(info.entity_id)}`;
         } catch (e) {
             console.error('[DevicesCamera] resolve failed:', e);
             if (!popup.closed) {

@@ -44,6 +44,9 @@ const DevicesEvents = {
         'dark_mode', 'keep_screen_on', 'auto_brightness',
         'volume', 'brightness',
         'camera', 'camera_stream_url', 'rtsp_stream', 'camera_stream_enabled',
+        // motion_wake_mode changes the slash overlay on motion/face icons —
+        // rare, but worth a re-render so the inactive/active state visual updates.
+        'motion_wake_mode',
     ]),
 
     _onMessage(e) {
@@ -57,7 +60,15 @@ const DevicesEvents = {
         // intact (no thumbnail flash on every detection event).
         if (msg.role === 'motion_detected' || msg.role === 'face_detected') {
             const role = msg.role === 'motion_detected' ? 'motion' : 'face';
-            DevicesCard.updateDetectIcon(msg.device_id, role, msg.state === 'on');
+            // Look up active state from current device metrics so the icon
+            // opacity reflects the right 3-state (detected / active+clear /
+            // inactive). If we don't have wakeMode yet, assume active (true).
+            const fresh = DevicesPage._freshDeviceFor(msg.device_id);
+            const wakeMode = fresh?.metrics?.controls?.motion_wake_mode;
+            const active = role === 'face'
+                ? wakeMode === 'Camera-based'
+                : (wakeMode && wakeMode !== 'Disabled');
+            DevicesCard.updateDetectIcon(msg.device_id, role, msg.state === 'on', active);
             return;
         }
 

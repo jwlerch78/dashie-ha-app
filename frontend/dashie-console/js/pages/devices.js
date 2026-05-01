@@ -146,8 +146,10 @@ const DevicesPage = {
                     keep_screen_on: c.keep_screen_on, auto_brightness: c.auto_brightness,
                     volume: c.volume, brightness: c.brightness,
                     motion: p.motion, face: p.face,
+                    wake_mode: c.motion_wake_mode || null,
                     cam_on: c.camera_streaming || c.camera_stream_enabled,
                     cam_url: c.camera_stream_url ? 'set' : 'none',
+                    cam_res: c.camera_resolution ? 'set' : 'none',
                 };
             }));
         } catch { return ''; }
@@ -289,6 +291,7 @@ const DevicesPage = {
             dark_mode:         () => { metrics.controls = { ...(metrics.controls||{}), dark_mode: s === 'on' }; },
             keep_screen_on:    () => { metrics.controls = { ...(metrics.controls||{}), keep_screen_on: s === 'on' }; },
             auto_brightness:   () => { metrics.controls = { ...(metrics.controls||{}), auto_brightness: s === 'on' }; },
+            motion_wake_mode:  () => { metrics.controls = { ...(metrics.controls||{}), motion_wake_mode: s || null }; },
             volume:            () => { metrics.controls = { ...(metrics.controls||{}), volume: num(s) }; },
             brightness:        () => { metrics.controls = { ...(metrics.controls||{}), brightness: num(s) }; },
             camera_stream_url: () => { metrics.controls = { ...(metrics.controls||{}), camera_stream_url: (s && s !== 'unavailable' && s !== 'unknown') ? s : null }; },

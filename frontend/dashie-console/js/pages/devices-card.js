@@ -176,6 +176,15 @@ const DevicesCard = {
         const cameraOn = !!(m.controls?.camera_streaming || m.controls?.camera_stream_enabled);
         const motion = !!m.presence?.motion;
         const face = !!m.presence?.face;
+        // motionWakeMode tells us whether detection is even running:
+        //   "Disabled"        → neither motion nor face active (we're not detecting)
+        //   "Brightness Sensor" → motion via ambient light, face inactive
+        //   "Camera-based"    → both motion and face active
+        // When inactive we show a slash overlay so the user can see the icon
+        // is off entirely (vs idle / no detection right now).
+        const wakeMode = m.controls?.motion_wake_mode;
+        const motionActive = wakeMode && wakeMode !== 'Disabled';
+        const faceActive = wakeMode === 'Camera-based';
         const reloadBusy = !!this._busyControl[`${device.device_id}:reload`];
         const screenBusy = !!this._busyControl[`${device.device_id}:screen`];
         const darkBusy = !!this._busyControl[`${device.device_id}:dark_mode`];
@@ -219,23 +228,26 @@ const DevicesCard = {
             </button>
         `;
 
-        // Active state: thin orange border + light semi-transparent orange fill
-        // covering BOTH the padding area and the icon itself, via an absolutely-
-        // positioned overlay layer above the icon. data-detect-* attrs let
-        // SSE handlers update these spans in place without a full re-render
-        // (motion/face fire frequently and re-rendering tears down all <img>s).
+        // Active state visual: thin orange border + light semi-transparent
+        // orange fill covering both padding and icon (overlay layer above the
+        // img). Inactive state visual: slash overlay over a dim icon — clearly
+        // "detection is off", distinct from "idle/no detection right now".
+        // data-detect-* attrs let SSE handlers update these spans in place
+        // without a full re-render (motion/face fire frequently).
         const motionIcon = `
-            <span data-card-id="${idAttr}" data-detect-role="motion" title="Motion ${motion ? 'detected' : 'idle'}"
+            <span data-card-id="${idAttr}" data-detect-role="motion" title="${this._detectTitle('motion', motion, motionActive)}"
                   style="${this._detectIconStyle(motion)}">
-                ${iconImg('icon-motion-detection.svg', 18, motion ? '' : 'opacity: 0.4;')}
+                ${iconImg('icon-motion-detection.svg', 18, this._detectIconOpacity(motion, motionActive))}
                 <span data-detect-overlay style="${this._detectOverlayStyle(motion)}"></span>
+                ${!motionActive ? slashSvg(18, '#9ca3af', 2) : ''}
             </span>
         `;
         const faceIcon = `
-            <span data-card-id="${idAttr}" data-detect-role="face" title="Face ${face ? 'detected' : 'idle'}"
+            <span data-card-id="${idAttr}" data-detect-role="face" title="${this._detectTitle('face', face, faceActive)}"
                   style="${this._detectIconStyle(face)}">
-                ${iconImg('icon-face-detection.svg', 18, face ? '' : 'opacity: 0.4;')}
+                ${iconImg('icon-face-detection.svg', 18, this._detectIconOpacity(face, faceActive))}
                 <span data-detect-overlay style="${this._detectOverlayStyle(face)}"></span>
+                ${!faceActive ? slashSvg(18, '#9ca3af', 2) : ''}
             </span>
         `;
 
@@ -319,20 +331,33 @@ const DevicesCard = {
         `;
     },
 
-    /** Inline style for the motion/face icon wrapper, by active state. */
-    _detectIconStyle(active) {
+    /** Inline style for the motion/face icon wrapper, by detected state. */
+    _detectIconStyle(detected) {
         const base = 'display: inline-flex; align-items: center; line-height: 0; position: relative; transition: background 120ms ease;';
-        return active
+        return detected
             ? `${base} background: rgba(249,115,22,0.18); border: 1px solid #f97316; border-radius: 4px; padding: 3px;`
             : `${base} padding: 4px;`;
     },
 
     /** Inline style for the orange tint overlay layer (above the icon img). */
-    _detectOverlayStyle(active) {
+    _detectOverlayStyle(detected) {
         const base = 'position: absolute; inset: 0; border-radius: 3px; pointer-events: none;';
-        return active
+        return detected
             ? `${base} background: rgba(249,115,22,0.35);`
             : `${base} background: transparent;`;
+    },
+
+    /** Icon opacity by 3-state: detected → 1; active+clear → 0.5; inactive → 0.25. */
+    _detectIconOpacity(detected, active) {
+        if (detected) return '';
+        if (active) return 'opacity: 0.5;';
+        return 'opacity: 0.25;';
+    },
+
+    _detectTitle(role, detected, active) {
+        const label = role === 'motion' ? 'Motion' : 'Face';
+        if (!active) return `${label} detection off`;
+        return `${label} ${detected ? 'detected' : 'idle'}`;
     },
 
     /**
@@ -340,18 +365,22 @@ const DevicesCard = {
      * wrapper for the given device + role and updates its style in place,
      * along with the overlay layer's tint. No full re-render — preserves
      * all <img> elements (screenshots, cameras) on the page.
+     *
+     * Caller must pass `active` (whether detection is enabled at all) so we
+     * can pick the right opacity. The slash overlay only updates on full
+     * re-render (motion_wake_mode changes are rare).
      */
-    updateDetectIcon(deviceId, role, active) {
+    updateDetectIcon(deviceId, role, detected, active = true) {
         if (role !== 'motion' && role !== 'face') return;
         const sel = `[data-card-id="${CSS.escape(deviceId)}"][data-detect-role="${role}"]`;
         const wrapper = document.querySelector(sel);
         if (!wrapper) return;
-        wrapper.setAttribute('style', this._detectIconStyle(active));
-        wrapper.setAttribute('title', `${role === 'motion' ? 'Motion' : 'Face'} ${active ? 'detected' : 'idle'}`);
+        wrapper.setAttribute('style', this._detectIconStyle(detected));
+        wrapper.setAttribute('title', this._detectTitle(role, detected, active));
         const img = wrapper.querySelector('img');
-        if (img) img.style.opacity = active ? '' : '0.4';
+        if (img) img.setAttribute('style', `width: 18px; height: 18px; vertical-align: middle; ${this._detectIconOpacity(detected, active)}`);
         const overlay = wrapper.querySelector('[data-detect-overlay]');
-        if (overlay) overlay.setAttribute('style', this._detectOverlayStyle(active));
+        if (overlay) overlay.setAttribute('style', this._detectOverlayStyle(detected));
     },
 
     _scaleTo10(value, max) {
