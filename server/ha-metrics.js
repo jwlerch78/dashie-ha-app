@@ -52,8 +52,21 @@ const METRIC_MAP = {
     }}),
     'current_page':       s => ({ app: { current_page: s.state } }),
     'screensaver_active': s => ({ screensaver: { active: s.state === 'on' } }),
-    'motion_detected':    s => ({ presence: { motion: s.state === 'on' } }),
-    'face_detected':      s => ({ presence: { face: s.state === 'on' } }),
+    // motion / face binary sensors. The *_active flag tracks whether detection
+    // is actually running on the device — driven by whether HA reports the
+    // sensor as unavailable (= toggle off, no scanning) vs on/off (= scanning,
+    // currently triggered or clear). Today both paths (integration poll +
+    // MQTT push) always report on/off, so *_active is always true. When the
+    // Android app starts emitting unavailable when the detection toggle is
+    // off, the Console will pick it up automatically and show the slash.
+    'motion_detected':    s => ({ presence: {
+        motion: s.state === 'on',
+        motion_active: s.state !== 'unavailable' && s.state !== 'unknown' && s.state != null,
+    }}),
+    'face_detected':      s => ({ presence: {
+        face: s.state === 'on',
+        face_active: s.state !== 'unavailable' && s.state !== 'unknown' && s.state != null,
+    }}),
     'ambient_light':      s => ({ environment: { ambient_light: toNum(s.state) } }),
     // Toggleable controls (state mirrored so the Console can render their current value)
     'lock':               s => ({ controls: { lock: s.state === 'on' } }),
@@ -62,13 +75,6 @@ const METRIC_MAP = {
     'dark_mode':          s => ({ controls: { dark_mode: s.state === 'on' } }),
     'keep_screen_on':     s => ({ controls: { keep_screen_on: s.state === 'on' } }),
     'auto_brightness':    s => ({ controls: { auto_brightness: s.state === 'on' } }),
-    // motion_wake_mode determines whether motion / face detection are actually
-    // running on the device. State is one of the labels from MOTION_WAKE_MODES
-    // in the integration: "Disabled" (neither active), "Brightness Sensor"
-    // (motion via ambient light only — face inactive), "Camera-based" (both
-    // motion and face active). Console uses this to distinguish "active+clear"
-    // from "inactive" on the motion/face icons.
-    'motion_wake_mode':   s => ({ controls: { motion_wake_mode: s.state || null } }),
     // camera_stream_url state is the rtsp://… URL when streaming, null when
     // not currently streaming. NOT a reliable hardware-presence signal —
     // turning the camera off zeroes it out. Use camera_resolution for that.
