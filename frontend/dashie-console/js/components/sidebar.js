@@ -5,6 +5,11 @@
 const Sidebar = {
     render(activePage) {
         const credits = MockData.credits;
+        // Beta visibility — see js/lib/feature-gate.js. HA-only items are
+        // hidden when the console is served from the public website; the
+        // credits widget is dev-only; locations is hidden everywhere until
+        // the feature is ready.
+        const showCredits = FeatureGate.shouldShow('credits');
         return `
             <div class="sidebar-logo">
                 <img src="assets/dashie-logo-orange.png" alt="Dashie" class="sidebar-logo-full">
@@ -14,8 +19,8 @@ const Sidebar = {
             <div class="sidebar-section">
                 <div class="sidebar-section-label">Manage</div>
                 ${this._navItem('devices', 'Devices', 'icon-tv', activePage)}
-                ${this._navItem('voice-ai', 'Voice & AI', 'icon-ai-chat', activePage)}
-                ${this._navItem('video-feeds', 'Video Feeds', 'icon-video-camera', activePage)}
+                ${this._gatedNavItem('voice-ai', 'Voice & AI', 'icon-ai-chat', activePage)}
+                ${this._gatedNavItem('video-feeds', 'Video Feeds', 'icon-video-camera', activePage)}
             </div>
 
             <div class="sidebar-divider"></div>
@@ -26,7 +31,7 @@ const Sidebar = {
                 ${this._navItem('calendar', 'Calendar', 'icon-calendar', activePage)}
                 ${this._navItem('chores', 'Chores', 'icon-tasks', activePage)}
                 ${this._navItem('rewards', 'Rewards', 'icon-star', activePage)}
-                ${this._navItem('locations', 'Locations', 'icon-location-pin', activePage)}
+                ${this._gatedNavItem('locations', 'Locations', 'icon-location-pin', activePage)}
                 ${this._navItem('photos', 'Photos', 'icon-photos', activePage)}
             </div>
 
@@ -38,13 +43,21 @@ const Sidebar = {
             </div>
 
             <div class="sidebar-footer">
-                <div class="sidebar-credits" onclick="App.navigate('account')">
-                    <span class="sidebar-credits-amount">$${credits.total.toFixed(2)}</span>
-                    <span class="sidebar-credits-label">credits</span>
-                </div>
+                ${showCredits ? `
+                    <div class="sidebar-credits" onclick="App.navigate('account')">
+                        <span class="sidebar-credits-amount">$${credits.total.toFixed(2)}</span>
+                        <span class="sidebar-credits-label">credits</span>
+                    </div>
+                ` : ''}
                 <div class="sidebar-version">v1.0.0</div>
             </div>
         `;
+    },
+
+    /** Renders a nav item only when FeatureGate allows the page. */
+    _gatedNavItem(page, label, iconName, activePage) {
+        if (!FeatureGate.isPageEnabled(page)) return '';
+        return this._navItem(page, label, iconName, activePage);
     },
 
     _navItem(page, label, iconName, activePage) {

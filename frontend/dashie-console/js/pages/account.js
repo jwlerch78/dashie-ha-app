@@ -82,8 +82,11 @@ const AccountPage = {
         const statusDisplay = this._formatStatus(d.subscription_status, d.tier_expires_at);
         const planLabel = this._formatPlan(d.subscription_plan);
 
-        // Credits (not yet wired to backend — show zeros until Phase 2)
+        // Credits (not yet wired to backend — show zeros until Phase 2).
+        // Whole credits surface is hidden in prod via FeatureGate; visible in
+        // dev so we can keep iterating on the per-token billing UI.
         const credits = { included: 0, purchased: 0, total: 0 };
+        const showCredits = FeatureGate.shouldShow('credits');
 
         return `
             <div style="margin-bottom: 24px; color: var(--text-secondary); font-size: var(--font-size-sm);">
@@ -93,7 +96,7 @@ const AccountPage = {
             <div class="stat-cards">
                 ${Card.stat('Plan', statusDisplay.label, statusDisplay.detail)}
                 ${Card.stat('Tier', this._formatTier(d.tier), d.has_voice_license ? 'Voice license active' : '')}
-                ${Card.stat('Credits', `$${credits.total.toFixed(2)}`, 'Coming in Phase 2')}
+                ${showCredits ? Card.stat('Credits', `$${credits.total.toFixed(2)}`, 'Coming in Phase 2') : ''}
             </div>
 
             <div class="section-header">Subscription Status</div>
@@ -124,13 +127,15 @@ const AccountPage = {
                 </div>
             </div>
 
-            <div class="section-header">Credits & Usage</div>
-            <div class="card">
-                <div class="card-body" style="color: var(--text-secondary); text-align: center; padding: 32px 16px;">
-                    <div style="font-size: var(--font-size-lg); color: var(--text-primary); margin-bottom: 6px;">Per-token billing coming soon</div>
-                    <div style="font-size: var(--font-size-sm);">Credit balance, usage tracking, and top-ups ship in Phase 2.</div>
+            ${showCredits ? `
+                <div class="section-header">Credits & Usage</div>
+                <div class="card">
+                    <div class="card-body" style="color: var(--text-secondary); text-align: center; padding: 32px 16px;">
+                        <div style="font-size: var(--font-size-lg); color: var(--text-primary); margin-bottom: 6px;">Per-token billing coming soon</div>
+                        <div style="font-size: var(--font-size-sm);">Credit balance, usage tracking, and top-ups ship in Phase 2.</div>
+                    </div>
                 </div>
-            </div>
+            ` : ''}
 
             <div style="margin-top: 24px; display: flex; gap: 12px;">
                 <button class="btn btn-secondary" onclick="window.open('https://dashieapp.com/account', '_blank')">Manage Subscription</button>

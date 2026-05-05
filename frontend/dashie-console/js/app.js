@@ -214,10 +214,16 @@ const App = {
             }
         }
 
-        // Check URL hash for initial page
+        // Check URL hash for initial page. If the hash points at a beta-gated
+        // page that's hidden in this env, fall back to home and silently
+        // rewrite the URL.
         const hash = window.location.hash.replace('#', '');
-        if (hash && this.pages[hash]) {
+        if (hash && this.pages[hash] && FeatureGate.isPageEnabled(hash)) {
             this._currentPage = hash;
+        } else if (hash) {
+            // Quietly redirect — no toast, no error; user may have an old
+            // bookmark or a link from a different env.
+            window.location.hash = this._currentPage;
         }
 
         this.renderPage();
@@ -226,6 +232,10 @@ const App = {
         window.addEventListener('hashchange', () => {
             const hash = window.location.hash.replace('#', '');
             if (hash && this.pages[hash] && hash !== this._currentPage) {
+                if (!FeatureGate.isPageEnabled(hash)) {
+                    window.location.hash = this._currentPage;
+                    return;
+                }
                 this._currentPage = hash;
                 this.renderPage();
             }
@@ -250,6 +260,11 @@ const App = {
 
     navigate(page) {
         if (!this.pages[page]) return;
+        // Silently redirect to home if the user (or a stale link) targets a
+        // beta-gated page that's hidden in this environment.
+        if (!FeatureGate.isPageEnabled(page)) {
+            page = 'devices';
+        }
 
         // Reset sub-page state when navigating away
         if (this._currentPage === 'devices' && page !== 'devices') {
