@@ -138,10 +138,44 @@ const AccountPage = {
             ` : ''}
 
             <div style="margin-top: 24px; display: flex; gap: 12px;">
-                <button class="btn btn-secondary" onclick="window.open('https://dashieapp.com/account', '_blank')">Manage Subscription</button>
+                <button id="manage-subscription-btn" class="btn btn-secondary" onclick="AccountPage.openBillingPortal()">Manage Subscription</button>
                 <button class="btn btn-ghost" onclick="AccountPage.signOut()">Sign Out</button>
             </div>
         `;
+    },
+
+    /**
+     * Send the user to Stripe's hosted Customer Portal where they can
+     * update payment methods, cancel, view invoices, etc. Edge fn
+     * `create-portal-session` verifies the user's JWT, looks up their
+     * stripe_customer_id, and returns a one-time portal session URL.
+     *
+     * No customer on file (NO_STRIPE_CUSTOMER) → user has never been
+     * through Stripe Checkout; Toast directs them to subscribe first.
+     */
+    async openBillingPortal() {
+        const btn = document.getElementById('manage-subscription-btn');
+        const restore = btn ? () => { btn.disabled = false; btn.textContent = 'Manage Subscription'; } : () => {};
+        if (btn) { btn.disabled = true; btn.textContent = 'Opening…'; }
+        try {
+            const res = await DashieAuth.edgeFunctionRequest('create-portal-session', {
+                return_url: window.location.origin + window.location.pathname + '#account',
+            });
+            if (res?.url) {
+                window.location.href = res.url;
+                return;  // navigation in progress; don't restore button
+            }
+            throw new Error('No portal URL returned');
+        } catch (e) {
+            console.error('[AccountPage] openBillingPortal failed:', e);
+            const msg = String(e?.message || e);
+            if (msg.includes('NO_STRIPE_CUSTOMER') || msg.includes('start a checkout')) {
+                Toast.info('No subscription on file yet. Start a subscription to manage billing.');
+            } else {
+                Toast.error(`Could not open billing portal: ${msg}`);
+            }
+            restore();
+        }
     },
 
     _formatStatus(status, expiresAt) {
