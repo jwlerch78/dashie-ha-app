@@ -40,6 +40,28 @@ const DevicesPage = {
      *  worker's freshDevices metrics. Updated by SSE state_changed events. */
     _liveOverrides: {},
 
+    /**
+     * Whether to render the technical-details version of each card (battery,
+     * RAM, wifi, screenshot, camera, lock, all controls) versus the simple
+     * "what's playing on this dashboard" version (theme, sleep schedule, AI
+     * personality, photos album + a small set of controls).
+     *
+     * Default ON inside the HA add-on (technical users), OFF on the public
+     * web (less-technical users). Persisted per-browser in localStorage.
+     */
+    _TECH_VIEW_KEY: 'dashie_devices_tech_view',
+    get _techView() {
+        const stored = localStorage.getItem(this._TECH_VIEW_KEY);
+        if (stored === 'on')  return true;
+        if (stored === 'off') return false;
+        return FeatureGate.isAddonMode();   // default depends on context
+    },
+    setTechView(on) {
+        try { localStorage.setItem(this._TECH_VIEW_KEY, on ? 'on' : 'off'); } catch {}
+        App.renderPage();
+    },
+    toggleTechView() { this.setTechView(!this._techView); },
+
     render() {
         if (!this._devices && !this._loading && !this._error) {
             this._fetchDevices();
@@ -67,6 +89,19 @@ const DevicesPage = {
         }
         const device = this._findDevice(this._detailDeviceId);
         return device ? this._typeLabel(device) : '';
+    },
+
+    /** Top-bar action buttons — Show technical details toggle. */
+    topBarActions() {
+        // Only show on the list view, not the detail view.
+        if (this._detailDeviceId) return '';
+        const on = this._techView;
+        return `
+            <button class="btn ${on ? 'btn-primary' : 'btn-secondary'}" onclick="DevicesPage.toggleTechView()"
+                    title="Show battery, RAM, screenshot, camera, and full control set">
+                ${on ? '✓ ' : ''}Show technical details
+            </button>
+        `;
     },
 
     async _fetchDevices() {

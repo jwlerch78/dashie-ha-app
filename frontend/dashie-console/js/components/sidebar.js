@@ -18,7 +18,7 @@ const Sidebar = {
 
             <div class="sidebar-section">
                 <div class="sidebar-section-label">Manage</div>
-                ${this._navItem('devices', 'Devices', 'icon-tv', activePage)}
+                ${this._navItem('devices', 'Dashboards', 'icon-tv', activePage)}
                 ${this._gatedNavItem('voice-ai', 'Voice & AI', 'icon-ai-chat', activePage)}
                 ${this._gatedNavItem('video-feeds', 'Video Feeds', 'icon-video-camera', activePage)}
             </div>

@@ -22,6 +22,15 @@ const AccountPage = {
     topBarTitle() { return 'Account & Credits'; },
     topBarSubtitle() { return ''; },
 
+    /** Top-bar action buttons — same slot Chores' Options uses. */
+    topBarActions() {
+        return `
+            <button class="btn btn-secondary" onclick="AccountPage.openBillingPortal()" id="manage-subscription-btn">
+                Manage Subscription
+            </button>
+        `;
+    },
+
     // =========================================================
 
     async _fetchData() {
@@ -137,11 +146,9 @@ const AccountPage = {
                 </div>
             ` : ''}
 
-            <div style="margin-top: 24px; display: flex; gap: 12px;">
-                <button id="manage-subscription-btn" class="btn btn-secondary" onclick="AccountPage.openBillingPortal()">Manage Subscription</button>
-                <button class="btn btn-ghost" onclick="AccountPage.signOut()">Sign Out</button>
-            </div>
         `;
+        // Manage Subscription moved to topBarActions; Sign Out moved to the
+        // top-bar avatar dropdown menu (TopBar._renderMenu).
     },
 
     /**

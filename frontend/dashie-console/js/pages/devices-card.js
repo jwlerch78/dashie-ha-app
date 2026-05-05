@@ -26,6 +26,13 @@ const DevicesCard = {
             ? '<span class="status-dot online" title="Live"></span>'
             : `<span style="font-size: 11px; color: var(--text-secondary);">${DevicesPage._formatTime(device.last_seen_at)}</span> <span class="status-dot offline"></span>`;
 
+        // Two render modes — "technical" (battery/RAM/wifi/screenshot/camera/
+        // lock/full controls) for HA users; "simple" (settings summary +
+        // small control set) for less-technical users on the public web.
+        // Toggle lives on DevicesPage.topBarActions; default flips by context.
+        if (!DevicesPage._techView) {
+            return this._renderSimple(device, idAttr, live, conflict, m, statusBadge);
+        }
         return `
             <div class="card card-clickable" onclick="DevicesPage.showDetail('${idAttr}')">
                 <div class="card-body" style="padding: 12px;">
@@ -36,6 +43,147 @@ const DevicesCard = {
                 </div>
             </div>
         `;
+    },
+
+    /**
+     * Simple-mode card: shows what the dashboard is doing right now (theme,
+     * sleep schedule, AI personality, photos album) instead of the
+     * device's hardware telemetry. Smaller control set: reload, screen
+     * on/off, light/dark, volume — no lock, no camera, no screenshot.
+     */
+    _renderSimple(device, idAttr, live, conflict, m, statusBadge) {
+        const offlineStyle = !live ? 'opacity: 0.4; pointer-events: none;' : '';
+        return `
+            <div class="card card-clickable" onclick="DevicesPage.showDetail('${idAttr}')">
+                <div class="card-body" style="padding: 12px;">
+                    ${this._renderSimpleHeader(device, statusBadge, conflict)}
+                    <div style="${offlineStyle}">
+                        ${this._renderSimpleSettings(device, m)}
+                        ${this._renderSimpleControls(device, idAttr, m)}
+                    </div>
+                </div>
+            </div>
+        `;
+    },
+
+    /** Simplified header — name + type + status dot, no lock icon. */
+    _renderSimpleHeader(device, statusBadge, conflict) {
+        const icon = DevicesPage._deviceIcon(device.device_type);
+        const conflictChip = conflict
+            ? `<span title="HA: ${DevicesPage._escape(conflict)}" style="color: var(--accent); font-size: 11px; margin-left: 6px;">⚠</span>`
+            : '';
+        return `
+            <div style="display: flex; align-items: flex-start; gap: 10px;">
+                <div class="device-card-icon" style="flex-shrink: 0;">${icon}</div>
+                <div style="flex: 1; min-width: 0;">
+                    <div style="display: flex; align-items: center; gap: 8px; font-weight: 600;">
+                        <span>${DevicesPage._escape(device.device_name || 'Unnamed Device')}</span>
+                        ${conflictChip}
+                    </div>
+                    <div class="device-card-type" style="margin-top: 2px;">${DevicesPage._escape(DevicesPage._typeLabel(device))}</div>
+                </div>
+                <div style="flex-shrink: 0; align-self: flex-start; display: flex; align-items: center; gap: 4px;">${statusBadge}</div>
+            </div>
+        `;
+    },
+
+    /** Simple settings summary: Theme · Sleep · AI Personality · Photos. */
+    _renderSimpleSettings(device, m) {
+        const settings = device.settings || {};
+        const display = settings.display || {};
+        const sleep = settings.sleep || {};
+        const aiVoice = settings.aiVoice || {};
+        const photos = settings.photos || settings.interface || {};
+
+        const theme = this._prettify(display['preferences.theme'] || 'default');
+        const aiPersonality = this._prettify(aiVoice['aiVoice.personality'] || 'friendly');
+        const photoAlbum = photos['photos.albumName'] || photos['photoSourceType']
+            ? this._prettify(photos['photos.albumName'] || photos['photoSourceType'])
+            : 'Default';
+        const sleepSchedule = (sleep['sleep.timerStart'] && sleep['sleep.timerEnd'])
+            ? `${this._formatTime12(sleep['sleep.timerStart'])} – ${this._formatTime12(sleep['sleep.timerEnd'])}`
+            : 'Off';
+
+        const row = (label, value) => `
+            <div style="display: flex; justify-content: space-between; padding: 6px 0; font-size: var(--font-size-sm);">
+                <span style="color: var(--text-secondary);">${label}</span>
+                <span style="font-weight: 500; color: var(--text-primary); text-align: right; max-width: 60%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${DevicesPage._escape(value)}</span>
+            </div>
+        `;
+        return `
+            <div style="margin-top: 12px; border-top: 1px solid var(--border, #e5e7eb); padding-top: 4px;">
+                ${row('Theme', theme)}
+                ${row('Sleep / Wake', sleepSchedule)}
+                ${row('AI Personality', aiPersonality)}
+                ${row('Photos', photoAlbum)}
+            </div>
+        `;
+    },
+
+    /** Compact controls: reload · screen on/off · light/dark · volume. */
+    _renderSimpleControls(device, idAttr, m) {
+        const dark = !!m.controls?.dark_mode;
+        const screenOn = m.controls?.screen !== false;
+        const reloadBusy = !!this._busyControl[`${device.device_id}:reload`];
+        const screenBusy = !!this._busyControl[`${device.device_id}:screen`];
+        const darkBusy = !!this._busyControl[`${device.device_id}:dark_mode`];
+
+        const reloadIcon = `
+            <button title="Reload dashboard" ${reloadBusy ? 'disabled' : ''}
+                onclick="event.stopPropagation(); DevicesCard.pressButton('${idAttr}', 'reload')"
+                style="display: inline-flex; align-items: center; justify-content: center; padding: 4px 10px; border-radius: 999px; border: 1px solid #d1d5db; background: #f3f4f6; cursor: ${reloadBusy ? 'wait' : 'pointer'}; opacity: ${reloadBusy ? 0.5 : 1}; line-height: 0;">
+                ${iconImg('icon-reload.svg', 14)}
+            </button>
+        `;
+        const screenPill = this._renderPill({
+            idAttr, role: 'screen', currentlyOn: screenOn,
+            iconFile: 'icon-tv.svg', busy: screenBusy,
+            title: screenOn ? 'Screen on — tap to turn off' : 'Screen off — tap to turn on',
+            palette: { onBg: '#10b981', offBg: '#f3f4f6', onBorder: '#10b981', offBorder: '#d1d5db', onIconInvert: true },
+        });
+        const lightDarkPill = this._renderPill({
+            idAttr, role: 'dark_mode', currentlyOn: dark,
+            iconFile: dark ? 'icon-moon.svg' : 'icon-sun.svg', busy: darkBusy,
+            title: dark ? 'Dark mode — tap for light' : 'Light mode — tap for dark',
+            palette: { onBg: '#1f2937', offBg: '#ffffff', onBorder: '#1f2937', offBorder: '#d1d5db', onIconInvert: true },
+        });
+
+        // Volume — small chip showing current value, click opens slider.
+        let volumeBtn = '';
+        if (m.controls?.volume != null) {
+            const display = this._scaleTo10(m.controls.volume, m.controls.volume_max);
+            const muted = m.controls.volume === 0;
+            const volIcon = muted ? 'icon-volume-mute.svg' : 'icon-volume-high.svg';
+            volumeBtn = `
+                <button class="device-card-detail" style="cursor: pointer; display: inline-flex; align-items: center; gap: 4px; background: #f3f4f6; border: 1px solid #d1d5db; padding: 4px 10px; border-radius: 999px;" title="Adjust volume"
+                    onclick="event.stopPropagation(); DevicesCard.openSlider('${idAttr}', 'volume', ${m.controls.volume}, ${m.controls.volume_max ?? 'null'})">
+                    ${iconImg(volIcon, 14)}<span style="font-size: 13px;">${muted ? 'Muted' : display}</span>
+                </button>
+            `;
+        }
+
+        return `
+            <div style="display: flex; gap: 8px; flex-wrap: wrap; justify-content: center; margin-top: 12px;">
+                ${reloadIcon}
+                ${screenPill}
+                ${lightDarkPill}
+                ${volumeBtn}
+            </div>
+        `;
+    },
+
+    _prettify(value) {
+        if (!value) return '—';
+        return String(value).split(/[_\-\s]/).filter(Boolean)
+            .map(w => w[0].toUpperCase() + w.slice(1).toLowerCase()).join(' ');
+    },
+
+    _formatTime12(hhmm) {
+        if (!hhmm || !/^\d{1,2}:\d{2}$/.test(hhmm)) return hhmm || '';
+        const [h, m] = hhmm.split(':').map(Number);
+        const period = h >= 12 ? 'PM' : 'AM';
+        const h12 = h === 0 ? 12 : (h > 12 ? h - 12 : h);
+        return `${h12}:${String(m).padStart(2, '0')} ${period}`;
     },
 
     _renderHeader(device, idAttr, statusBadge, conflict) {
