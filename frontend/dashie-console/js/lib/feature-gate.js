@@ -5,7 +5,7 @@
 
    1. HA-only features (voice-pipeline, video-feeds): visible only when
       the console is running INSIDE the HA add-on (DashieAuth.isAddonMode).
-      Hidden on the public website (dashieapp.com/console) for beta because
+      Hidden on the public website (dashieapp.com/hub) for beta because
       these features depend on the HA integration.
 
    2. Dev-only features (credits / token-bank / cloud-AI surfaces): visible

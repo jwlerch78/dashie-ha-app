@@ -553,16 +553,13 @@ const DashieAuth = {
     },
 
     _getRedirectUri() {
-        const hostname = window.location.hostname;
-
-        // Local dev via Cloudflare tunnel (local.dashieapp.com → localhost:3000)
-        // Serves console at local.dashieapp.com/console, login callback at /console/login
-        if (hostname.includes('local.dashieapp.com')) {
-            return window.location.origin + '/console/login';
-        }
-
-        // Production/staging — /console/login handled by Vercel rewrite
-        return window.location.origin + '/console/login';
+        // Derive the path prefix from wherever the SPA is loaded — works at
+        // both /hub (canonical, "Dashie Hub" naming) and /console (legacy,
+        // kept working during transition until the redirect lands at the
+        // hosting layer). Defaults to /hub if neither is in the URL.
+        const m = window.location.pathname.match(/^\/(hub|console)\b/);
+        const prefix = m ? m[0] : '/hub';
+        return window.location.origin + prefix + '/login';
     },
 
     async _handleOAuthCallback(params) {
