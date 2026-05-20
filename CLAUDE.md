@@ -1,4 +1,4 @@
-# Dashie Hub add-on — instructions for Claude
+# Dashie Console add-on — instructions for Claude
 
 ## Releasing a new version
 
