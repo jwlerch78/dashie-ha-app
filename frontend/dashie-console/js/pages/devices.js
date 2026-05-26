@@ -22,6 +22,7 @@ const DevicesPage = {
     _haStatusFetchedAt: 0,
     _haStatusFetching: false, // single-flight guard for background refresh
     _archiveExpanded: false,
+    _discoveredExpanded: false,  // bottom "Discovered" section starts collapsed
     _deletingId: null,        // device_id currently being deleted
     // Rename + conflict state lives on DevicesRename (see devices-rename.js).
 
@@ -62,6 +63,33 @@ const DevicesPage = {
     },
     toggleTechView() { this.setTechView(!this._techView); },
 
+    /**
+     * Sub-toggles for the tech view — when ON, the per-device card can
+     * still hide its screenshot or camera panels. Both default ON.
+     * When _techView is OFF the simple card doesn't render those panels
+     * at all, so these toggles are no-ops in that mode.
+     */
+    _SHOW_SCREENSHOTS_KEY: 'dashie_devices_show_screenshots',
+    _SHOW_CAMERAS_KEY: 'dashie_devices_show_cameras',
+    get _showScreenshots() {
+        const stored = localStorage.getItem(this._SHOW_SCREENSHOTS_KEY);
+        return stored === null ? true : stored === 'on';
+    },
+    get _showCameras() {
+        const stored = localStorage.getItem(this._SHOW_CAMERAS_KEY);
+        return stored === null ? true : stored === 'on';
+    },
+    setShowScreenshots(on) {
+        try { localStorage.setItem(this._SHOW_SCREENSHOTS_KEY, on ? 'on' : 'off'); } catch {}
+        App.renderPage();
+    },
+    setShowCameras(on) {
+        try { localStorage.setItem(this._SHOW_CAMERAS_KEY, on ? 'on' : 'off'); } catch {}
+        App.renderPage();
+    },
+    toggleShowScreenshots() { this.setShowScreenshots(!this._showScreenshots); },
+    toggleShowCameras() { this.setShowCameras(!this._showCameras); },
+
     render() {
         if (!this._devices && !this._loading && !this._error) {
             this._fetchDevices();
@@ -91,17 +119,49 @@ const DevicesPage = {
         return device ? this._typeLabel(device) : '';
     },
 
-    /** Top-bar action buttons — Show technical details toggle. */
+    /** Top-bar action buttons — Preview Dashie + Show technical details
+     *  + (when tech mode is on) Screenshot / Camera sub-toggles. */
     topBarActions() {
         // Only show on the list view, not the detail view.
         if (this._detailDeviceId) return '';
         const on = this._techView;
+        // Preview opens the browser dashboard at the origin root. Only valid in
+        // web mode — in add-on mode the console is served from HA Ingress, where
+        // '/' is Home Assistant, not the Dashie dashboard.
+        const previewBtn = (typeof DashieAuth !== 'undefined' && DashieAuth.isAddonMode)
+            ? ''
+            : `<button class="btn btn-secondary" onclick="DevicesPage.openPreview()"
+                       title="Open the Dashie dashboard in a new browser tab">
+                   Preview Dashie in Browser ↗
+               </button>`;
+        // Screenshot / Camera sub-toggles are only useful in tech mode (simple
+        // mode doesn't render those panels at all). Hide them when tech is OFF
+        // to keep the header tidy.
+        const subToggles = on ? `
+            <button class="btn ${this._showScreenshots ? 'btn-primary' : 'btn-secondary'}"
+                    onclick="DevicesPage.toggleShowScreenshots()"
+                    title="Show or hide the dashboard screenshot panel on each device card">
+                ${this._showScreenshots ? '✓ ' : ''}Screenshots
+            </button>
+            <button class="btn ${this._showCameras ? 'btn-primary' : 'btn-secondary'}"
+                    onclick="DevicesPage.toggleShowCameras()"
+                    title="Show or hide the camera feed panel on each device card">
+                ${this._showCameras ? '✓ ' : ''}Cameras
+            </button>` : '';
         return `
+            ${previewBtn}
             <button class="btn ${on ? 'btn-primary' : 'btn-secondary'}" onclick="DevicesPage.toggleTechView()"
                     title="Show battery, RAM, screenshot, camera, and full control set">
                 ${on ? '✓ ' : ''}Show technical details
             </button>
+            ${subToggles}
         `;
+    },
+
+    /** Open the browser dashboard (origin root) in a new tab. Same origin as
+     *  the hub, so the shared dashie-supabase-jwt means no re-login. */
+    openPreview() {
+        window.open('/', '_blank', 'noopener');
     },
 
     async _fetchDevices() {
@@ -111,6 +171,7 @@ const DevicesPage = {
             const [devicesResult] = await Promise.all([
                 DashieAuth.dbRequest('list_devices', { tv_only: false, include_inactive: true }),
                 this._fetchAddonStatus(),  // fire-and-forget inside
+                DevicesClaim.fetch(),      // claimable installs — non-critical, swallows errors
             ]);
             this._devices = devicesResult.devices || devicesResult.data || [];
             this._loading = false;
@@ -140,8 +201,11 @@ const DevicesPage = {
             // call unless LIST_DEVICES_REFRESH_MS has elapsed.
             this._haStatusFetchedAt = 0;
             const before = this._haStatusHash();
+            const claimBefore = DevicesClaim.signature();
             await this._fetchAddonStatus();
+            await DevicesClaim.fetch();
             const after = this._haStatusHash();
+            const claimChanged = DevicesClaim.signature() !== claimBefore;
             let listChanged = false;
             if (Date.now() - this._lastListDevicesAt >= this.LIST_DEVICES_REFRESH_MS) {
                 this._lastListDevicesAt = Date.now();
@@ -154,7 +218,7 @@ const DevicesPage = {
             // if nothing visibly changed since last poll. SSE handles real-time
             // updates between polls, so a quiet status check shouldn't repaint.
             if (typeof DevicesCamera !== 'undefined' && DevicesCamera._open) return;
-            if (before === after && !listChanged) return;
+            if (before === after && !listChanged && !claimChanged) return;
             App.renderPage();
         } catch (e) {
             console.warn('[DevicesPage] auto-refresh failed:', e.message);
@@ -381,8 +445,11 @@ const DevicesPage = {
         this._maybeRefreshAddonStatus();
 
         if (!this._devices || this._devices.length === 0) {
-            // Even with zero devices, the Discovered section may still have something
-            return this._renderDiscoveredSection() || `
+            // Always show the empty state. Append collapsed Discovered /
+            // Dismissed sections below if they have any content — keeps the
+            // page from being dominated by HA-discovered devices when the
+            // user has zero of their own registered.
+            return `
                 <div class="empty-state">
                     <div class="empty-state-icon">📱</div>
                     <div class="empty-state-text">No devices registered yet.</div>
@@ -390,18 +457,30 @@ const DevicesPage = {
                         Sign in to Dashie on a tablet or Fire TV to register it.
                     </div>
                 </div>
+                ${this._renderDiscoveredSection()}
+                ${DevicesClaim.renderDismissedSection()}
             `;
         }
 
         const active = this._devices.filter(d => !this._isArchived(d));
+        const online = active.filter(d => this._isLive(d));
+        const offline = active.filter(d => !this._isLive(d));
         const archived = this._devices.filter(d => this._isArchived(d));
 
         const conflicts = this._conflictDevices();
+        // Section order: high-attention banners → Online → Offline → Archive
+        // → minimized collapsed sections at the bottom (Discovered + Dismissed).
+        // Active was split into Online + Offline so Offline devices can render
+        // with a simplified card (no stats / panels / controls) — they're
+        // unreachable anyway and were just adding visual noise.
         return `
             ${DevicesRename.renderBanner(conflicts)}
-            ${this._renderActiveSection(active)}
-            ${this._renderDiscoveredSection()}
+            ${DevicesClaim.renderBanner()}
+            ${this._renderOnlineSection(online)}
+            ${this._renderOfflineSection(offline)}
             ${this._renderArchiveSection(archived)}
+            ${this._renderDiscoveredSection()}
+            ${DevicesClaim.renderDismissedSection()}
             ${DevicesRename.conflictModal ? DevicesRename.renderModal(conflicts, d => this._conflictHaName(d)) : ''}
             ${DevicesCard.renderSliderModal()}
             ${DevicesCard.renderScreenshotModal()}
@@ -410,11 +489,11 @@ const DevicesPage = {
         `;
     },
 
-    _renderActiveSection(devices) {
+    _renderOnlineSection(devices) {
         const busy = this._manualRefreshing;
         const header = `
             <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px;">
-                <span style="font-size: 11px; font-weight: 600; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px;">Active (${devices.length})</span>
+                <span style="font-size: 11px; font-weight: 600; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px;">Online (${devices.length})</span>
                 <button title="Refresh thumbnails and metrics" onclick="DevicesPage._manualRefresh()" ${busy ? 'disabled' : ''}
                     style="background: none; border: 1px solid var(--border, #d1d5db); border-radius: 4px; padding: 4px 10px; cursor: ${busy ? 'wait' : 'pointer'}; line-height: 0; opacity: ${busy ? 0.5 : 0.85};">
                     <img src="assets/icons/icon-reload.svg" alt="Refresh" style="width: 14px; height: 14px; vertical-align: middle;">
@@ -422,15 +501,40 @@ const DevicesPage = {
             </div>
         `;
         if (devices.length === 0) {
-            return `${header}<p class="empty-state-text" style="margin: 16px 0;">No active devices in the last ${this.ARCHIVE_THRESHOLD_DAYS} days.</p>`;
+            return `${header}<p class="empty-state-text" style="margin: 16px 0;">No online devices right now.</p>`;
         }
         const cards = devices.map(d => this._renderDeviceCard(d)).join('');
+        return `${header}<div class="devices-grid">${cards}</div>`;
+    },
+
+    /**
+     * Offline section — devices that aren't archived (< 30d last_seen) but
+     * aren't currently live either. Rendered with a minimal card (name +
+     * type + last-seen) since stats / screenshots / camera / controls
+     * aren't actionable while the device is offline anyway.
+     */
+    _renderOfflineSection(devices) {
+        if (devices.length === 0) return '';
+        const header = `
+            <div style="display: flex; align-items: center; justify-content: space-between; margin-top: 32px; margin-bottom: 8px;">
+                <span style="font-size: 11px; font-weight: 600; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px;">Offline (${devices.length})</span>
+            </div>
+        `;
+        const cards = devices.map(d => DevicesCard.renderOffline(d)).join('');
         return `${header}<div class="devices-grid">${cards}</div>`;
     },
 
     _renderDiscoveredSection() {
         const discovered = this._discoveredDevices();
         if (discovered.length === 0) return '';
+        const caret = this._discoveredExpanded ? '▾' : '▸';
+
+        const header = `
+            <div class="section-header" style="margin-top: 32px; cursor: pointer;" onclick="DevicesPage._toggleDiscovered()">
+                ${caret} Discovered (${discovered.length})
+            </div>
+        `;
+        if (!this._discoveredExpanded) return header;
 
         const cards = discovered.map(d => `
             <div class="card">
@@ -449,15 +553,19 @@ const DevicesPage = {
             </div>
         `).join('');
 
-        return `
-            <div class="section-header" style="margin-top: 32px;">Discovered (${discovered.length})</div>
+        return `${header}
             <p class="page-summary" style="margin-top: -4px; margin-bottom: 12px;">
                 Home Assistant sees these devices but they aren't linked to your account.
-                Sign into Dashie on each tablet to register it, or use the Claim flow
-                (coming soon) to link them here.
+                Sign into Dashie on each tablet to register it — or, if a device is
+                already on your network, claim it from the banner above.
             </p>
             <div class="card-grid">${cards}</div>
         `;
+    },
+
+    _toggleDiscovered() {
+        this._discoveredExpanded = !this._discoveredExpanded;
+        App.renderPage();
     },
 
     _renderArchiveSection(devices) {

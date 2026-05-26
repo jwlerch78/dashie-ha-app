@@ -27,12 +27,12 @@ const Sidebar = {
 
             <div class="sidebar-section">
                 <div class="sidebar-section-label">Dashie Cloud</div>
-                ${this._navItem('family', 'Family', 'icon-profile-round', activePage)}
-                ${this._navItem('calendar', 'Calendar', 'icon-calendar', activePage)}
-                ${this._navItem('chores', 'Chores', 'icon-tasks', activePage)}
-                ${this._navItem('rewards', 'Rewards', 'icon-star', activePage)}
+                ${this._gatedNavItem('family', 'Family', 'icon-profile-round', activePage)}
+                ${this._gatedNavItem('calendar', 'Calendar', 'icon-calendar', activePage)}
+                ${this._gatedNavItem('chores', 'Chores', 'icon-tasks', activePage)}
+                ${this._gatedNavItem('rewards', 'Rewards', 'icon-star', activePage)}
                 ${this._gatedNavItem('locations', 'Locations', 'icon-location-pin', activePage)}
-                ${this._navItem('photos', 'Photos', 'icon-photos', activePage)}
+                ${this._gatedNavItem('photos', 'Photos', 'icon-photos', activePage)}
             </div>
 
             <div class="sidebar-divider"></div>

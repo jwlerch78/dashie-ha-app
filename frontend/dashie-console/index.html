@@ -4,6 +4,8 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Dashie Console</title>
+    <link rel="icon" type="image/png" href="assets/dashie-icon.png">
+    <link rel="apple-touch-icon" href="assets/dashie-icon.png">
     <link rel="stylesheet" href="css/dashie-console.css">
     <link rel="stylesheet" href="css/components.css">
     <link rel="stylesheet" href="css/responsive.css">
@@ -25,9 +27,16 @@
          that play fine in HA's UI. -->
     <script src="https://cdn.jsdelivr.net/npm/hls.js@1.6.16/dist/hls.light.min.js"></script>
 
+    <!-- heic2any: HEIC → JPEG conversion used by photo-file-processor on
+         desktop upload. Same pin as the dashboard's photos-settings.html. -->
+    <script src="https://cdn.jsdelivr.net/npm/heic2any@0.0.4/dist/heic2any.min.js"></script>
+
     <!-- Core -->
     <script src="js/lib/console-auth.js"></script>
     <script src="js/lib/feature-gate.js"></script>
+    <script src="js/lib/subscribe-gate.js"></script>
+    <script src="js/lib/settings-sync.js"></script>
+    <script src="js/lib/photo-file-processor.js"></script>
     <script src="js/lib/mock-data.js"></script>
     <script src="js/components/sidebar.js"></script>
     <script src="js/components/top-bar.js"></script>
@@ -36,6 +45,7 @@
     <script src="js/components/data-table.js"></script>
     <script src="js/components/emoji-picker.js"></script>
     <script src="js/components/options-modal.js"></script>
+    <script src="js/components/confirm-modal.js"></script>
     <script src="js/components/toast.js"></script>
 
     <!-- Pages -->
@@ -44,15 +54,20 @@
     <script src="js/pages/devices-events.js"></script>
     <script src="js/pages/devices-card.js"></script>
     <script src="js/pages/devices-detail.js"></script>
+    <script src="js/pages/devices-claim.js"></script>
     <script src="js/pages/devices.js"></script>
     <script src="js/pages/voice-ai.js"></script>
     <script src="js/pages/video-feeds.js"></script>
     <script src="js/pages/family.js"></script>
     <script src="js/pages/calendar.js"></script>
+    <script src="js/pages/calendar-edit.js"></script>
+    <script src="js/pages/calendar-add.js"></script>
     <script src="js/pages/chores.js"></script>
     <script src="js/pages/rewards.js"></script>
     <script src="js/pages/locations.js"></script>
     <script src="js/pages/photos.js"></script>
+    <script src="js/pages/photos-upload.js"></script>
+    <script src="js/pages/photos-album-edit.js"></script>
     <script src="js/pages/account.js"></script>
 
     <!-- App -->

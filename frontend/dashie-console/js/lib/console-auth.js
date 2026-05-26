@@ -178,8 +178,90 @@ const DashieAuth = {
     },
 
     // =========================================================
+    //  User profile (tier + special_access) — drives FeatureGate
+    //
+    //  We pull tier + special_access from user_profiles after auth establishes
+    //  and cache them on _userProfile. FeatureGate's 'alpha-only' rule reads
+    //  specialAccess to decide whether to expose voice/AI/credits UI.
+    //
+    //  Mirrors the dashboard's featureAccessService pattern (refresh on
+    //  visibility change so admin promotions show up without a reload).
+    //  See .reference/FEATURE_GATING.md for the model.
+    // =========================================================
+
+    _userProfile: null,                // { tier, special_access } once loaded; null until then
+    _profileVisListenerAttached: false,
+
+    /** Has the profile fetch completed at least once? */
+    get hasProfileLoaded() { return this._userProfile !== null; },
+
+    /** 'alpha' | 'beta' | null (whatever user_profiles.special_access holds) */
+    get specialAccess() { return this._userProfile?.special_access || null; },
+
+    /** Subscription tier ('basic' | 'core' | 'plus' | 'vip' | 'developer') */
+    get tier() { return this._userProfile?.tier || null; },
+
+    /**
+     * Fetch tier + special_access from user_profiles. Cheap REST call (one
+     * row, two columns). Idempotent — repeated calls just refresh the cache.
+     * Triggers a re-render via FeatureGate so UI reflects the new state.
+     */
+    async loadUserProfile() {
+        if (!this.jwt || !this.jwtUserId) return null;
+        try {
+            const url = `${this.config.url}/rest/v1/user_profiles?select=tier,special_access&auth_user_id=eq.${this.jwtUserId}`;
+            const res = await fetch(url, {
+                headers: {
+                    'Authorization': `Bearer ${this.jwt}`,
+                    'apikey': this.anonKey,
+                    'Accept': 'application/json',
+                },
+            });
+            if (!res.ok) {
+                console.warn('[DashieAuth] user_profiles fetch failed', res.status);
+                return null;
+            }
+            const rows = await res.json();
+            const row = Array.isArray(rows) ? rows[0] : null;
+            if (row) {
+                this._userProfile = { tier: row.tier || 'basic', special_access: row.special_access || null };
+            }
+            this._attachProfileVisibilityRefresh();
+            return this._userProfile;
+        } catch (e) {
+            console.warn('[DashieAuth] loadUserProfile failed', e.message);
+            return null;
+        }
+    },
+
+    /**
+     * Attach a visibilitychange listener that refreshes the profile when
+     * the document becomes visible. Picks up admin tier-promotions
+     * (alpha/beta access changes) without requiring an explicit reload.
+     * Idempotent.
+     */
+    _attachProfileVisibilityRefresh() {
+        if (this._profileVisListenerAttached) return;
+        if (typeof document === 'undefined') return;
+        document.addEventListener('visibilitychange', () => {
+            if (document.visibilityState !== 'visible') return;
+            if (!this.jwtUserId) return;
+            const before = this.specialAccess;
+            this.loadUserProfile().then(() => {
+                if (this.specialAccess !== before) {
+                    // Notify the app so it can re-render gated UI
+                    if (typeof App !== 'undefined' && App.renderPage) App.renderPage();
+                }
+            }).catch(err => {
+                console.warn('[DashieAuth] Visibility-triggered profile refresh failed', err);
+            });
+        });
+        this._profileVisListenerAttached = true;
+    },
+
+    // =========================================================
     //  Add-on mode detection
-    //  When served by Dashie Hub (Node/Express HA add-on), the SPA takes its
+    //  When served by Dashie Console (Node/Express HA add-on), the SPA takes its
     //  JWT from /api/auth/jwt and drives sign-in via the device-flow
     //  endpoints. In browser-only mode, it uses Google OAuth directly.
     // =========================================================
@@ -206,7 +288,7 @@ const DashieAuth = {
                 if (data?.addon === true) {
                     this._addonMode = true;
                     this._addonRuntimeInfo = data;
-                    console.log('[DashieAuth] Running inside Dashie Hub', data);
+                    console.log('[DashieAuth] Running inside Dashie Console', data);
                     return true;
                 }
             }
@@ -455,11 +537,19 @@ const DashieAuth = {
             client_id: this.config.googleClientId,
             redirect_uri: redirectUri,
             response_type: 'code',
-            scope: 'profile email https://www.googleapis.com/auth/calendar https://www.googleapis.com/auth/drive',
+            // Narrow scopes — must match the dashboard (js/data/auth/auth-config.js).
+            // The Console shares one Google OAuth client with the dashboard;
+            // requesting the broad `calendar`/`drive` scopes here made the
+            // consent screen show "see/edit/delete ALL" access.
+            scope: 'profile email https://www.googleapis.com/auth/calendar.readonly https://www.googleapis.com/auth/calendar.events https://www.googleapis.com/auth/drive.file',
             access_type: 'offline',
             prompt: 'consent',
             state: Date.now().toString(),
-            include_granted_scopes: 'true',
+            // false: the Console requests a fixed scope set, so incremental
+            // authorization isn't needed. With 'true', Google re-merged every
+            // scope previously granted to the shared client (the dashboard's
+            // set), inflating the consent screen to 8 scopes instead of 6.
+            include_granted_scopes: 'false',
         });
         window.location.href = `https://accounts.google.com/o/oauth2/v2/auth?${params}`;
     },
@@ -553,12 +643,18 @@ const DashieAuth = {
     },
 
     _getRedirectUri() {
-        // Derive the path prefix from wherever the SPA is loaded — works at
-        // both /hub (canonical, "Dashie Hub" naming) and /console (legacy,
-        // kept working during transition until the redirect lands at the
-        // hosting layer). Defaults to /hub if neither is in the URL.
+        // Derive the path prefix from wherever the SPA is loaded. /console is
+        // canonical (renamed from /hub 2026-05-20); /hub still resolves via a
+        // 301 redirect at the hosting layer, but in practice the SPA is loaded
+        // from /console, so the regex normally matches that. Defaults to
+        // /console if neither prefix is in the URL.
+        //
+        // ⚠ Google Cloud Console must have both /console/login AND /hub/login
+        // registered as authorized redirect URIs (staging + prod OAuth clients)
+        // — the /hub one stays valid while we phase out the old URL, the
+        // /console one is what new sign-ins will use.
         const m = window.location.pathname.match(/^\/(hub|console)\b/);
-        const prefix = m ? m[0] : '/hub';
+        const prefix = m ? m[0] : '/console';
         return window.location.origin + prefix + '/login';
     },
 
@@ -691,6 +787,16 @@ const DashieAuth = {
     async dbRequest(operation, data = {}) {
         if (!this.jwt) throw new Error('Not authenticated');
 
+        // source_client_id tags every settings write with this Console
+        // surface's stable ID. The edge-side broadcaster includes it in
+        // the realtime payload; the SettingsSync consumer on this tab
+        // sees its own ID and skips its refresh, so we don't trigger
+        // ourselves on our own write. Top-level in body so the edge
+        // router picks it up regardless of nested data shape.
+        const sourceClientId = (typeof window !== 'undefined' && window.SettingsSync)
+            ? window.SettingsSync.getClientId()
+            : undefined;
+
         const response = await fetch(this.databaseOpsUrl, {
             method: 'POST',
             headers: {
@@ -702,6 +808,7 @@ const DashieAuth = {
                 operation: operation,
                 data: data,
                 jwtToken: this.jwt,
+                source_client_id: sourceClientId,
             }),
         });
 

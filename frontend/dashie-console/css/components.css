@@ -1943,24 +1943,37 @@
 /* Color Picker (simple inline) */
 .color-picker {
     display: flex;
-    gap: 6px;
+    gap: 8px;
+    align-items: center;     /* keep smaller dots vertically aligned with the
+                                larger selected one */
 }
 
 .color-picker-dot {
-    width: 24px;
-    height: 24px;
+    width: 20px;
+    height: 20px;
     border-radius: 50%;
     cursor: pointer;
     border: 2px solid transparent;
-    transition: border-color 0.15s ease, transform 0.15s ease;
+    transition: width 0.15s ease, height 0.15s ease,
+                border-color 0.15s ease, transform 0.15s ease,
+                opacity 0.15s ease;
 }
 
-.color-picker-dot:hover {
-    transform: scale(1.15);
+.color-picker-dot:hover:not(.used) {
+    transform: scale(1.1);
 }
 
+/* Currently-selected color: prominently bigger so it stands out. */
 .color-picker-dot.selected {
+    width: 32px;
+    height: 32px;
     border-color: white;
+}
+
+/* Already used by another member: greyed out and not clickable. */
+.color-picker-dot.used {
+    opacity: 0.3;
+    cursor: not-allowed;
 }
 
 /* Checkbox row */

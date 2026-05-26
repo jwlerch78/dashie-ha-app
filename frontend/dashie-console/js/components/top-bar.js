@@ -31,13 +31,25 @@ const TopBar = {
     },
 
     _renderMenu() {
+        // Show Subscribe entry when user has no current entitlement.
+        // FeatureGate.hasEntitlement() is optimistic-true until SubscribeGate
+        // populates state, so this only appears for confirmed-expired users.
+        const showSubscribe = typeof FeatureGate !== 'undefined' && !FeatureGate.hasEntitlement();
+        const subscribeRow = showSubscribe ? `
+                <button onclick="TopBar.closeMenu(); AccountPage.subscribe && AccountPage.subscribe()"
+                        style="width: 100%; text-align: left; padding: 10px 14px; background: none;
+                               border: none; cursor: pointer; font-size: 14px; color: var(--accent, #ffaa00); font-weight: 600;">
+                    Subscribe to Dashie
+                </button>
+                <div style="height: 1px; background: var(--border, #e5e7eb);"></div>` : '';
         return `
             <div class="top-bar-user-menu" id="top-bar-user-menu"
                  onclick="event.stopPropagation()"
-                 style="position: absolute; top: calc(100% + 6px); right: 0; min-width: 200px;
+                 style="position: absolute; top: calc(100% + 6px); right: 0; min-width: 220px;
                         background: var(--bg-card, #fff); border: 1px solid var(--border, #e5e7eb);
                         border-radius: 6px; box-shadow: 0 4px 12px rgba(0,0,0,0.08);
                         z-index: 1050; overflow: hidden;">
+                ${subscribeRow}
                 <button onclick="TopBar.closeMenu(); App.navigate('account')"
                         style="width: 100%; text-align: left; padding: 10px 14px; background: none;
                                border: none; cursor: pointer; font-size: 14px; color: var(--text-primary);">
@@ -48,6 +60,12 @@ const TopBar = {
                         style="width: 100%; text-align: left; padding: 10px 14px; background: none;
                                border: none; cursor: pointer; font-size: 14px; color: var(--text-primary);">
                     Sign Out
+                </button>
+                <div style="height: 1px; background: var(--border, #e5e7eb);"></div>
+                <button onclick="TopBar.closeMenu(); App.navigate('account'); setTimeout(() => AccountPage.handleDeleteAccount && AccountPage.handleDeleteAccount(), 100);"
+                        style="width: 100%; text-align: left; padding: 10px 14px; background: none;
+                               border: none; cursor: pointer; font-size: 14px; color: var(--status-error, #c00);">
+                    Delete account…
                 </button>
             </div>
         `;

@@ -66,6 +66,52 @@ const DevicesCard = {
         `;
     },
 
+    /**
+     * Offline card — minimal render for devices in the Offline section.
+     * Just the header row: icon + name + lock chip + type + last-seen +
+     * status dot. No stats, no panels, no controls — none are
+     * actionable while the device is offline.
+     */
+    renderOffline(device) {
+        const idAttr = DevicesPage._escape(device.device_id);
+        const conflict = DevicesPage._conflictHaName(device);
+        const statusBadge = `<span style="font-size: 11px; color: var(--text-secondary);">${DevicesPage._formatTime(device.last_seen_at)}</span> <span class="status-dot offline"></span>`;
+        const icon = DevicesPage._deviceIcon(device.device_type);
+        const conflictChip = conflict
+            ? `<span title="HA: ${DevicesPage._escape(conflict)}" style="color: var(--accent); font-size: 11px; margin-left: 6px;">⚠</span>`
+            : '';
+        // Read-only lock chip — matches the tech card's visual but no click
+        // handler (offline devices can't toggle anything). Uses the device's
+        // last-known lock state if available, otherwise the unlocked outline.
+        const locked = !!device.metrics?.controls?.lock;
+        const lockBg = locked ? '#f97316' : 'transparent';
+        const lockBorder = locked ? '#f97316' : '#d1d5db';
+        const lockFilter = locked ? 'filter: brightness(0) invert(1);' : '';
+        const lockIconFile = locked ? 'icon-lock.svg' : 'icon-unlock.svg';
+        const lockChip = `
+            <span style="background: ${lockBg}; border: 1px solid ${lockBorder}; padding: 3px; border-radius: 50%; line-height: 0; opacity: 0.6; display: inline-flex;">
+                ${iconImg(lockIconFile, 12, lockFilter)}
+            </span>`;
+        return `
+            <div class="card card-clickable" onclick="DevicesPage.showDetail('${idAttr}')">
+                <div class="card-body" style="padding: 12px;">
+                    <div style="display: flex; align-items: flex-start; gap: 10px;">
+                        <div class="device-card-icon" style="flex-shrink: 0;">${icon}</div>
+                        <div style="flex: 1; min-width: 0;">
+                            <div style="display: flex; align-items: center; gap: 8px; font-weight: 600;">
+                                <span>${DevicesPage._escape(device.device_name || 'Unnamed Device')}</span>
+                                ${lockChip}
+                                ${conflictChip}
+                            </div>
+                            <div class="device-card-type" style="margin-top: 2px;">${DevicesPage._escape(DevicesPage._typeLabel(device))}</div>
+                        </div>
+                        <div style="flex-shrink: 0; align-self: flex-start; display: flex; align-items: center; gap: 4px;">${statusBadge}</div>
+                    </div>
+                </div>
+            </div>
+        `;
+    },
+
     /** Simplified header — name + type + status dot, no lock icon. */
     _renderSimpleHeader(device, statusBadge, conflict) {
         const icon = DevicesPage._deviceIcon(device.device_type);
@@ -418,11 +464,19 @@ const DevicesCard = {
         // hid the toggle button along with the section.)
         const hasCameraSection = !!m.controls?.camera_resolution;
 
+        // Sub-toggles — the user can hide the screenshot panel and/or the
+        // camera panel individually from the top-bar Screenshots / Cameras
+        // toggles. Controls stay; only the visual panels disappear.
+        const showScreenshot = DevicesPage._showScreenshots;
+        const showCamera = DevicesPage._showCameras;
+        const screenshotSection = showScreenshot ? screenshotPanel : '';
+        const cameraSection = showCamera ? cameraPanel : '';
+
         if (!hasCameraSection) {
             return `
                 <div style="margin-top: 12px;">
                     <div style="max-width: 50%; margin: 0 auto;">
-                        ${screenshotPanel}
+                        ${screenshotSection}
                         ${controlRow(reloadIcon, screenPill, lightDarkPill)}
                     </div>
                 </div>
@@ -432,11 +486,11 @@ const DevicesCard = {
         return `
             <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 12px;">
                 <div style="min-width: 0;">
-                    ${screenshotPanel}
+                    ${screenshotSection}
                     ${controlRow(reloadIcon, screenPill, lightDarkPill)}
                 </div>
                 <div style="min-width: 0;">
-                    ${cameraPanel}
+                    ${cameraSection}
                     ${controlRow(cameraIcon, motionIcon, faceIcon)}
                 </div>
             </div>
@@ -774,7 +828,7 @@ const DevicesCard = {
 
     async control(deviceId, role, value) {
         if (!DashieAuth.isAddonMode) {
-            throw new Error('Device controls require running inside Dashie Hub');
+            throw new Error('Device controls require running inside Dashie Console');
         }
         const resp = await fetch(DashieAuth._addonUrl('/api/ha/control'), {
             method: 'POST',

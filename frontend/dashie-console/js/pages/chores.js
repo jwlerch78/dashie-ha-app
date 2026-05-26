@@ -442,8 +442,15 @@ const ChoresPage = {
     async _toggleCompletion(choreId, memberId) {
         const date = this._currentDate || new Date();
 
-        // For anyone chores, default to first enabled member if no memberId provided
-        if (memberId === null || memberId === 'null') {
+        // D.39 — distinguish an "anyone" click (chore rendered under the
+        // shared Anyone section, memberId === null) from a per-member click.
+        // The original code OR'd in _isAnyoneChoreCompleted unconditionally,
+        // so clicking member B's tile for a multi-assigned chore where A had
+        // already completed it took the uncomplete path and credited A's
+        // record — completing/uncompleting toggled the wrong person.
+        const isAnyoneClick = (memberId === null || memberId === 'null');
+
+        if (isAnyoneClick) {
             const firstEnabled = (this._familyMembers || [])[0];
             if (!firstEnabled) {
                 Toast.error('No enabled family members to credit this completion to.');
@@ -455,27 +462,44 @@ const ChoresPage = {
         const key = choreId + memberId;
         if (this._togglingCompletion.has(key)) return;
 
-        const wasCompleted = this._isChoreCompletedBy(choreId, memberId, date) ||
-            this._isAnyoneChoreCompleted(choreId, date);
+        const wasCompleted = isAnyoneClick
+            ? this._isAnyoneChoreCompleted(choreId, date)
+            : this._isChoreCompletedBy(choreId, memberId, date);
 
         this._togglingCompletion.add(key);
         App.renderPage();
 
         try {
             if (wasCompleted) {
-                // Find the completion record to uncomplete
+                // Find the completion record to uncomplete.
+                // For an anyone-click, search across all members (there's a
+                // single completion owned by whoever first completed it).
+                // For a per-member click, only look at THIS member's
+                // completions — otherwise we'd uncomplete a different
+                // member's record on a multi-assigned chore (D.39).
                 let completionId = null;
                 let creditedMemberId = memberId;
                 let pointsToRefund = 0;
-                for (const mid of Object.keys(this._completionsByMember)) {
-                    const c = this._completionsByMember[mid].find(co =>
+                if (isAnyoneClick) {
+                    for (const mid of Object.keys(this._completionsByMember)) {
+                        const c = this._completionsByMember[mid].find(co =>
+                            co.chore_id === choreId && this._sameDate(new Date(co.completed_at), date)
+                        );
+                        if (c) {
+                            completionId = c.id;
+                            creditedMemberId = mid;
+                            pointsToRefund = c.points_earned || 0;
+                            break;
+                        }
+                    }
+                } else {
+                    const c = (this._completionsByMember[memberId] || []).find(co =>
                         co.chore_id === choreId && this._sameDate(new Date(co.completed_at), date)
                     );
                     if (c) {
                         completionId = c.id;
-                        creditedMemberId = mid;
+                        creditedMemberId = memberId;
                         pointsToRefund = c.points_earned || 0;
-                        break;
                     }
                 }
                 if (completionId) {
@@ -792,7 +816,7 @@ const ChoresPage = {
                 <label class="chore-field-label required">Recurrence</label>
                 <select class="chore-field-input" id="chore-f-recurrence" onchange="ChoresPage._setRecurrence(this.value)">
                     <option value="one_time" ${f.recurrence === 'one_time' ? 'selected' : ''}>One Time</option>
-                    <option value="weekly" ${f.recurrence === 'weekly' ? 'selected' : ''}>Weekly</option>
+                    <option value="weekly" ${f.recurrence === 'weekly' ? 'selected' : ''}>Daily/Weekly</option>
                     <option value="custom" ${f.recurrence === 'custom' ? 'selected' : ''}>Custom</option>
                 </select>
             </div>

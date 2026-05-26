@@ -20,10 +20,25 @@ const App = {
     },
 
     async init() {
+        // If we just landed here after a successful account deletion, show
+        // a one-time goodbye toast and strip the query param so a refresh
+        // doesn't re-fire it. Done before auth init so it shows even if
+        // the rest of init takes time.
+        this._consumeDeletedParam();
+
         // Wire up auth state change callback
         DashieAuth.onAuthStateChange = (isAuth) => {
             if (isAuth) {
+                // Kick off profile load (tier + special_access) in parallel
+                // with the first paint — FeatureGate's 'alpha-only' rule
+                // depends on this. Re-render once it lands so any
+                // alpha-gated UI flips visibility correctly.
+                DashieAuth.loadUserProfile().then(() => this.renderPage()).catch(() => {});
                 this._showApp();
+                // Subscribe-prompt gate: if the user has no current entitlement
+                // (trial expired / canceled past expiry), show the prompt.
+                // Fire-and-forget — runs in background after first paint.
+                if (typeof SubscribeGate !== 'undefined') SubscribeGate.checkAndShow();
             } else {
                 this._showLogin();
             }
@@ -36,7 +51,9 @@ const App = {
             // If init returned a promise (OAuth callback), it handled the redirect
             if (result === true) {
                 // OAuth callback was handled — JWT is now set
+                DashieAuth.loadUserProfile().then(() => this.renderPage()).catch(() => {});
                 this._showApp();
+                if (typeof SubscribeGate !== 'undefined') SubscribeGate.checkAndShow();
                 return;
             }
         } catch (e) {
@@ -44,9 +61,71 @@ const App = {
         }
 
         if (DashieAuth.isAuthenticated) {
+            DashieAuth.loadUserProfile().then(() => this.renderPage()).catch(() => {});
             this._showApp();
+            if (typeof SubscribeGate !== 'undefined') SubscribeGate.checkAndShow();
         } else {
             this._showLogin();
+        }
+    },
+
+    /**
+     * One-shot handler for `?deleted=1` query param after a successful
+     * Delete Account flow. Shows a goodbye toast, then strips the param so
+     * a refresh doesn't re-trigger. Called from init() before auth bootstrap.
+     */
+    _consumeDeletedParam() {
+        try {
+            const params = new URLSearchParams(window.location.search);
+            if (params.get('deleted') === '1') {
+                // Toast may not be loaded if scripts loaded out of order — guard.
+                if (typeof Toast !== 'undefined') {
+                    Toast.info('Your Dashie account has been deleted. Thanks for trying Dashie.');
+                } else {
+                    // Fallback for the (unusual) case where Toast hasn't loaded yet
+                    setTimeout(() => {
+                        if (typeof Toast !== 'undefined') {
+                            Toast.info('Your Dashie account has been deleted. Thanks for trying Dashie.');
+                        }
+                    }, 200);
+                }
+                params.delete('deleted');
+                const newSearch = params.toString();
+                const cleanUrl = window.location.pathname + (newSearch ? '?' + newSearch : '') + window.location.hash;
+                window.history.replaceState({}, '', cleanUrl);
+            }
+        } catch (_) { /* non-fatal */ }
+    },
+
+    /**
+     * Wire SettingsSync to Console's Supabase client + the authenticated
+     * user. Console-auth lazily creates a Supabase realtime client for
+     * its own broadcasts; we reuse it so we share the websocket. Fires
+     * one-shot; subsequent _showApp() calls (re-auth, etc.) are no-ops
+     * because SettingsSync.connect() is itself idempotent.
+     */
+    _connectSettingsSync() {
+        try {
+            if (!window.SettingsSync) {
+                console.warn('[App] SettingsSync not loaded — skipping realtime sync wiring');
+                return;
+            }
+            const userId = DashieAuth.user && DashieAuth.user.id;
+            if (!userId) {
+                console.warn('[App] SettingsSync wiring skipped — no user id');
+                return;
+            }
+            const sbClient = DashieAuth._getSupabaseClient
+                ? DashieAuth._getSupabaseClient()
+                : null;
+            if (!sbClient) {
+                console.warn('[App] SettingsSync wiring skipped — Supabase client unavailable');
+                return;
+            }
+            window.SettingsSync.configure(sbClient, userId);
+            window.SettingsSync.connect();
+        } catch (e) {
+            console.warn('[App] SettingsSync wiring failed (non-fatal)', e && e.message);
         }
     },
 
@@ -201,6 +280,12 @@ const App = {
     _showApp() {
         document.getElementById('sidebar').style.display = '';
 
+        // Connect SettingsSync now that auth is known good. Pages register
+        // their consumers on first render — the manager retains them, so
+        // ordering between connect() and register() doesn't matter. Fire
+        // and forget; failures only mean realtime falls back to TTL.
+        this._connectSettingsSync();
+
         // Update mock user data from real auth if available
         if (DashieAuth.user) {
             const stored = this._getStoredUserData();
@@ -227,6 +312,7 @@ const App = {
         }
 
         this.renderPage();
+        this._resetContentScroll();
 
         // Listen for hash changes
         window.addEventListener('hashchange', () => {
@@ -238,6 +324,7 @@ const App = {
                 }
                 this._currentPage = hash;
                 this.renderPage();
+                this._resetContentScroll();
             }
         });
     },
@@ -285,6 +372,7 @@ const App = {
         }
 
         this.renderPage();
+        this._resetContentScroll();
     },
 
     renderPage() {
@@ -315,9 +403,15 @@ const App = {
 
         // Content
         document.getElementById('content').innerHTML = pageObj.render();
+        // No scroll reset here — `renderPage` is also called for in-place
+        // state updates (e.g. toggling hide on a calendar row), and resetting
+        // scroll mid-page is jarring. Navigation paths handle scroll reset
+        // explicitly via `_resetContentScroll()`.
+    },
 
-        // Scroll content to top
-        document.getElementById('content').scrollTop = 0;
+    _resetContentScroll() {
+        const el = document.getElementById('content');
+        if (el) el.scrollTop = 0;
     },
 
     toggleSidebar() {
