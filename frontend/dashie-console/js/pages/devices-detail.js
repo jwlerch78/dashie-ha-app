@@ -20,6 +20,42 @@
    ============================================================ */
 
 const DevicesDetail = {
+    /** Per-section expand/collapse state (keyed by section id). Persisted
+     *  to localStorage so a user's preferred view sticks across reloads. */
+    _SECTION_STATE_KEY: 'dashie_devices_detail_sections',
+    _sectionExpanded: null,
+    _loadSections() {
+        if (this._sectionExpanded) return;
+        try {
+            this._sectionExpanded = JSON.parse(localStorage.getItem(this._SECTION_STATE_KEY) || '{}');
+        } catch { this._sectionExpanded = {}; }
+    },
+    _isExpanded(sectionId, defaultExpanded = true) {
+        this._loadSections();
+        const v = this._sectionExpanded[sectionId];
+        return v === undefined ? defaultExpanded : !!v;
+    },
+    toggleSection(sectionId) {
+        this._loadSections();
+        const next = !this._isExpanded(sectionId);
+        this._sectionExpanded[sectionId] = next;
+        try { localStorage.setItem(this._SECTION_STATE_KEY, JSON.stringify(this._sectionExpanded)); } catch {}
+        App.renderPage();
+    },
+
+    /** Render a collapsible card section with a caret header. */
+    _section(sectionId, title, bodyHtml, opts = {}) {
+        const expanded = this._isExpanded(sectionId, opts.defaultExpanded !== false);
+        const caret = expanded ? '▾' : '▸';
+        const titleColor = opts.titleColor || '';
+        return `
+            <div class="section-header" style="cursor: pointer; ${titleColor}" onclick="DevicesDetail.toggleSection('${sectionId}')">
+                <span style="display: inline-block; width: 14px;">${caret}</span> ${DevicesPage._escape(title)}
+            </div>
+            ${expanded ? bodyHtml : ''}
+        `;
+    },
+
     render(device) {
         if (!device) {
             return '<div class="empty-state"><div class="empty-state-text">Device not found</div></div>';
@@ -81,12 +117,11 @@ const DevicesDetail = {
 
     _renderQuickControls(device, m, live) {
         if (!live) {
-            return `
-                <div class="section-header">Quick Controls</div>
+            return this._section('quick-controls', 'Quick Controls', `
                 <div class="card"><div class="card-body" style="color: var(--text-muted); font-size: var(--font-size-sm);">
                     Device is offline. Quick controls become available when the device checks in.
                 </div></div>
-            `;
+            `);
         }
         const idAttr = DevicesPage._escape(device.device_id);
         const controls = m.controls || {};
@@ -170,17 +205,14 @@ const DevicesDetail = {
             `);
         }
 
-        if (buttons.length === 0) {
-            return '';
-        }
-        return `
-            <div class="section-header">Quick Controls</div>
+        if (buttons.length === 0) return '';
+        return this._section('quick-controls', 'Quick Controls', `
             <div class="card"><div class="card-body">
                 <div style="display: flex; flex-wrap: wrap; gap: 8px;">
                     ${buttons.join('')}
                 </div>
             </div></div>
-        `;
+        `);
     },
 
     _toggleBtn(idAttr, role, isOn, busy, iconFile, label, title) {
@@ -234,8 +266,7 @@ const DevicesDetail = {
             m.app?.current_page && ['Current page', m.app.current_page],
         ].filter(r => r && r[1]);
         if (rows.length === 0) return '';
-        return `
-            <div class="section-header">Live Metrics</div>
+        return this._section('live-metrics', 'Live Metrics', `
             <div class="card"><div class="card-body">
                 <div class="form-grid">
                     ${rows.map(([label, val]) => `
@@ -249,7 +280,7 @@ const DevicesDetail = {
                     Updated ${DevicesPage._formatTime(device.metrics_updated_at)}
                 </div>
             </div></div>
-        `;
+        `);
     },
 
     // =========================================================
@@ -258,8 +289,7 @@ const DevicesDetail = {
 
     _renderDisplaySection(device, display) {
         const onOff = [['true', 'On'], ['false', 'Off']];
-        return `
-            <div class="section-header">Display & Theme</div>
+        return this._section('display', 'Display & Theme', `
             <div class="card"><div class="card-body"><div class="form-grid">
                 ${this.settingSelect(device, 'display', 'preferences.theme',
                     'Theme', display['preferences.theme'] || 'default',
@@ -295,7 +325,7 @@ const DevicesDetail = {
                     'Orientation', display['preferences.orientationLock'] || 'auto',
                     [['auto', 'Auto'], ['portrait', 'Portrait'], ['landscape', 'Landscape']])}
             </div></div></div>
-        `;
+        `);
     },
 
     // =========================================================
@@ -318,8 +348,7 @@ const DevicesDetail = {
             ['08:00', '8:00 AM'], ['08:30', '8:30 AM'],
             ['09:00', '9:00 AM'],
         ];
-        return `
-            <div class="section-header">Sleep & Screensaver</div>
+        return this._section('sleep', 'Sleep & Screensaver', `
             <div class="card"><div class="card-body"><div class="form-grid">
                 ${this.settingSelect(device, 'sleep', 'sleep.enabled',
                     'Sleep Timer', String(sleep['sleep.enabled'] !== false), onOff)}
@@ -343,7 +372,7 @@ const DevicesDetail = {
                 ${this.settingSelect(device, 'sleep', 'sleep.reduceBrightnessOnSleep',
                     'Reduce Brightness', String(sleep['sleep.reduceBrightnessOnSleep'] !== false), onOff)}
             </div></div></div>
-        `;
+        `);
     },
 
     // =========================================================
@@ -352,28 +381,43 @@ const DevicesDetail = {
 
     _renderVoiceSection(device, aiVoice, voice) {
         const onOff = [['true', 'On'], ['false', 'Off']];
-        return `
-            <div class="section-header">Voice & AI</div>
-            <div class="card"><div class="card-body"><div class="form-grid">
-                ${this.settingSelect(device, 'voice', 'voice.enabled',
-                    'Voice Assistant', String(voice['voice.enabled'] !== false), onOff)}
-                ${this.settingSelect(device, 'voice', 'voice.controlMethod',
-                    'Control Method', voice['voice.controlMethod'] || 'wake-word',
-                    [['wake-word', 'Wake Word'], ['hold', 'Hold to Talk']])}
-                ${this.settingSelect(device, 'aiVoice', 'aiVoice.personality',
-                    'AI Personality', aiVoice['aiVoice.personality'] || 'friendly',
-                    [['friendly', 'Friendly'], ['calm', 'Calm'], ['professional', 'Professional'], ['playful', 'Playful']])}
-                ${this.settingSelect(device, 'aiVoice', 'aiVoice.voice',
-                    'Voice', aiVoice['aiVoice.voice'] || 'rachel',
-                    [['rachel', 'Rachel'], ['adam', 'Adam'], ['aria', 'Aria'], ['thomas', 'Thomas'], ['jessica', 'Jessica']])}
-                ${this.settingSelect(device, 'voice', 'voice.responseHandling',
-                    'Response Output', voice['voice.responseHandling'] || 'both',
-                    [['text-only', 'Text Only'], ['audio-only', 'Audio Only'], ['both', 'Text + Audio']])}
-                ${this.settingSelect(device, 'voice', 'voice.displayFormat',
-                    'Transcription Display', voice['voice.displayFormat'] || 'full',
-                    [['full', 'Full'], ['concise', 'Concise'], ['none', 'Hidden']])}
-            </div></div></div>
-        `;
+        // Voice & AI per-device settings that don't depend on dynamic
+        // catalogs (personality list, voice list come from the personality
+        // service — wiring those is deferred to the Voice & AI tab buildout,
+        // see add-on plan Phase F). Show the current value as a read-only
+        // chip + link to manage in the dedicated tab.
+        const personality = aiVoice['aiVoice.personality'] || '—';
+        const voiceName = aiVoice['aiVoice.voice'] || '—';
+        return this._section('voice-ai', 'Voice & AI', `
+            <div class="card"><div class="card-body">
+                <div class="form-grid">
+                    ${this.settingSelect(device, 'voice', 'voice.enabled',
+                        'Voice Assistant', String(voice['voice.enabled'] !== false), onOff)}
+                    ${this.settingSelect(device, 'voice', 'voice.controlMethod',
+                        'Control Method', voice['voice.controlMethod'] || 'wake-word',
+                        [['wake-word', 'Wake Word'], ['hold', 'Hold to Talk']])}
+                    ${this.settingSelect(device, 'voice', 'voice.responseHandling',
+                        'Response Output', voice['voice.responseHandling'] || 'both',
+                        [['text-only', 'Text Only'], ['audio-only', 'Audio Only'], ['both', 'Text + Audio']])}
+                    ${this.settingSelect(device, 'voice', 'voice.displayFormat',
+                        'Transcription Display', voice['voice.displayFormat'] || 'full',
+                        [['full', 'Full'], ['concise', 'Concise'], ['none', 'Hidden']])}
+                </div>
+                <div style="margin-top: 16px; padding-top: 16px; border-top: 1px solid var(--border, #e5e7eb); display: grid; grid-template-columns: 1fr 1fr; gap: 12px;">
+                    <div>
+                        <div style="font-size: 11px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px;">AI Personality</div>
+                        <div style="font-weight: 500; margin-top: 2px;">${DevicesPage._escape(personality)}</div>
+                    </div>
+                    <div>
+                        <div style="font-size: 11px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px;">Voice</div>
+                        <div style="font-weight: 500; margin-top: 2px;">${DevicesPage._escape(voiceName)}</div>
+                    </div>
+                </div>
+                <div style="margin-top: 12px; font-size: var(--font-size-sm); color: var(--text-muted);">
+                    Change personality and voice on the <a href="#voice-ai" onclick="event.preventDefault(); App.navigate('voice-ai')">Voice & AI page</a>.
+                </div>
+            </div></div>
+        `);
     },
 
     // =========================================================
@@ -382,8 +426,7 @@ const DevicesDetail = {
 
     _renderPhotosSection(device, photos) {
         const onOff = [['true', 'On'], ['false', 'Off']];
-        return `
-            <div class="section-header">Photos & Slideshow</div>
+        return this._section('photos', 'Photos & Slideshow', `
             <div class="card"><div class="card-body">
                 <div class="form-grid">
                     ${this.settingSelect(device, 'photos', 'photos.slideshowInterval',
@@ -401,7 +444,7 @@ const DevicesDetail = {
                     Manage albums and photo sources on the <a href="#photos" onclick="event.preventDefault(); App.navigate('photos')">Photos page</a>.
                 </div>
             </div></div>
-        `;
+        `);
     },
 
     // =========================================================
@@ -439,12 +482,11 @@ const DevicesDetail = {
                 </div>
             `;
         }).join('');
-        return `
-            <div class="section-header">Device Behavior</div>
+        return this._section('behavior', 'Device Behavior', `
             <div class="card"><div class="card-body" style="padding: 4px 16px;">
                 ${rows}
             </div></div>
-        `;
+        `);
     },
 
     _toggleSwitchStyle(on, busy) {
@@ -495,12 +537,11 @@ const DevicesDetail = {
                 </div>
             `;
         }).join('');
-        return `
-            <div class="section-header">Admin Actions</div>
+        return this._section('admin', 'Admin Actions', `
             <div class="card"><div class="card-body" style="padding: 4px 16px;">
                 ${rows}
             </div></div>
-        `;
+        `, { defaultExpanded: false });
     },
 
     /** Non-destructive admin actions — just call pressButton. */
@@ -528,8 +569,7 @@ const DevicesDetail = {
     _renderDangerZone(device) {
         const idAttr = DevicesPage._escape(device.device_id);
         const nameEsc = DevicesPage._escape(device.device_name || 'Device');
-        return `
-            <div class="section-header" style="color: var(--status-error, #c00); margin-top: 32px;">Danger Zone</div>
+        return this._section('danger', 'Danger Zone', `
             <div class="card" style="border-color: var(--status-error, #c00);">
                 <div class="card-body" style="padding: 4px 16px;">
                     <div style="display: flex; align-items: center; justify-content: space-between; padding: 12px 0; border-bottom: 1px solid var(--border, #e5e7eb);">
@@ -554,7 +594,7 @@ const DevicesDetail = {
                     </div>
                 </div>
             </div>
-        `;
+        `, { defaultExpanded: false, titleColor: 'color: var(--status-error, #c00);' });
     },
 
     async _softDelete(deviceId, deviceName) {

@@ -653,10 +653,13 @@ const DevicesPage = {
         App.renderPage();
 
         try {
+            // Handler expects { settings_path, settings_value } (renamed
+            // from category/value in edge-fn commit 1b4294d97). Sending the
+            // old names returned 500 with "Settings path is required".
             await DashieAuth.dbRequest('update_device_settings', {
                 device_id: deviceId,
-                category: category,
-                value: { [key]: value },
+                settings_path: category,
+                settings_value: { [key]: value },
             });
             const device = this._findDevice(deviceId);
             if (device) {
