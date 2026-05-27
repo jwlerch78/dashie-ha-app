@@ -56,7 +56,7 @@ const DevicesCard = {
         return `
             <div class="card card-clickable" onclick="DevicesPage.showDetail('${idAttr}')">
                 <div class="card-body" style="padding: 12px;">
-                    ${this._renderSimpleHeader(device, statusBadge, conflict)}
+                    ${this._renderSimpleHeader(device, idAttr, conflict)}
                     <div style="${offlineStyle}">
                         ${this._renderSimpleSettings(device, m)}
                         ${this._renderSimpleControls(device, idAttr, m)}
@@ -68,9 +68,9 @@ const DevicesCard = {
 
     /**
      * Offline card — minimal render for devices in the Offline section.
-     * Just the header row: icon + name + lock chip + type + last-seen +
-     * status dot. No stats, no panels, no controls — none are
-     * actionable while the device is offline.
+     * Just the header row: icon + name + type + last-seen + status dot.
+     * No lock chip (intentionally hidden — offline devices can't toggle
+     * anything anyway), no stats, no panels, no controls.
      */
     renderOffline(device) {
         const idAttr = DevicesPage._escape(device.device_id);
@@ -80,18 +80,6 @@ const DevicesCard = {
         const conflictChip = conflict
             ? `<span title="HA: ${DevicesPage._escape(conflict)}" style="color: var(--accent); font-size: 11px; margin-left: 6px;">⚠</span>`
             : '';
-        // Read-only lock chip — matches the tech card's visual but no click
-        // handler (offline devices can't toggle anything). Uses the device's
-        // last-known lock state if available, otherwise the unlocked outline.
-        const locked = !!device.metrics?.controls?.lock;
-        const lockBg = locked ? '#f97316' : 'transparent';
-        const lockBorder = locked ? '#f97316' : '#d1d5db';
-        const lockFilter = locked ? 'filter: brightness(0) invert(1);' : '';
-        const lockIconFile = locked ? 'icon-lock.svg' : 'icon-unlock.svg';
-        const lockChip = `
-            <span style="background: ${lockBg}; border: 1px solid ${lockBorder}; padding: 3px; border-radius: 50%; line-height: 0; opacity: 0.6; display: inline-flex;">
-                ${iconImg(lockIconFile, 12, lockFilter)}
-            </span>`;
         return `
             <div class="card card-clickable" onclick="DevicesPage.showDetail('${idAttr}')">
                 <div class="card-body" style="padding: 12px;">
@@ -100,7 +88,6 @@ const DevicesCard = {
                         <div style="flex: 1; min-width: 0;">
                             <div style="display: flex; align-items: center; gap: 8px; font-weight: 600;">
                                 <span>${DevicesPage._escape(device.device_name || 'Unnamed Device')}</span>
-                                ${lockChip}
                                 ${conflictChip}
                             </div>
                             <div class="device-card-type" style="margin-top: 2px;">${DevicesPage._escape(DevicesPage._typeLabel(device))}</div>
@@ -112,8 +99,8 @@ const DevicesCard = {
         `;
     },
 
-    /** Simplified header — name + type + status dot, no lock icon. */
-    _renderSimpleHeader(device, statusBadge, conflict) {
+    /** Simplified header — name + type + lock chip top-right. */
+    _renderSimpleHeader(device, idAttr, conflict) {
         const icon = DevicesPage._deviceIcon(device.device_type);
         const conflictChip = conflict
             ? `<span title="HA: ${DevicesPage._escape(conflict)}" style="color: var(--accent); font-size: 11px; margin-left: 6px;">⚠</span>`
@@ -128,7 +115,7 @@ const DevicesCard = {
                     </div>
                     <div class="device-card-type" style="margin-top: 2px;">${DevicesPage._escape(DevicesPage._typeLabel(device))}</div>
                 </div>
-                <div style="flex-shrink: 0; align-self: flex-start; display: flex; align-items: center; gap: 4px;">${statusBadge}</div>
+                <div style="flex-shrink: 0; align-self: flex-start; display: flex; align-items: center; gap: 4px;">${this._buildLockChip(device, idAttr)}</div>
             </div>
         `;
     },
@@ -232,35 +219,47 @@ const DevicesCard = {
         return `${h12}:${String(m).padStart(2, '0')} ${period}`;
     },
 
-    _renderHeader(device, idAttr, statusBadge, conflict) {
-        const icon = DevicesPage._deviceIcon(device.device_type);
-        // Colored badge for locked, outline+lower-opacity for unlocked.
+    /**
+     * Interactive lock chip — shown in the top-right of online device cards
+     * (both tech-mode and simple-mode headers). Removed entirely from the
+     * Offline section per UX request. Colored badge for locked, outline +
+     * lower-opacity for unlocked.
+     */
+    _buildLockChip(device, idAttr) {
         const locked = !!device.metrics?.controls?.lock;
         const lockBusy = !!this._busyControl[`${device.device_id}:lock`];
-        const conflictChip = conflict
-            ? `<span title="HA: ${DevicesPage._escape(conflict)}" style="color: var(--accent); font-size: 11px; margin-left: 6px;">⚠</span>`
-            : '';
         const lockBg = locked ? '#f97316' : 'transparent';
         const lockBorder = locked ? '#f97316' : '#d1d5db';
         const lockFilter = locked ? 'filter: brightness(0) invert(1);' : '';
         const lockOpacity = lockBusy ? 0.4 : (locked ? 1 : 0.6);
         const lockIconFile = locked ? 'icon-lock.svg' : 'icon-unlock.svg';
         return `
+            <button title="${locked ? 'Locked — tap to unlock' : 'Unlocked — tap to lock'}" ${lockBusy ? 'disabled' : ''}
+                onclick="event.stopPropagation(); DevicesCard.toggleSwitch('${idAttr}', 'lock', ${locked})"
+                style="background: ${lockBg}; border: 1px solid ${lockBorder}; cursor: ${lockBusy ? 'wait' : 'pointer'}; padding: 3px; border-radius: 50%; line-height: 0; opacity: ${lockOpacity};">
+                ${iconImg(lockIconFile, 12, lockFilter)}
+            </button>`;
+    },
+
+    _renderHeader(device, idAttr, statusBadge, conflict) {
+        const icon = DevicesPage._deviceIcon(device.device_type);
+        // Lock chip lives in the top-right of the header (was previously
+        // inline next to the name; status dot occupied this slot). Green
+        // "online" dot removed — the Online section heading conveys liveness.
+        const conflictChip = conflict
+            ? `<span title="HA: ${DevicesPage._escape(conflict)}" style="color: var(--accent); font-size: 11px; margin-left: 6px;">⚠</span>`
+            : '';
+        return `
             <div style="display: flex; align-items: flex-start; gap: 10px;">
                 <div class="device-card-icon" style="flex-shrink: 0;">${icon}</div>
                 <div style="flex: 1; min-width: 0;">
                     <div style="display: flex; align-items: center; gap: 8px; font-weight: 600;">
                         <span>${DevicesPage._escape(device.device_name || 'Unnamed Device')}</span>
-                        <button title="${locked ? 'Locked — tap to unlock' : 'Unlocked — tap to lock'}" ${lockBusy ? 'disabled' : ''}
-                            onclick="event.stopPropagation(); DevicesCard.toggleSwitch('${idAttr}', 'lock', ${locked})"
-                            style="background: ${lockBg}; border: 1px solid ${lockBorder}; cursor: ${lockBusy ? 'wait' : 'pointer'}; padding: 3px; border-radius: 50%; line-height: 0; opacity: ${lockOpacity};">
-                            ${iconImg(lockIconFile, 12, lockFilter)}
-                        </button>
                         ${conflictChip}
                     </div>
                     <div class="device-card-type" style="margin-top: 2px;">${DevicesPage._escape(DevicesPage._typeLabel(device))}</div>
                 </div>
-                <div style="flex-shrink: 0; align-self: flex-start; display: flex; align-items: center; gap: 4px;">${statusBadge}</div>
+                <div style="flex-shrink: 0; align-self: flex-start; display: flex; align-items: center; gap: 4px;">${this._buildLockChip(device, idAttr)}</div>
             </div>
         `;
     },

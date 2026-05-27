@@ -23,6 +23,7 @@ const DevicesPage = {
     _haStatusFetching: false, // single-flight guard for background refresh
     _archiveExpanded: false,
     _discoveredExpanded: false,  // bottom "Discovered" section starts collapsed
+    _offlineExpanded: true,      // Offline section starts expanded — cards are minimal anyway
     _deletingId: null,        // device_id currently being deleted
     // Rename + conflict state lives on DevicesRename (see devices-rename.js).
 
@@ -493,7 +494,7 @@ const DevicesPage = {
         const busy = this._manualRefreshing;
         const header = `
             <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px;">
-                <span style="font-size: 11px; font-weight: 600; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px;">Online (${devices.length})</span>
+                <span style="font-size: 11px; font-weight: 600; color: #10b981; text-transform: uppercase; letter-spacing: 0.5px;">Online (${devices.length})</span>
                 <button title="Refresh thumbnails and metrics" onclick="DevicesPage._manualRefresh()" ${busy ? 'disabled' : ''}
                     style="background: none; border: 1px solid var(--border, #d1d5db); border-radius: 4px; padding: 4px 10px; cursor: ${busy ? 'wait' : 'pointer'}; line-height: 0; opacity: ${busy ? 0.5 : 0.85};">
                     <img src="assets/icons/icon-reload.svg" alt="Refresh" style="width: 14px; height: 14px; vertical-align: middle;">
@@ -511,17 +512,26 @@ const DevicesPage = {
      * Offline section — devices that aren't archived (< 30d last_seen) but
      * aren't currently live either. Rendered with a minimal card (name +
      * type + last-seen) since stats / screenshots / camera / controls
-     * aren't actionable while the device is offline anyway.
+     * aren't actionable while the device is offline anyway. Section is
+     * collapsible — defaults to expanded since the cards are already minimal.
      */
     _renderOfflineSection(devices) {
         if (devices.length === 0) return '';
+        const caret = this._offlineExpanded ? '▾' : '▸';
         const header = `
-            <div style="display: flex; align-items: center; justify-content: space-between; margin-top: 32px; margin-bottom: 8px;">
-                <span style="font-size: 11px; font-weight: 600; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px;">Offline (${devices.length})</span>
+            <div style="display: flex; align-items: center; justify-content: space-between; margin-top: 32px; margin-bottom: 8px; cursor: pointer;"
+                 onclick="DevicesPage._toggleOffline()">
+                <span style="font-size: 11px; font-weight: 600; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px;">${caret} Offline (${devices.length})</span>
             </div>
         `;
+        if (!this._offlineExpanded) return header;
         const cards = devices.map(d => DevicesCard.renderOffline(d)).join('');
         return `${header}<div class="devices-grid">${cards}</div>`;
+    },
+
+    _toggleOffline() {
+        this._offlineExpanded = !this._offlineExpanded;
+        App.renderPage();
     },
 
     _renderDiscoveredSection() {
