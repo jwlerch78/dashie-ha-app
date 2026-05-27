@@ -26,6 +26,12 @@ const App = {
         // the rest of init takes time.
         this._consumeDeletedParam();
 
+        // Kick off the dropdown-options catalog fetch. Fire-and-forget —
+        // doesn't depend on auth (anon-key access), runs in parallel with
+        // everything else. Bundled fallback values are used until the
+        // network response lands. See js/lib/option-catalog.js.
+        if (typeof OptionCatalog !== 'undefined') OptionCatalog.init();
+
         // Wire up auth state change callback
         DashieAuth.onAuthStateChange = (isAuth) => {
             if (isAuth) {

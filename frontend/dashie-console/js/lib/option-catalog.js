@@ -1,61 +1,151 @@
 /* ============================================================
    OptionCatalog — central source of truth for dropdown option lists.
 
-   Why this exists:
-     The Console rendered many device settings as dropdowns, but the
-     option lists were inline-hardcoded inside devices-detail.js. Most
-     of those lists were guesses that didn't match the real values the
-     dashboard accepts — e.g. theme family options listed
-     "default/midnight/ocean/forest" but the real registry only has
-     "default/halloween/christmas/blue". Saving "midnight" silently
-     fell back to the default theme.
+   Two kinds of entries:
+     1. DYNAMIC catalogs — themeFamily, aiPersonality, aiVoice, aiModel.
+        Fetched from the `get-options-catalog` Supabase edge fn (which
+        reads the `option_catalog` table). Cached in localStorage with
+        a 24h TTL. Bundled fallback values below are used when the
+        fetch fails or before init() completes.
+     2. STABLE enums — layoutModes, animationLevels, sleepMethods,
+        themeModes, time pickers, on/off. Hardcoded below since these
+        change ~never and don't justify a DB roundtrip.
 
    Pattern:
-     Every dropdown in devices-detail.js sources its options from one
-     of the helpers below. Never inline a fresh option array in a
-     settings page — add it here instead. Each helper documents where
-     its values come from so future updates can be cross-checked.
+     OptionCatalog.init() is called from app.js after auth resolves.
+     It hits the edge fn, populates _live, triggers a re-render. Until
+     it completes, getters return the bundled fallback so the page
+     renders immediately on load.
 
-   Tooling note:
-     Long-term we want a Supabase edge function that introspects the
-     authoritative registries (theme-registry.js, the personality
-     service, ElevenLabs catalog) and serves a single live catalog —
-     see _TECHNICAL_DEBT.md "Web Subscribe Flow Pieces 2 & 3 — Smaller
-     related follow-ups". For now these are static lists that mirror
-     the dashboard source and need manual updates when registries
-     change.
+   To add a new dynamic entry:
+     1. INSERT into option_catalog table (via a migration).
+     2. Add a getter below sourcing from _live.<key>.
+     3. Add a bundled fallback to _BUNDLED_FALLBACK below so the page
+        still renders correctly on first load / fetch failure.
 
-   If you can't find an authoritative source for a list, do NOT add
-   it here. Render the setting as a read-only chip in devices-detail
-   instead so we don't ship a misleading dropdown.
+   See supabase/migrations/202605271500_create_option_catalog.sql and
+   supabase/functions/get-options-catalog/index.ts.
    ============================================================ */
 
 const OptionCatalog = {
+    _CACHE_KEY: 'dashie_option_catalog_v1',
+    _CACHE_TTL_MS: 24 * 60 * 60 * 1000, // 24h
+    _initPromise: null,
+
+    // Bundled fallback — used until init() completes, or if it fails.
+    // Keep these in sync with the option_catalog seed rows in the
+    // migration so a fresh load with no cache still looks right.
+    _BUNDLED_FALLBACK: {
+        themeFamily: [
+            ['default',   'Default'],
+            ['halloween', 'Halloween'],
+            ['christmas', 'Christmas'],
+            ['blue',      'Blue'],
+        ],
+        aiPersonality: [
+            ['friendly',     'Friendly'],
+            ['calm',         'Calm'],
+            ['professional', 'Professional'],
+            ['playful',      'Playful'],
+        ],
+        aiVoice: [
+            ['rachel',  'Rachel'],
+            ['adam',    'Adam'],
+            ['aria',    'Aria'],
+            ['thomas',  'Thomas'],
+            ['jessica', 'Jessica'],
+        ],
+        aiModel: [
+            ['claude-sonnet-4-5', 'Claude Sonnet 4.5'],
+            ['claude-haiku-4-5',  'Claude Haiku 4.5'],
+            ['gpt-4o',            'GPT-4o'],
+            ['gpt-4o-mini',       'GPT-4o mini'],
+        ],
+    },
+
+    _live: null,   // populated by init() — same shape as _BUNDLED_FALLBACK
+
+    /**
+     * Fetch the live catalog. Called from app.js after auth resolves.
+     * Idempotent — safe to call multiple times.
+     */
+    async init() {
+        if (this._initPromise) return this._initPromise;
+        this._initPromise = this._doInit();
+        return this._initPromise;
+    },
+
+    async _doInit() {
+        // 1) Seed _live from localStorage if a fresh-enough cached
+        //    version exists. Makes the second-and-later page-load instant.
+        try {
+            const raw = localStorage.getItem(this._CACHE_KEY);
+            if (raw) {
+                const { ts, catalog } = JSON.parse(raw);
+                if (catalog && (Date.now() - ts) < this._CACHE_TTL_MS) {
+                    this._live = catalog;
+                }
+            }
+        } catch (e) { /* localStorage parse error — ignore, fall through */ }
+
+        // 2) Fetch fresh in background. Updates _live + cache when it lands.
+        //    Re-renders so dropdowns showing fallback values flip to fresh
+        //    values once the network response arrives.
+        try {
+            // Use a direct fetch instead of DashieAuth.edgeFunctionRequest so
+            // we don't depend on JWT availability (catalog is public-readable).
+            const url = `${DashieAuth.config.url}/functions/v1/get-options-catalog`;
+            const resp = await fetch(url, {
+                headers: {
+                    'apikey': DashieAuth.anonKey,
+                    'Authorization': `Bearer ${DashieAuth.anonKey}`,
+                },
+            });
+            if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+            const data = await resp.json();
+            if (data?.catalog) {
+                this._live = data.catalog;
+                try {
+                    localStorage.setItem(this._CACHE_KEY, JSON.stringify({
+                        ts: Date.now(),
+                        catalog: data.catalog,
+                    }));
+                } catch (e) { /* localStorage full — ignore */ }
+                if (typeof App !== 'undefined' && App.renderPage) App.renderPage();
+            }
+        } catch (e) {
+            console.warn('[OptionCatalog] fetch failed, using bundled fallback:', e?.message || e);
+            // _live stays null or whatever localStorage gave us — getters fall back.
+        }
+    },
+
+    /** Pick a dynamic list from _live, then localStorage cache, then bundled. */
+    _dynamic(key) {
+        if (this._live?.[key]) return this._live[key];
+        return this._BUNDLED_FALLBACK[key] || [];
+    },
+
+    // =========================================================
+    //  Dynamic catalogs — sourced from option_catalog table
+    // =========================================================
+
+    themeFamilies()   { return this._dynamic('themeFamily'); },
+    aiPersonalities() { return this._dynamic('aiPersonality'); },
+    aiVoices()        { return this._dynamic('aiVoice'); },
+    aiModels()        { return this._dynamic('aiModel'); },
+
+    // =========================================================
+    //  Stable enums — hardcoded (change ~never)
+    // =========================================================
+
     /** True/false toggles. Universal. */
     onOff() {
         return [['true', 'On'], ['false', 'Off']];
     },
 
     /**
-     * Theme families.
-     * Source: dashieapp_staging/js/ui/themes/theme-registry.js → THEME_FAMILIES
-     * Last synced: 2026-05-27
-     * Note: themeMode (light/dark) is a separate setting — see themeModes().
-     */
-    themeFamilies() {
-        return [
-            ['default',   'Default'],
-            ['halloween', 'Halloween'],
-            ['christmas', 'Christmas'],
-            ['blue',      'Blue'],
-        ];
-    },
-
-    /**
-     * Theme mode.
-     * Source: dashieapp_staging/js/ui/themes/theme-registry.js → each family
-     * exposes variants.{light, dark}. There's no 'system' mode.
-     * Last synced: 2026-05-27
+     * Theme mode. Source: theme-registry.js → each family exposes
+     * variants.{light, dark}. There's no 'system' mode.
      */
     themeModes() {
         return [
@@ -65,11 +155,8 @@ const OptionCatalog = {
     },
 
     /**
-     * Layout modes.
-     * Source: dashieapp_staging/js/modules/layout/layout-service.js:279
+     * Layout modes. Source: js/modules/layout/layout-service.js:279
      *   `mode === 'widgets' || mode === 'single_panel' || mode === 'canvas'`
-     * NOTE: 'single_panel' uses an underscore, not a hyphen.
-     * Last synced: 2026-05-27
      */
     layoutModes() {
         return [
@@ -80,10 +167,7 @@ const OptionCatalog = {
     },
 
     /**
-     * Animation level.
-     * Source: dashieapp_staging/js/modules/Settings/pages/settings-display-page.js:193
-     *   Display chip: `animationLevel === 'high' ? 'High' : 'Low'`
-     * Last synced: 2026-05-27
+     * Animation level. Source: settings-display-page.js:193 (high/low).
      */
     animationLevels() {
         return [
@@ -93,11 +177,8 @@ const OptionCatalog = {
     },
 
     /**
-     * Sleep method.
-     * Source: dashieapp_staging/js/services/sleep-timer-service.js:75
-     *   `if (method === 'inactivity') { ... } else { ... schedule path ... }`
-     * Default = 'schedule'.
-     * Last synced: 2026-05-27
+     * Sleep method. Source: sleep-timer-service.js:75
+     *   `if (method === 'inactivity') { ... } else { schedule path }`
      */
     sleepMethods() {
         return [
@@ -106,12 +187,8 @@ const OptionCatalog = {
         ];
     },
 
-    /**
-     * Common sleep / wake time options. These aren't a real enum — the
-     * dashboard accepts any HH:MM string — but a dropdown of common
-     * times is friendlier than a raw time input for the Console use
-     * case. User who wants 3:17 AM should edit on the dashboard.
-     */
+    /** Common sleep / wake time options — dropdown convenience values
+     *  over a free HH:MM input. User wanting 3:17 AM edits on the device. */
     sleepTimes() {
         return [
             ['20:00', '8:00 PM'], ['20:30', '8:30 PM'],
@@ -131,10 +208,7 @@ const OptionCatalog = {
         ];
     },
 
-    /**
-     * Re-sleep delay (minutes) and inactivity timeout (seconds). Free
-     * numeric ranges — sample values for dropdown convenience.
-     */
+    /** Numeric ranges — sample values for dropdown convenience. */
     resleepDelays() {
         return [['5', '5'], ['10', '10'], ['15', '15'], ['30', '30'], ['60', '60']];
     },
