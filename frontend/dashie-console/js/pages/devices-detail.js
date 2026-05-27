@@ -288,43 +288,26 @@ const DevicesDetail = {
     // =========================================================
 
     _renderDisplaySection(device, display) {
-        const onOff = [['true', 'On'], ['false', 'Off']];
+        // Only settings with VERIFIED key paths + VERIFIED option lists
+        // (sourced from OptionCatalog). Unverified ones were removed —
+        // they were dropdowns whose option values didn't match what the
+        // dashboard actually accepts. See OptionCatalog header comment.
         return this._section('display', 'Display & Theme', `
-            <div class="card"><div class="card-body"><div class="form-grid">
-                ${this.settingSelect(device, 'display', 'preferences.theme',
-                    'Theme', display['preferences.theme'] || 'default',
-                    [['default', 'Default'], ['midnight', 'Midnight'], ['ocean', 'Ocean'], ['forest', 'Forest']])}
-                ${this.settingSelect(device, 'display', 'preferences.themeMode',
-                    'Mode', display['preferences.themeMode'] || 'system',
-                    [['light', 'Light'], ['dark', 'Dark'], ['system', 'System']])}
-                ${this.settingSelect(device, 'display', 'preferences.layoutMode',
-                    'Layout', display['preferences.layoutMode'] || 'widgets',
-                    [['widgets', 'Widgets'], ['single-panel', 'Single Panel']])}
-                ${this.settingSelect(device, 'display', 'preferences.dashboardZoom',
-                    'Dashboard Zoom', String(display['preferences.dashboardZoom'] || 100),
-                    [['80', '80%'], ['90', '90%'], ['100', '100%'], ['110', '110%'], ['120', '120%']])}
-                ${this.settingSelect(device, 'display', 'preferences.sidebarIconSize',
-                    'Sidebar Size', display['preferences.sidebarIconSize'] || 'medium',
-                    [['small', 'Small'], ['medium', 'Medium'], ['large', 'Large']])}
-                ${this.settingSelect(device, 'display', 'preferences.widgetFontSize',
-                    'Widget Font Size', display['preferences.widgetFontSize'] || 'medium',
-                    [['small', 'Small'], ['medium', 'Medium'], ['large', 'Large']])}
-                ${this.settingSelect(device, 'display', 'preferences.calendarFontSize',
-                    'Calendar Font Size', display['preferences.calendarFontSize'] || 'medium',
-                    [['small', 'Small'], ['medium', 'Medium'], ['large', 'Large']])}
-                ${this.settingSelect(device, 'display', 'preferences.animationLevel',
-                    'Animation Level', String(display['preferences.animationLevel'] ?? 2),
-                    [['0', 'None'], ['1', 'Subtle'], ['2', 'Standard'], ['3', 'Full']])}
-                ${this.settingSelect(device, 'display', 'preferences.themeAnimationsEnabled',
-                    'Theme Animations', String(display['preferences.themeAnimationsEnabled'] !== false),
-                    onOff)}
-                ${this.settingSelect(device, 'display', 'preferences.weatherOverlayEnabled',
-                    'Weather Overlay', String(display['preferences.weatherOverlayEnabled'] !== false),
-                    onOff)}
-                ${this.settingSelect(device, 'display', 'preferences.orientationLock',
-                    'Orientation', display['preferences.orientationLock'] || 'auto',
-                    [['auto', 'Auto'], ['portrait', 'Portrait'], ['landscape', 'Landscape']])}
-            </div></div></div>
+            <div class="card"><div class="card-body">
+                <div class="form-grid">
+                    ${this.settingSelect(device, 'display', 'themeFamily',
+                        'Theme', display.themeFamily || 'default', OptionCatalog.themeFamilies())}
+                    ${this.settingSelect(device, 'display', 'themeMode',
+                        'Mode', display.themeMode || 'dark', OptionCatalog.themeModes())}
+                    ${this.settingSelect(device, 'display', 'preferences.layoutMode',
+                        'Layout', display['preferences.layoutMode'] || 'widgets', OptionCatalog.layoutModes())}
+                    ${this.settingSelect(device, 'display', 'preferences.animationLevel',
+                        'Animation Level', display['preferences.animationLevel'] || 'high', OptionCatalog.animationLevels())}
+                </div>
+                <div style="margin-top: 12px; font-size: var(--font-size-sm); color: var(--text-muted);">
+                    More display options (font sizes, zoom, weather overlay, etc.) can be set from the dashboard's Settings page on the device.
+                </div>
+            </div></div>
         `);
     },
 
@@ -333,45 +316,26 @@ const DevicesDetail = {
     // =========================================================
 
     _renderSleepSection(device, sleep) {
-        const onOff = [['true', 'On'], ['false', 'Off']];
-        const times = [
-            ['20:00', '8:00 PM'], ['20:30', '8:30 PM'],
-            ['21:00', '9:00 PM'], ['21:30', '9:30 PM'],
-            ['22:00', '10:00 PM'], ['22:30', '10:30 PM'],
-            ['23:00', '11:00 PM'], ['23:30', '11:30 PM'],
-            ['00:00', '12:00 AM'],
-        ];
-        const wakeTimes = [
-            ['05:00', '5:00 AM'], ['05:30', '5:30 AM'],
-            ['06:00', '6:00 AM'], ['06:30', '6:30 AM'],
-            ['07:00', '7:00 AM'], ['07:30', '7:30 AM'],
-            ['08:00', '8:00 AM'], ['08:30', '8:30 AM'],
-            ['09:00', '9:00 AM'],
-        ];
         return this._section('sleep', 'Sleep & Screensaver', `
-            <div class="card"><div class="card-body"><div class="form-grid">
-                ${this.settingSelect(device, 'sleep', 'sleep.enabled',
-                    'Sleep Timer', String(sleep['sleep.enabled'] !== false), onOff)}
-                ${this.settingSelect(device, 'sleep', 'sleep.timerStart',
-                    'Sleep Time', sleep['sleep.timerStart'] || '22:00', times)}
-                ${this.settingSelect(device, 'sleep', 'sleep.timerEnd',
-                    'Wake Time', sleep['sleep.timerEnd'] || '07:00', wakeTimes)}
-                ${this.settingSelect(device, 'sleep', 'sleep.method',
-                    'Sleep Method', sleep['sleep.method'] || 'power-off',
-                    [['power-off', 'Power Off'], ['screen-off', 'Screen Off'], ['screensaver', 'Screensaver']])}
-                ${this.settingSelect(device, 'sleep', 'sleep.resleepTimeout',
-                    'Re-sleep Delay (min)', String(sleep['sleep.resleepTimeout'] ?? 15),
-                    [['5', '5'], ['10', '10'], ['15', '15'], ['30', '30'], ['60', '60']])}
-                ${this.settingSelect(device, 'sleep', 'sleep.inactivityTimeout',
-                    'Inactivity Timeout (sec)', String(sleep['sleep.inactivityTimeout'] ?? 120),
-                    [['30', '30'], ['60', '60'], ['120', '120'], ['300', '300'], ['600', '600']])}
-                ${this.settingSelect(device, 'sleep', 'sleep.motionWakeForSleep',
-                    'Wake on Motion', String(sleep['sleep.motionWakeForSleep'] !== false), onOff)}
-                ${this.settingSelect(device, 'sleep', 'sleep.showClock',
-                    'Show Clock in Sleep', String(sleep['sleep.showClock'] !== false), onOff)}
-                ${this.settingSelect(device, 'sleep', 'sleep.reduceBrightnessOnSleep',
-                    'Reduce Brightness', String(sleep['sleep.reduceBrightnessOnSleep'] !== false), onOff)}
-            </div></div></div>
+            <div class="card"><div class="card-body">
+                <div class="form-grid">
+                    ${this.settingSelect(device, 'sleep', 'sleep.enabled',
+                        'Sleep Timer', String(sleep['sleep.enabled'] !== false), OptionCatalog.onOff())}
+                    ${this.settingSelect(device, 'sleep', 'sleep.method',
+                        'Sleep Method', sleep['sleep.method'] || 'schedule', OptionCatalog.sleepMethods())}
+                    ${this.settingSelect(device, 'sleep', 'sleep.timerStart',
+                        'Sleep Time', sleep['sleep.timerStart'] || '22:00', OptionCatalog.sleepTimes())}
+                    ${this.settingSelect(device, 'sleep', 'sleep.timerEnd',
+                        'Wake Time', sleep['sleep.timerEnd'] || '07:00', OptionCatalog.wakeTimes())}
+                    ${this.settingSelect(device, 'sleep', 'sleep.resleepTimeout',
+                        'Re-sleep Delay (min)', String(sleep['sleep.resleepTimeout'] ?? 15), OptionCatalog.resleepDelays())}
+                    ${this.settingSelect(device, 'sleep', 'sleep.inactivityTimeout',
+                        'Inactivity Timeout (sec)', String(sleep['sleep.inactivityTimeout'] ?? 120), OptionCatalog.inactivityTimeouts())}
+                </div>
+                <div style="margin-top: 12px; font-size: var(--font-size-sm); color: var(--text-muted);">
+                    Sleep tuning toggles (wake-on-motion, show clock, reduce brightness) can be set from the dashboard's Settings page on the device.
+                </div>
+            </div></div>
         `);
     },
 
@@ -380,28 +344,19 @@ const DevicesDetail = {
     // =========================================================
 
     _renderVoiceSection(device, aiVoice, voice) {
-        const onOff = [['true', 'On'], ['false', 'Off']];
-        // Voice & AI per-device settings that don't depend on dynamic
-        // catalogs (personality list, voice list come from the personality
-        // service — wiring those is deferred to the Voice & AI tab buildout,
-        // see add-on plan Phase F). Show the current value as a read-only
-        // chip + link to manage in the dedicated tab.
+        // Only voice.enabled has a verified storage path + option set
+        // (on/off). Other voice settings (controlMethod, responseHandling,
+        // displayFormat, personality, voice) need a dynamic options catalog
+        // — deferred to add-on plan Phase F (Voice & AI tab buildout).
+        // Show the current personality/voice as read-only chips so they're
+        // visible but not editable from here.
         const personality = aiVoice['aiVoice.personality'] || '—';
         const voiceName = aiVoice['aiVoice.voice'] || '—';
         return this._section('voice-ai', 'Voice & AI', `
             <div class="card"><div class="card-body">
                 <div class="form-grid">
                     ${this.settingSelect(device, 'voice', 'voice.enabled',
-                        'Voice Assistant', String(voice['voice.enabled'] !== false), onOff)}
-                    ${this.settingSelect(device, 'voice', 'voice.controlMethod',
-                        'Control Method', voice['voice.controlMethod'] || 'wake-word',
-                        [['wake-word', 'Wake Word'], ['hold', 'Hold to Talk']])}
-                    ${this.settingSelect(device, 'voice', 'voice.responseHandling',
-                        'Response Output', voice['voice.responseHandling'] || 'both',
-                        [['text-only', 'Text Only'], ['audio-only', 'Audio Only'], ['both', 'Text + Audio']])}
-                    ${this.settingSelect(device, 'voice', 'voice.displayFormat',
-                        'Transcription Display', voice['voice.displayFormat'] || 'full',
-                        [['full', 'Full'], ['concise', 'Concise'], ['none', 'Hidden']])}
+                        'Voice Assistant', String(voice['voice.enabled'] !== false), OptionCatalog.onOff())}
                 </div>
                 <div style="margin-top: 16px; padding-top: 16px; border-top: 1px solid var(--border, #e5e7eb); display: grid; grid-template-columns: 1fr 1fr; gap: 12px;">
                     <div>
@@ -414,7 +369,7 @@ const DevicesDetail = {
                     </div>
                 </div>
                 <div style="margin-top: 12px; font-size: var(--font-size-sm); color: var(--text-muted);">
-                    Change personality and voice on the <a href="#voice-ai" onclick="event.preventDefault(); App.navigate('voice-ai')">Voice & AI page</a>.
+                    Change personality, voice, and other voice settings on the <a href="#voice-ai" onclick="event.preventDefault(); App.navigate('voice-ai')">Voice & AI page</a>.
                 </div>
             </div></div>
         `);
@@ -424,28 +379,13 @@ const DevicesDetail = {
     //  Photos / Slideshow
     // =========================================================
 
-    _renderPhotosSection(device, photos) {
-        const onOff = [['true', 'On'], ['false', 'Off']];
-        return this._section('photos', 'Photos & Slideshow', `
-            <div class="card"><div class="card-body">
-                <div class="form-grid">
-                    ${this.settingSelect(device, 'photos', 'photos.slideshowInterval',
-                        'Slideshow Interval (sec)', String(photos['photos.slideshowInterval'] ?? 30),
-                        [['5', '5'], ['10', '10'], ['15', '15'], ['30', '30'], ['60', '60']])}
-                    ${this.settingSelect(device, 'photos', 'photos.slideshowTransition',
-                        'Transition', photos['photos.slideshowTransition'] || 'fade',
-                        [['fade', 'Fade'], ['slide', 'Slide'], ['none', 'None']])}
-                    ${this.settingSelect(device, 'photos', 'photos.slideshowShuffle',
-                        'Shuffle', String(photos['photos.slideshowShuffle'] !== false), onOff)}
-                    ${this.settingSelect(device, 'photos', 'photos.showMetadata',
-                        'Show Metadata', String(photos['photos.showMetadata'] === true), onOff)}
-                </div>
-                <div style="margin-top: 12px; font-size: var(--font-size-sm); color: var(--text-muted);">
-                    Manage albums and photo sources on the <a href="#photos" onclick="event.preventDefault(); App.navigate('photos')">Photos page</a>.
-                </div>
-            </div></div>
-        `);
-    },
+    /**
+     * Photos section removed — slideshow setting keys + option lists need
+     * verification before exposing dropdowns here. Manage slideshow + albums
+     * on the Photos page until OptionCatalog adds entries for slideshow
+     * interval/transition (see add-on plan Phase F).
+     */
+    _renderPhotosSection() { return ''; },
 
     // =========================================================
     //  Device Behavior — HA switches not surfaced elsewhere
