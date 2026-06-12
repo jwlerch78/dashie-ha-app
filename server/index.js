@@ -11,7 +11,7 @@ process.on('unhandledRejection', (err) => {
     process.exit(1);
 });
 
-let path, fs, express, config, authRouter, haRouter, haWorker, haRegistry;
+let path, fs, express, config, authRouter, haRouter, feedsRouter, haWorker, haRegistry;
 try {
     path = require('path');
     fs = require('fs');
@@ -19,6 +19,7 @@ try {
     config = require('./config');
     authRouter = require('./api/auth');
     haRouter = require('./api/ha');
+    feedsRouter = require('./api/feeds');
     haWorker = require('./ha-worker');
     haRegistry = require('./ha-registry');
 } catch (err) {
@@ -91,6 +92,7 @@ if (!fs.existsSync(FRONTEND_DIR)) {
 
 app.use('/api/auth', authRouter);
 app.use('/api/ha', haRouter);
+app.use('/api/feeds', feedsRouter);
 
 // Lightweight runtime-info endpoint the frontend uses to detect it's running
 // inside the add-on (vs standalone on dashieapp.com/console).
