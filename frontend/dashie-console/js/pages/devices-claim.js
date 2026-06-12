@@ -16,33 +16,16 @@
    Dismiss ✕. Routing happens inside claimSelected() based on each
    row's `kind`. Users don't need to know the difference.
 
-   Dismissals are per-browser (localStorage). Both kinds dismiss into
-   the same collapsed "Dismissed" section at the bottom.
+   Dismissals are persisted server-side via ConsoleState (per-user,
+   cross-browser). install rows dismiss by install_id; discovered rows
+   dismiss by HA device_id; both surface in the unified Dismissed
+   section rendered by DevicesPage.
    ============================================================ */
 
 const DevicesClaim = {
     _claimable: null,              // raw list_claimable_devices result
     _claiming: false,              // request in flight (claim or adopt)
     _selected: new Set(),          // uids currently checked
-    _dismissed: null,              // Set of dismissed uids (localStorage)
-    _dismissedExpanded: false,     // collapsed Dismissed section state
-
-    _DISMISS_KEY: 'dashie_devices_dismissed_claims',
-
-    _loadDismissed() {
-        if (this._dismissed) return;
-        try {
-            this._dismissed = new Set(JSON.parse(localStorage.getItem(this._DISMISS_KEY) || '[]'));
-        } catch (e) {
-            this._dismissed = new Set();
-        }
-    },
-
-    _saveDismissed() {
-        try {
-            localStorage.setItem(this._DISMISS_KEY, JSON.stringify([...this._dismissed]));
-        } catch (e) { /* localStorage unavailable */ }
-    },
 
     /**
      * Refresh the claimable installs list. Discovered devices come from
@@ -51,20 +34,17 @@ const DevicesClaim = {
      * failure here doesn't block the devices page.
      */
     async fetch() {
-        this._loadDismissed();
+        // Hydrate dismissals before computing visibility. ConsoleState.load()
+        // is idempotent — multiple callers await the same promise.
+        if (typeof ConsoleState !== 'undefined') {
+            try { await ConsoleState.load(); } catch (_) { /* non-critical */ }
+        }
         try {
             const result = await DashieAuth.dbRequest('list_claimable_devices', {});
             this._claimable = result.devices || [];
             const uids = new Set(this._addable().map(a => a.uid));
             // Drop selections that are no longer addable.
             this._selected = new Set([...this._selected].filter(uid => uids.has(uid)));
-            // NOTE: do NOT prune _dismissed here. _addable() pulls discovered
-            // rows from DevicesPage._discoveredDevices(), which can be empty
-            // on first fetch (worker not warm). Pruning then would silently
-            // forget dismissals for discovered devices, and they'd reappear
-            // in the banner once the worker reports them. _visible()/_hidden()
-            // already filter through _addable() before rendering, so stale
-            // UIDs in the Set are harmless.
         } catch (e) {
             console.warn('[DevicesClaim] list_claimable_devices failed:', e.message);
             this._claimable = this._claimable || [];
@@ -98,14 +78,19 @@ const DevicesClaim = {
                 haDeviceId: null,
             });
         }
-        // discovered devices from the add-on worker's unmatched array
+        // discovered devices from the add-on worker's unmatched array.
+        // Dedup against BOTH unclaimed installs (android_id == device_id
+        // means the same hardware is also surfaced as an install row) AND
+        // already-claimed devices (so HA-reported state for a device the
+        // user already owns doesn't reappear as a "new" addable).
         const discovered = (typeof DevicesPage !== 'undefined' && DevicesPage._discoveredDevices)
             ? DevicesPage._discoveredDevices() : [];
+        const claimedIds = (typeof DevicesPage !== 'undefined' && DevicesPage._devices)
+            ? new Set(DevicesPage._devices.map(d => d.device_id).filter(Boolean))
+            : new Set();
         for (const d of discovered) {
             if (!d.device_id) continue;   // need device_id to call /api/ha/adopt
-            // De-dup vs install rows in case both surfaces report the
-            // same hardware. android_id == device_id in our schema, so we
-            // can match an install row to a discovered device by that.
+            if (claimedIds.has(d.device_id)) continue;  // already in user's account
             const installRow = (this._claimable || []).find(c => c.android_id === d.device_id);
             if (installRow) continue;     // already represented by the install entry
             list.push({
@@ -121,16 +106,22 @@ const DevicesClaim = {
         return list;
     },
 
+    /** Is this addable row currently dismissed in ConsoleState? */
+    _isAddableDismissed(a) {
+        if (typeof ConsoleState === 'undefined') return false;
+        const kind = a.kind === 'install' ? 'installs' : 'discovered';
+        const id = a.kind === 'install' ? a.installId : a.haDeviceId;
+        return ConsoleState.isDismissed(kind, id);
+    },
+
     /** Addables not yet dismissed. */
     _visible() {
-        this._loadDismissed();
-        return this._addable().filter(a => !this._dismissed.has(a.uid));
+        return this._addable().filter(a => !this._isAddableDismissed(a));
     },
 
     /** Addables the user dismissed. */
     _hidden() {
-        this._loadDismissed();
-        return this._addable().filter(a => this._dismissed.has(a.uid));
+        return this._addable().filter(a => this._isAddableDismissed(a));
     },
 
     /** Stable signature — devices.js uses it to skip silent-refresh repaints. */
@@ -186,10 +177,16 @@ const DevicesClaim = {
                     <div style="border-top: 1px solid var(--border, #d1d5db);">
                         ${rows}
                     </div>
-                    <div style="display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 8px;">
-                        <button class="btn btn-secondary btn-sm" onclick="DevicesClaim.toggleSelectAll()">
-                            ${allChecked ? 'Clear all' : 'Select all'}
-                        </button>
+                    <div style="display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 8px; flex-wrap: wrap;">
+                        <div style="display: flex; gap: 8px; align-items: center;">
+                            <button class="btn btn-secondary btn-sm" onclick="DevicesClaim.toggleSelectAll()">
+                                ${allChecked ? 'Clear all' : 'Select all'}
+                            </button>
+                            <button class="btn btn-secondary btn-sm" title="Hide every device in this banner — they'll move to the Dismissed section at the bottom of the page"
+                                onclick="DevicesClaim.dismissAll()">
+                                Dismiss all
+                            </button>
+                        </div>
                         <button class="btn btn-primary btn-sm" ${n === 0 || this._claiming ? 'disabled' : ''}
                             onclick="DevicesClaim.claimSelected()">
                             ${addLabel}
@@ -213,69 +210,71 @@ const DevicesClaim = {
         App.renderPage();
     },
 
-    /** Hide a row from the banner (this browser only). Still surfaces in
-     *  the collapsed Dismissed section so the user can Restore later. */
+    /** Decode a banner uid into the (kind, id) shape ConsoleState stores. */
+    _uidToDismissedRef(uid) {
+        if (typeof uid !== 'string') return null;
+        if (uid.startsWith('ha:')) return { kind: 'discovered', id: uid.slice(3) };
+        return { kind: 'installs', id: uid };
+    },
+
+    /** Hide a row from the banner — persisted via ConsoleState (cross-browser). */
     dismiss(uid) {
-        this._loadDismissed();
-        this._dismissed.add(uid);
-        this._saveDismissed();
+        const ref = this._uidToDismissedRef(uid);
+        if (ref && typeof ConsoleState !== 'undefined') ConsoleState.dismiss(ref.kind, ref.id);
         this._selected.delete(uid);
+        App.renderPage();
+    },
+
+    /** Bulk-dismiss everything currently visible. */
+    dismissAll() {
+        const visible = this._visible();
+        if (visible.length === 0) return;
+        if (typeof ConsoleState !== 'undefined') {
+            const installIds = visible.filter(a => a.kind === 'install').map(a => a.installId);
+            const discoveredIds = visible.filter(a => a.kind === 'discovered').map(a => a.haDeviceId);
+            if (installIds.length) ConsoleState.dismiss('installs', installIds);
+            if (discoveredIds.length) ConsoleState.dismiss('discovered', discoveredIds);
+        }
+        this._selected.clear();
+        if (typeof Toast !== 'undefined') {
+            Toast.success(`Dismissed ${visible.length} device${visible.length === 1 ? '' : 's'} — restore from the Dismissed section at the bottom.`);
+        }
         App.renderPage();
     },
 
     /** Un-dismiss a row — moves back into the banner. */
     restore(uid) {
-        this._loadDismissed();
-        this._dismissed.delete(uid);
-        this._saveDismissed();
+        const ref = this._uidToDismissedRef(uid);
+        if (ref && typeof ConsoleState !== 'undefined') ConsoleState.restore(ref.kind, ref.id);
         App.renderPage();
     },
 
-    toggleDismissedExpanded() {
-        this._dismissedExpanded = !this._dismissedExpanded;
-        App.renderPage();
-    },
-
-    /** Collapsed Dismissed section at the bottom of the Devices page. */
-    renderDismissedSection() {
-        const items = this._hidden();
-        if (items.length === 0) return '';
+    /** Render a single dismissed-row card for use inside the page-level
+     *  Dismissed section. Returns "" if not in the hidden set. */
+    renderHiddenCard(a) {
         const escape = DevicesPage._escape.bind(DevicesPage);
-        const caret = this._dismissedExpanded ? '▾' : '▸';
-
-        const header = `
-            <div class="section-header" style="margin-top: 32px; cursor: pointer;" onclick="DevicesClaim.toggleDismissedExpanded()">
-                ${caret} Dismissed (${items.length})
-            </div>
-        `;
-        if (!this._dismissedExpanded) return header;
-
-        const rows = items.map(a => {
-            const uid = escape(a.uid);
-            const seenText = a.lastSeen
-                ? `seen ${DevicesPage._formatTime(a.lastSeen)}`
-                : 'reported by Home Assistant';
-            return `
-                <div class="card" style="margin-bottom: 8px;">
-                    <div class="card-body" style="display: flex; align-items: center; justify-content: space-between; gap: 12px;">
-                        <div style="display: flex; align-items: center; gap: 12px; min-width: 0;">
-                            <div class="device-card-icon">${DevicesPage._deviceIcon(a.deviceType)}</div>
-                            <div style="min-width: 0;">
-                                <div style="font-weight: 500;">${escape(a.name)}</div>
-                                <div style="color: var(--text-muted); font-size: var(--font-size-sm);">
-                                    ${escape(a.deviceType)} · ${seenText}
-                                </div>
+        const uid = escape(a.uid);
+        const seenText = a.lastSeen
+            ? `seen ${DevicesPage._formatTime(a.lastSeen)}`
+            : 'reported by Home Assistant';
+        return `
+            <div class="card" style="margin-bottom: 8px;">
+                <div class="card-body" style="display: flex; align-items: center; justify-content: space-between; gap: 12px;">
+                    <div style="display: flex; align-items: center; gap: 12px; min-width: 0;">
+                        <div class="device-card-icon">${DevicesPage._deviceIcon(a.deviceType)}</div>
+                        <div style="min-width: 0;">
+                            <div style="font-weight: 500;">${escape(a.name)}</div>
+                            <div style="color: var(--text-muted); font-size: var(--font-size-sm);">
+                                ${escape(a.deviceType)} · ${seenText}
                             </div>
                         </div>
-                        <div style="flex-shrink: 0;">
-                            <button class="btn btn-secondary btn-sm" onclick="DevicesClaim.restore('${uid}')">Restore</button>
-                        </div>
+                    </div>
+                    <div style="flex-shrink: 0;">
+                        <button class="btn btn-secondary btn-sm" onclick="DevicesClaim.restore('${uid}')">Restore</button>
                     </div>
                 </div>
-            `;
-        }).join('');
-
-        return `${header}<div>${rows}</div>`;
+            </div>
+        `;
     },
 
     /**

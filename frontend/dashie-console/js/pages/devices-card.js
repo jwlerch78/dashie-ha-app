@@ -92,7 +92,12 @@ const DevicesCard = {
                             </div>
                             <div class="device-card-type" style="margin-top: 2px;">${DevicesPage._escape(DevicesPage._typeLabel(device))}</div>
                         </div>
-                        <div style="flex-shrink: 0; align-self: flex-start; display: flex; align-items: center; gap: 4px;">${statusBadge}</div>
+                        <div style="flex-shrink: 0; align-self: flex-start; display: flex; align-items: center; gap: 4px;">
+                            ${statusBadge}
+                            <button title="Dismiss — hide this device from the Offline list. Restore from the Dismissed section at the bottom of the page."
+                                onclick="event.stopPropagation(); DevicesPage.dismissDevice('${idAttr}')"
+                                style="background: none; border: none; color: var(--text-muted); cursor: pointer; font-size: 14px; padding: 2px 6px; line-height: 1;">✕</button>
+                        </div>
                     </div>
                 </div>
             </div>

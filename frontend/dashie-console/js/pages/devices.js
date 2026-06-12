@@ -317,6 +317,35 @@ const DevicesPage = {
         return age > this.ARCHIVE_THRESHOLD_DAYS * 86400 * 1000;
     },
 
+    /** Has the user explicitly hidden this device from the Offline list?
+     *  Distinct from the time-based Archive bucket — Archive is automatic
+     *  (30d+ since last_seen), Dismiss is an explicit per-user choice
+     *  persisted server-side via ConsoleState. */
+    _isDismissed(device) {
+        if (typeof ConsoleState === 'undefined') return false;
+        return ConsoleState.isDismissed('devices', device.device_id);
+    },
+
+    /** Hide an Offline card from the main list. Persists via ConsoleState
+     *  (cross-browser, survives cache clear). */
+    dismissDevice(deviceId) {
+        if (typeof ConsoleState !== 'undefined') ConsoleState.dismiss('devices', deviceId);
+        App.renderPage();
+    },
+
+    /** Move a dismissed device back into the Offline list. */
+    restoreDevice(deviceId) {
+        if (typeof ConsoleState !== 'undefined') ConsoleState.restore('devices', deviceId);
+        App.renderPage();
+    },
+
+    /** Toggle for the unified Dismissed section at the bottom of the page. */
+    _dismissedExpanded: false,
+    _toggleDismissed() {
+        this._dismissedExpanded = !this._dismissedExpanded;
+        App.renderPage();
+    },
+
     _isLive(device) {
         // If the worker has a fresh poll for this device with live data, it's live —
         // independent of the Supabase metrics_updated_at timestamp (which only
@@ -458,13 +487,16 @@ const DevicesPage = {
                         sees one of your devices, add it from the banner above.
                     </div>
                 </div>
-                ${DevicesClaim.renderDismissedSection()}
+                ${this._renderDismissedSection([])}
             `;
         }
 
         const active = this._devices.filter(d => !this._isArchived(d));
         const online = active.filter(d => this._isLive(d));
-        const offline = active.filter(d => !this._isLive(d));
+        // Offline = active, not live, AND not explicitly dismissed by the user.
+        // Dismissed devices show up in the unified Dismissed section instead.
+        const offline = active.filter(d => !this._isLive(d) && !this._isDismissed(d));
+        const dismissedDevices = active.filter(d => !this._isLive(d) && this._isDismissed(d));
         const archived = this._devices.filter(d => this._isArchived(d));
 
         const conflicts = this._conflictDevices();
@@ -479,13 +511,60 @@ const DevicesPage = {
             ${this._renderOnlineSection(online)}
             ${this._renderOfflineSection(offline)}
             ${this._renderArchiveSection(archived)}
-            ${DevicesClaim.renderDismissedSection()}
+            ${this._renderDismissedSection(dismissedDevices)}
             ${DevicesRename.conflictModal ? DevicesRename.renderModal(conflicts, d => this._conflictHaName(d)) : ''}
             ${DevicesCard.renderSliderModal()}
             ${DevicesCard.renderScreenshotModal()}
             ${DevicesCard.renderHistoryModal()}
             ${DevicesCard.renderCameraModal()}
         `;
+    },
+
+    /**
+     * Unified Dismissed section at the bottom of the page. Combines:
+     *   - install / discovered rows hidden from the Add banner
+     *   - claimed devices the user dismissed from the Offline list
+     * Each card has a Restore button that returns it to its original bucket.
+     */
+    _renderDismissedSection(dismissedDevices) {
+        const hiddenAddables = (typeof DevicesClaim !== 'undefined') ? DevicesClaim._hidden() : [];
+        const total = hiddenAddables.length + (dismissedDevices?.length || 0);
+        if (total === 0) return '';
+
+        const caret = this._dismissedExpanded ? '▾' : '▸';
+        const header = `
+            <div class="section-header" style="margin-top: 32px; cursor: pointer;" onclick="DevicesPage._toggleDismissed()">
+                ${caret} Dismissed (${total})
+            </div>
+        `;
+        if (!this._dismissedExpanded) return header;
+
+        const addableCards = hiddenAddables.map(a => DevicesClaim.renderHiddenCard(a)).join('');
+
+        const deviceCards = (dismissedDevices || []).map(d => {
+            const idAttr = this._escape(d.device_id);
+            const icon = this._deviceIcon(d.device_type);
+            return `
+                <div class="card" style="margin-bottom: 8px;">
+                    <div class="card-body" style="display: flex; align-items: center; justify-content: space-between; gap: 12px;">
+                        <div style="display: flex; align-items: center; gap: 12px; min-width: 0;">
+                            <div class="device-card-icon">${icon}</div>
+                            <div style="min-width: 0;">
+                                <div style="font-weight: 500;">${this._escape(d.device_name || 'Unnamed Device')}</div>
+                                <div style="color: var(--text-muted); font-size: var(--font-size-sm);">
+                                    ${this._escape(this._typeLabel(d))} · last seen ${this._formatTime(d.last_seen_at)}
+                                </div>
+                            </div>
+                        </div>
+                        <div style="flex-shrink: 0;">
+                            <button class="btn btn-secondary btn-sm" onclick="DevicesPage.restoreDevice('${idAttr}')">Restore</button>
+                        </div>
+                    </div>
+                </div>
+            `;
+        }).join('');
+
+        return `${header}<div>${addableCards}${deviceCards}</div>`;
     },
 
     _renderOnlineSection(devices) {
