@@ -1,112 +1,70 @@
 /* ============================================================
-   Devices Camera — inline HLS player modal
+   Devices Camera — embeds HA's own more-info dialog via iframe
    ------------------------------------------------------------
-   Plays the device's camera stream using HA's signed HLS URL
-   (the exact one HA's <ha-hls-player> uses internally). Same
-   stream source as the integration page; no popup, no nested
-   HA UI to fight, no extra navigation.
+   The Dashie HA integration declares
+       _attr_frontend_stream_type = StreamType.HLS
+   which makes HA's frontend wrap the camera entity in its native
+   <ha-hls-player> component. That component already handles
+   manifest fetch, token refresh, recovery on error, autoplay
+   gestures, segment buffering — none of which our previous
+   inline Hls.js wrapper replicated, hence the black video element.
 
-   Flow:
-     1. open(deviceId) — synchronously sets _open and re-renders
-        so the modal frame appears immediately ("Loading…").
-     2. /api/ha/stream/:deviceId resolves to { entity_id, hls_url }.
-     3. _attachPlayer() finds the <video> element and either uses
-        native HLS (Safari) or hls.js (Chrome / Firefox / Edge).
-     4. close() destroys the Hls instance and clears state.
+   Since the Console is served from HA Ingress, we're same-origin
+   with HA. Iframing HA's URL with ?more-info-entity-id=<entity>
+   gets us HA's exact viewer with zero extra work. The dashboard
+   loads briefly behind the dialog; our modal frame sized to
+   95vw × 90vh covers most of the chrome, and the dialog itself
+   centers on top.
 
-   Hls.js is loaded once at app boot from a CDN pin matching
-   HA's frontend (see index.html). Version drift was producing
-   bufferAppendError on streams that play fine in HA's UI.
+   Why iframe instead of popup (previous approach):
+     - window.open in a sandboxed iframe is hit-or-miss
+     - HA's SPA routing preserves the query string when navigated
+       client-side, but a popup's `location.href = '/?…'` triggers
+       a server hit + redirect that strips the query.
+     - Iframe load is in-page, no popup-blocker.
    ============================================================ */
 
 const DevicesCamera = {
     /** Modal state. null when closed. Shape:
-     *  { deviceId, entityId, hlsUrl, error, loading } */
+     *  { deviceId, entityId, dashboardPath, error, loading } */
     _open: null,
-    /** Active Hls.js instance (null on Safari / native HLS). */
-    _hls: null,
-    /** Increments per open() so a late-arriving fetch from a previous
-     *  open() can't clobber a fresh modal. */
     _openSeq: 0,
 
     async open(deviceId) {
         if (!DashieAuth.isAddonMode) return;
         const seq = ++this._openSeq;
-        this._open = { deviceId, entityId: null, hlsUrl: null, error: null, loading: true };
+        this._open = { deviceId, entityId: null, dashboardPath: null, error: null, loading: true };
         App.renderPage();
 
-        let info;
         try {
+            // /api/ha/stream is the existing endpoint that resolves the
+            // camera entity for a Dashie device_id. We only need the
+            // entity_id; the iframe drives playback through HA's UI.
             const resp = await fetch(DashieAuth._addonUrl(`/api/ha/stream/${encodeURIComponent(deviceId)}`));
             if (!resp.ok) {
                 const body = await resp.json().catch(() => ({}));
                 throw new Error(body.message || body.error || `HTTP ${resp.status}`);
             }
-            info = await resp.json();
+            const info = await resp.json();
+            if (this._openSeq !== seq || !this._open) return;
+            // dashboardPath: prefer the user's default dashboard slug if the
+            // add-on resolved one (avoids the / → /home/overview redirect that
+            // strips the query string on some HA setups). Falls back to '/'
+            // and lets HA's client-side SPA routing carry the query through.
+            this._open.entityId = info.entity_id;
+            this._open.dashboardPath = info.dashboard_path || '/';
+            this._open.loading = false;
+            App.renderPage();
         } catch (e) {
             if (this._openSeq !== seq || !this._open) return;
             console.error('[DevicesCamera] resolve failed:', e);
             this._open.error = e.message || String(e);
             this._open.loading = false;
             App.renderPage();
-            return;
         }
-
-        if (this._openSeq !== seq || !this._open) return;
-        this._open.entityId = info.entity_id;
-        this._open.hlsUrl = info.hls_url;
-        this._open.loading = false;
-        App.renderPage();
-
-        // Wait for the <video> element to land in the DOM before binding.
-        setTimeout(() => this._attachPlayer(seq), 0);
-    },
-
-    _attachPlayer(seq) {
-        if (this._openSeq !== seq || !this._open?.hlsUrl) return;
-        const video = document.getElementById('dashie-camera-video');
-        if (!video) {
-            // Re-render may not have flushed yet — retry once.
-            setTimeout(() => this._attachPlayer(seq), 50);
-            return;
-        }
-        const src = this._open.hlsUrl;
-        // Safari and iOS WebView play HLS natively from <video src>.
-        // Hls.js (where loaded) wraps non-native browsers via MSE.
-        const canNativeHls = video.canPlayType('application/vnd.apple.mpegurl');
-        if (canNativeHls) {
-            video.src = src;
-            video.play().catch(() => { /* user-gesture fallback handled by controls */ });
-            return;
-        }
-        if (typeof Hls !== 'undefined' && Hls.isSupported()) {
-            this._destroyHls();
-            this._hls = new Hls({ liveSyncDuration: 3, liveMaxLatencyDuration: 6 });
-            this._hls.attachMedia(video);
-            this._hls.on(Hls.Events.MEDIA_ATTACHED, () => this._hls.loadSource(src));
-            this._hls.on(Hls.Events.ERROR, (_evt, data) => {
-                if (!data?.fatal) return;
-                console.error('[DevicesCamera] HLS fatal:', data);
-                if (!this._open) return;
-                this._open.error = `Stream error (${data.type || 'unknown'})`;
-                App.renderPage();
-            });
-            video.play().catch(() => { /* autoplay may need user gesture */ });
-            return;
-        }
-        // No HLS support at all — fall back to the src attribute and let
-        // the browser try; if it can't, the user gets the browser's error.
-        video.src = src;
-    },
-
-    _destroyHls() {
-        if (!this._hls) return;
-        try { this._hls.destroy(); } catch (e) { /* ignore */ }
-        this._hls = null;
     },
 
     close() {
-        this._destroyHls();
         this._open = null;
         App.renderPage();
     },
@@ -123,23 +81,33 @@ const DevicesCamera = {
         const escName = DevicesPage._escape(name);
         const escEntity = DevicesPage._escape(m.entityId || '');
 
+        // The iframe src: HA's default dashboard (or '/'') with the
+        // ?more-info-entity-id query that HA's frontend uses to open
+        // the camera dialog automatically. Same-origin so no auth issue;
+        // HA cookie is present from the parent context.
+        const iframeSrc = m.entityId
+            ? `${m.dashboardPath || '/'}?more-info-entity-id=${encodeURIComponent(m.entityId)}`
+            : '';
+
         let body;
         if (m.error) {
             body = `
                 <div style="display: flex; align-items: center; justify-content: center; min-height: 320px; background: #111; color: #fca5a5; padding: 24px; text-align: center; border-radius: 6px;">
-                    Could not start stream: ${DevicesPage._escape(m.error)}
+                    Could not open camera viewer: ${DevicesPage._escape(m.error)}
                 </div>`;
-        } else if (m.loading || !m.hlsUrl) {
+        } else if (m.loading || !iframeSrc) {
             body = `
                 <div style="display: flex; align-items: center; justify-content: center; min-height: 320px; background: #111; color: #d1d5db; border-radius: 6px;">
                     Loading camera…
                 </div>`;
         } else {
+            // 90vh iframe with a dark backdrop covers the dashboard chrome
+            // that briefly flashes behind HA's dialog. Border-radius matches
+            // other modal panels for visual consistency.
             body = `
-                <video id="dashie-camera-video"
-                       controls autoplay muted playsinline
-                       style="max-width: 95vw; max-height: 80vh; background: #000; border-radius: 6px;">
-                </video>`;
+                <iframe src="${iframeSrc}" allow="autoplay; fullscreen"
+                    style="width: 95vw; height: 88vh; border: 0; background: #000; border-radius: 6px;">
+                </iframe>`;
         }
 
         const footer = m.entityId
@@ -148,9 +116,9 @@ const DevicesCamera = {
 
         return `
             <div onclick="DevicesCamera._maybeCloseBackdrop(event)"
-                 style="position: fixed; inset: 0; background: rgba(0,0,0,0.85); z-index: 1100; display: flex; align-items: center; justify-content: center; padding: 24px; cursor: zoom-out;">
+                 style="position: fixed; inset: 0; background: rgba(0,0,0,0.92); z-index: 1100; display: flex; align-items: center; justify-content: center; padding: 16px; cursor: zoom-out;">
                 <div onclick="event.stopPropagation()"
-                     style="max-width: 95vw; max-height: 92vh; display: flex; flex-direction: column; gap: 10px; cursor: default;">
+                     style="display: flex; flex-direction: column; gap: 8px; cursor: default;">
                     <div style="display: flex; align-items: center; justify-content: space-between; color: white;">
                         <strong>${escName}</strong>
                         <button onclick="DevicesCamera.close()"
