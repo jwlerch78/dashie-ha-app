@@ -1,25 +1,31 @@
 /* ============================================================
-   Devices — Claim Banner
+   Devices — Unified "Available to Add" Banner
    ------------------------------------------------------------
-   Surfaces unclaimed device_installs that share a network with
-   the user's already-claimed devices (the list_claimable_devices
-   edge-fn guard). Lets the user link them to their account in
-   bulk via claim_devices, or dismiss ones they don't own.
+   Surfaces every device the user can add to their account, regardless
+   of how the backend knows about it:
 
-   Dismissals are per-browser (localStorage) — the server has no
-   notion of a dismissed install, so a dismissed device would
-   otherwise keep reappearing in the banner.
+   - **install** kind — `device_installs` rows on the same network as
+     a device the user already claimed (from list_claimable_devices).
+     Claimed via the bulk `claim_devices` edge fn.
+   - **discovered** kind — devices HA reports state for but which never
+     called register_device (kiosk-mode tablets — no install row, no
+     sign-in). Added via the add-on's POST /api/ha/adopt/:deviceId,
+     which calls adopt_device_from_ha on the backend.
 
-   Companion to devices.js — mirrors the DevicesRename banner
-   pattern. Loaded as a script-tag global before devices.js.
+   The UI is identical for both — same row, same Add button, same
+   Dismiss ✕. Routing happens inside claimSelected() based on each
+   row's `kind`. Users don't need to know the difference.
+
+   Dismissals are per-browser (localStorage). Both kinds dismiss into
+   the same collapsed "Dismissed" section at the bottom.
    ============================================================ */
 
 const DevicesClaim = {
-    _claimable: null,      // raw list_claimable_devices result, or null before first fetch
-    _claiming: false,      // claim_devices request in flight
-    _selected: new Set(),  // install ids checked for claiming
-    _dismissed: null,      // Set of install ids hidden from the banner (localStorage-backed)
-    _dismissedExpanded: false,  // bottom "Dismissed" section starts collapsed
+    _claimable: null,              // raw list_claimable_devices result
+    _claiming: false,              // request in flight (claim or adopt)
+    _selected: new Set(),          // uids currently checked
+    _dismissed: null,              // Set of dismissed uids (localStorage)
+    _dismissedExpanded: false,     // collapsed Dismissed section state
 
     _DISMISS_KEY: 'dashie_devices_dismissed_claims',
 
@@ -35,27 +41,26 @@ const DevicesClaim = {
     _saveDismissed() {
         try {
             localStorage.setItem(this._DISMISS_KEY, JSON.stringify([...this._dismissed]));
-        } catch (e) { /* localStorage unavailable — dismissals just won't persist */ }
+        } catch (e) { /* localStorage unavailable */ }
     },
 
     /**
-     * Fetch claimable installs. Non-critical — swallows errors (like the
-     * Discovered section) so a failure here never blocks the devices page.
-     * The edge fn only returns installs sharing a network_id with a device
-     * the caller already claimed, so an empty result is normal.
+     * Refresh the claimable installs list. Discovered devices come from
+     * DevicesPage._discoveredDevices() (which reads the worker's status
+     * — no separate fetch needed). Non-critical — swallows errors so a
+     * failure here doesn't block the devices page.
      */
     async fetch() {
         this._loadDismissed();
         try {
             const result = await DashieAuth.dbRequest('list_claimable_devices', {});
             this._claimable = result.devices || [];
-            const ids = new Set(this._claimable.map(d => d.id));
-            // Drop selections that are no longer claimable.
-            this._selected = new Set([...this._selected].filter(id => ids.has(id)));
-            // Prune dismissed ids that the server no longer reports (device
-            // claimed elsewhere, went inactive, etc.) so localStorage doesn't
-            // grow unbounded.
-            const prunedDismissed = new Set([...this._dismissed].filter(id => ids.has(id)));
+            const uids = new Set(this._addable().map(a => a.uid));
+            // Drop selections that are no longer addable.
+            this._selected = new Set([...this._selected].filter(uid => uids.has(uid)));
+            // Prune stale dismissals — anything not currently addable gets
+            // dropped so localStorage doesn't grow unbounded.
+            const prunedDismissed = new Set([...this._dismissed].filter(uid => uids.has(uid)));
             if (prunedDismissed.size !== this._dismissed.size) {
                 this._dismissed = prunedDismissed;
                 this._saveDismissed();
@@ -66,74 +71,112 @@ const DevicesClaim = {
         }
     },
 
-    /** Claimable installs minus the ones dismissed in this browser. */
+    /**
+     * Merge installs + discovered into a single unified shape. Both kinds
+     * render through the same banner row markup.
+     *
+     * Unified row:
+     *   { uid, kind, name, deviceType, lastSeen, installId?, haDeviceId? }
+     */
+    _addable() {
+        const list = [];
+        // install rows from list_claimable_devices
+        for (const d of (this._claimable || [])) {
+            const name = `${d.device_brand || ''} ${d.device_model || ''}`.trim() || d.android_id || 'Unknown device';
+            list.push({
+                uid: d.id,                // install_id UUID
+                kind: 'install',
+                name,
+                deviceType: d.device_type || 'device',
+                lastSeen: d.last_checkin_at || d.installed_at,
+                installId: d.id,
+                haDeviceId: null,
+            });
+        }
+        // discovered devices from the add-on worker's unmatched array
+        const discovered = (typeof DevicesPage !== 'undefined' && DevicesPage._discoveredDevices)
+            ? DevicesPage._discoveredDevices() : [];
+        for (const d of discovered) {
+            if (!d.device_id) continue;   // need device_id to call /api/ha/adopt
+            // De-dup vs install rows in case both surfaces report the
+            // same hardware. android_id == device_id in our schema, so we
+            // can match an install row to a discovered device by that.
+            const installRow = (this._claimable || []).find(c => c.android_id === d.device_id);
+            if (installRow) continue;     // already represented by the install entry
+            list.push({
+                uid: 'ha:' + d.device_id,
+                kind: 'discovered',
+                name: d.device_name || `Device ${d.device_id.slice(0, 8)}`,
+                deviceType: 'device',     // discovered payload doesn't have type
+                lastSeen: null,           // worker doesn't surface a last-seen for unmatched
+                installId: null,
+                haDeviceId: d.device_id,
+            });
+        }
+        return list;
+    },
+
+    /** Addables not yet dismissed. */
     _visible() {
         this._loadDismissed();
-        return (this._claimable || []).filter(d => !this._dismissed.has(d.id));
+        return this._addable().filter(a => !this._dismissed.has(a.uid));
     },
 
-    /** Claimable installs the user dismissed — still surfaced in the
-     *  collapsed Dismissed section at the bottom so they can be restored. */
+    /** Addables the user dismissed. */
     _hidden() {
         this._loadDismissed();
-        return (this._claimable || []).filter(d => this._dismissed.has(d.id));
+        return this._addable().filter(a => this._dismissed.has(a.uid));
     },
 
-    /** Display name for a claimable install. */
-    _label(d) {
-        const name = `${d.device_brand || ''} ${d.device_model || ''}`.trim();
-        return name || d.android_id || 'Unknown device';
-    },
-
-    /** Stable signature of the visible + dismissed sets — devices.js uses
-     *  this to decide whether a background refresh needs a repaint. */
+    /** Stable signature — devices.js uses it to skip silent-refresh repaints. */
     signature() {
-        const vis = this._visible().map(d => d.id).sort().join(',');
-        const hid = this._hidden().map(d => d.id).sort().join(',');
+        const vis = this._visible().map(a => a.uid).sort().join(',');
+        const hid = this._hidden().map(a => a.uid).sort().join(',');
         return `${vis}|${hid}`;
     },
 
     renderBanner() {
-        const devices = this._visible();
-        if (devices.length === 0) return '';
+        const items = this._visible();
+        if (items.length === 0) return '';
         const escape = DevicesPage._escape.bind(DevicesPage);
 
-        const rows = devices.map(d => {
-            const id = escape(d.id);
-            const checked = this._selected.has(d.id) ? 'checked' : '';
-            const seen = d.last_checkin_at || d.installed_at;
+        const rows = items.map(a => {
+            const uid = escape(a.uid);
+            const checked = this._selected.has(a.uid) ? 'checked' : '';
+            const seenText = a.lastSeen
+                ? `seen ${DevicesPage._formatTime(a.lastSeen)}`
+                : 'reported by Home Assistant';
             return `
                 <div style="display: flex; align-items: center; gap: 8px;">
                     <label style="display: flex; align-items: center; gap: 10px; padding: 8px 0; cursor: pointer; flex: 1; min-width: 0;">
-                        <input type="checkbox" ${checked} onchange="DevicesClaim.toggleSelect('${id}')">
-                        <span style="font-size: 18px;">${DevicesPage._deviceIcon(d.device_type)}</span>
+                        <input type="checkbox" ${checked} onchange="DevicesClaim.toggleSelect('${uid}')">
+                        <span style="font-size: 18px;">${DevicesPage._deviceIcon(a.deviceType)}</span>
                         <span style="min-width: 0;">
-                            <span style="font-weight: 500;">${escape(this._label(d))}</span>
+                            <span style="font-weight: 500;">${escape(a.name)}</span>
                             <span style="color: var(--text-muted); font-size: var(--font-size-sm); display: block;">
-                                ${escape(d.device_type || 'device')} · seen ${DevicesPage._formatTime(seen)}
+                                ${escape(a.deviceType)} · ${seenText}
                             </span>
                         </span>
                     </label>
                     <button title="Dismiss — hide this device from the banner"
-                        onclick="DevicesClaim.dismiss('${id}')"
+                        onclick="DevicesClaim.dismiss('${uid}')"
                         style="background: none; border: none; color: var(--text-muted); cursor: pointer; font-size: 16px; padding: 4px 8px; line-height: 1; flex-shrink: 0;">✕</button>
                 </div>
             `;
         }).join('');
 
         const n = this._selected.size;
-        const allChecked = n === devices.length && n > 0;
-        const claimLabel = this._claiming
+        const allChecked = n === items.length && n > 0;
+        const addLabel = this._claiming
             ? 'Adding…'
             : (n === 0 ? 'Add devices' : `Add ${n} device${n === 1 ? '' : 's'}`);
 
         return `
             <div class="card" style="margin-bottom: 16px; border-left: 3px solid var(--accent);">
                 <div class="card-body">
-                    <strong>${devices.length} device${devices.length === 1 ? '' : 's'} on your network can be added.</strong>
+                    <strong>${items.length} device${items.length === 1 ? '' : 's'} can be added to your account.</strong>
                     <div style="color: var(--text-muted); font-size: var(--font-size-sm); margin: 4px 0 8px;">
-                        These tablets registered themselves from Home Assistant. Link the ones
-                        you own, or dismiss (✕) any you don't.
+                        Select the ones you own, or dismiss (✕) any you don't.
                     </div>
                     <div style="border-top: 1px solid var(--border, #d1d5db);">
                         ${rows}
@@ -144,7 +187,7 @@ const DevicesClaim = {
                         </button>
                         <button class="btn btn-primary btn-sm" ${n === 0 || this._claiming ? 'disabled' : ''}
                             onclick="DevicesClaim.claimSelected()">
-                            ${claimLabel}
+                            ${addLabel}
                         </button>
                     </div>
                 </div>
@@ -152,33 +195,33 @@ const DevicesClaim = {
         `;
     },
 
-    toggleSelect(id) {
-        if (this._selected.has(id)) this._selected.delete(id);
-        else this._selected.add(id);
+    toggleSelect(uid) {
+        if (this._selected.has(uid)) this._selected.delete(uid);
+        else this._selected.add(uid);
         App.renderPage();
     },
 
     toggleSelectAll() {
-        const devices = this._visible();
-        if (this._selected.size === devices.length) this._selected.clear();
-        else this._selected = new Set(devices.map(d => d.id));
+        const items = this._visible();
+        if (this._selected.size === items.length) this._selected.clear();
+        else this._selected = new Set(items.map(a => a.uid));
         App.renderPage();
     },
 
-    /** Hide a claimable install from the banner (this browser only).
-     *  Still surfaced in the collapsed Dismissed section at the bottom. */
-    dismiss(id) {
+    /** Hide a row from the banner (this browser only). Still surfaces in
+     *  the collapsed Dismissed section so the user can Restore later. */
+    dismiss(uid) {
         this._loadDismissed();
-        this._dismissed.add(id);
+        this._dismissed.add(uid);
         this._saveDismissed();
-        this._selected.delete(id);
+        this._selected.delete(uid);
         App.renderPage();
     },
 
-    /** Un-dismiss a claimable install — moves it back into the banner. */
-    restore(id) {
+    /** Un-dismiss a row — moves back into the banner. */
+    restore(uid) {
         this._loadDismissed();
-        this._dismissed.delete(id);
+        this._dismissed.delete(uid);
         this._saveDismissed();
         App.renderPage();
     },
@@ -188,39 +231,39 @@ const DevicesClaim = {
         App.renderPage();
     },
 
-    /** Collapsed section at the bottom of the Devices list — surfaces
-     *  claimable installs the user dismissed, with a Restore action.
-     *  Renders nothing when no dismissals exist. */
+    /** Collapsed Dismissed section at the bottom of the Devices page. */
     renderDismissedSection() {
-        const devices = this._hidden();
-        if (devices.length === 0) return '';
+        const items = this._hidden();
+        if (items.length === 0) return '';
         const escape = DevicesPage._escape.bind(DevicesPage);
         const caret = this._dismissedExpanded ? '▾' : '▸';
 
         const header = `
             <div class="section-header" style="margin-top: 32px; cursor: pointer;" onclick="DevicesClaim.toggleDismissedExpanded()">
-                ${caret} Dismissed (${devices.length})
+                ${caret} Dismissed (${items.length})
             </div>
         `;
         if (!this._dismissedExpanded) return header;
 
-        const rows = devices.map(d => {
-            const id = escape(d.id);
-            const seen = d.last_checkin_at || d.installed_at;
+        const rows = items.map(a => {
+            const uid = escape(a.uid);
+            const seenText = a.lastSeen
+                ? `seen ${DevicesPage._formatTime(a.lastSeen)}`
+                : 'reported by Home Assistant';
             return `
                 <div class="card" style="margin-bottom: 8px;">
                     <div class="card-body" style="display: flex; align-items: center; justify-content: space-between; gap: 12px;">
                         <div style="display: flex; align-items: center; gap: 12px; min-width: 0;">
-                            <div class="device-card-icon">${DevicesPage._deviceIcon(d.device_type)}</div>
+                            <div class="device-card-icon">${DevicesPage._deviceIcon(a.deviceType)}</div>
                             <div style="min-width: 0;">
-                                <div style="font-weight: 500;">${escape(this._label(d))}</div>
+                                <div style="font-weight: 500;">${escape(a.name)}</div>
                                 <div style="color: var(--text-muted); font-size: var(--font-size-sm);">
-                                    ${escape(d.device_type || 'device')} · seen ${DevicesPage._formatTime(seen)}
+                                    ${escape(a.deviceType)} · ${seenText}
                                 </div>
                             </div>
                         </div>
                         <div style="flex-shrink: 0;">
-                            <button class="btn btn-secondary btn-sm" onclick="DevicesClaim.restore('${id}')">Restore</button>
+                            <button class="btn btn-secondary btn-sm" onclick="DevicesClaim.restore('${uid}')">Restore</button>
                         </div>
                     </div>
                 </div>
@@ -230,33 +273,78 @@ const DevicesClaim = {
         return `${header}<div>${rows}</div>`;
     },
 
+    /**
+     * Add the selected rows. Groups by kind and dispatches:
+     *   - install rows → bulk claim_devices(install_ids)
+     *   - discovered rows → parallel POST /api/ha/adopt/:deviceId per row
+     * Aggregates success/failure counts into a single toast.
+     */
     async claimSelected() {
-        const installIds = [...this._selected];
-        if (installIds.length === 0 || this._claiming) return;
+        if (this._selected.size === 0 || this._claiming) return;
         this._claiming = true;
         App.renderPage();
-        try {
-            const result = await DashieAuth.dbRequest('claim_devices', { install_ids: installIds });
-            const claimed = result.claimed || [];
-            const rejected = result.rejected || [];
 
-            if (claimed.length > 0) {
-                Toast.success(`Added ${claimed.length} device${claimed.length === 1 ? '' : 's'}`);
+        const items = this._addable().filter(a => this._selected.has(a.uid));
+        const installs   = items.filter(a => a.kind === 'install');
+        const discovered = items.filter(a => a.kind === 'discovered');
+
+        let added = 0;
+        const failures = [];
+
+        try {
+            // Bulk claim path
+            if (installs.length > 0) {
+                try {
+                    const result = await DashieAuth.dbRequest('claim_devices', {
+                        install_ids: installs.map(a => a.installId),
+                    });
+                    added += (result.claimed || []).length;
+                    for (const r of (result.rejected || [])) {
+                        const item = installs.find(a => a.installId === r.id);
+                        failures.push({ name: item?.name || '(unknown)', reason: r.reason });
+                    }
+                } catch (e) {
+                    console.error('[DevicesClaim] claim_devices failed:', e);
+                    for (const a of installs) failures.push({ name: a.name, reason: e.message || 'claim failed' });
+                }
             }
-            if (rejected.length > 0) {
-                Toast.warning(`${rejected.length} device${rejected.length === 1 ? '' : 's'} couldn't be added`);
-                console.warn('[DevicesClaim] claim rejected:', rejected);
+
+            // Per-device adopt path (parallel — typically only 1-3 kiosk devices)
+            if (discovered.length > 0) {
+                const results = await Promise.all(discovered.map(async a => {
+                    try {
+                        const url = DashieAuth._addonUrl(`/api/ha/adopt/${encodeURIComponent(a.haDeviceId)}`);
+                        const resp = await fetch(url, { method: 'POST' });
+                        const body = await resp.json().catch(() => ({}));
+                        if (!resp.ok) throw new Error(body?.message || body?.error || `HTTP ${resp.status}`);
+                        return { item: a, ok: true };
+                    } catch (e) {
+                        return { item: a, ok: false, err: e?.message || String(e) };
+                    }
+                }));
+                for (const r of results) {
+                    if (r.ok) added++;
+                    else failures.push({ name: r.item.name, reason: r.err });
+                }
+            }
+
+            // Toasts
+            if (added > 0) {
+                Toast.success(`Added ${added} device${added === 1 ? '' : 's'}`);
+            }
+            if (failures.length > 0) {
+                const which = failures.map(f => f.name).join(', ');
+                Toast.warning(`${failures.length} device${failures.length === 1 ? "" : 's'} couldn't be added: ${which}`);
+                console.warn('[DevicesClaim] add failures:', failures);
             }
 
             this._selected.clear();
-            // Refresh claimable + the main devices list so newly-linked
-            // devices show up in the Active section.
+            // Refresh the addable list + the main devices list so newly-linked
+            // devices show up in Online/Offline. The add-on /api/ha/adopt route
+            // triggers a worker refresh so discovered rows drop on next poll.
             await this.fetch();
             DevicesPage._lastListDevicesAt = 0;
             await DevicesPage._refreshSilent();
-        } catch (e) {
-            console.error('[DevicesClaim] claim_devices failed:', e);
-            Toast.error(Toast.friendly(e, 'add these devices'));
         } finally {
             this._claiming = false;
             App.renderPage();

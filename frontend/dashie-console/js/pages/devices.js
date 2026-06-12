@@ -22,7 +22,6 @@ const DevicesPage = {
     _haStatusFetchedAt: 0,
     _haStatusFetching: false, // single-flight guard for background refresh
     _archiveExpanded: false,
-    _discoveredExpanded: false,  // bottom "Discovered" section starts collapsed
     _offlineExpanded: true,      // Offline section starts expanded — cards are minimal anyway
     _deletingId: null,        // device_id currently being deleted
     // Rename + conflict state lives on DevicesRename (see devices-rename.js).
@@ -446,19 +445,19 @@ const DevicesPage = {
         this._maybeRefreshAddonStatus();
 
         if (!this._devices || this._devices.length === 0) {
-            // Always show the empty state. Append collapsed Discovered /
-            // Dismissed sections below if they have any content — keeps the
-            // page from being dominated by HA-discovered devices when the
-            // user has zero of their own registered.
+            // No registered devices yet — but still show the Add banner +
+            // Dismissed section since a kiosk-mode device (HA-discovered)
+            // might be addable from a fresh account.
             return `
+                ${DevicesClaim.renderBanner()}
                 <div class="empty-state">
                     <div class="empty-state-icon">📱</div>
                     <div class="empty-state-text">No devices registered yet.</div>
                     <div style="color: var(--text-muted); font-size: var(--font-size-sm); margin-top: 8px;">
-                        Sign in to Dashie on a tablet or Fire TV to register it.
+                        Sign in to Dashie on a tablet or Fire TV to register it — or, if HA
+                        sees one of your devices, add it from the banner above.
                     </div>
                 </div>
-                ${this._renderDiscoveredSection()}
                 ${DevicesClaim.renderDismissedSection()}
             `;
         }
@@ -470,17 +469,16 @@ const DevicesPage = {
 
         const conflicts = this._conflictDevices();
         // Section order: high-attention banners → Online → Offline → Archive
-        // → minimized collapsed sections at the bottom (Discovered + Dismissed).
-        // Active was split into Online + Offline so Offline devices can render
-        // with a simplified card (no stats / panels / controls) — they're
-        // unreachable anyway and were just adding visual noise.
+        // → collapsed Dismissed at the bottom. The standalone Discovered
+        // section was folded into DevicesClaim.renderBanner() — HA-discovered
+        // kiosk devices now appear in the same banner as already-installed
+        // claimables, with Adopt vs Claim routing handled internally.
         return `
             ${DevicesRename.renderBanner(conflicts)}
             ${DevicesClaim.renderBanner()}
             ${this._renderOnlineSection(online)}
             ${this._renderOfflineSection(offline)}
             ${this._renderArchiveSection(archived)}
-            ${this._renderDiscoveredSection()}
             ${DevicesClaim.renderDismissedSection()}
             ${DevicesRename.conflictModal ? DevicesRename.renderModal(conflicts, d => this._conflictHaName(d)) : ''}
             ${DevicesCard.renderSliderModal()}
@@ -534,101 +532,9 @@ const DevicesPage = {
         App.renderPage();
     },
 
-    _renderDiscoveredSection() {
-        const discovered = this._discoveredDevices();
-        if (discovered.length === 0) return '';
-        const caret = this._discoveredExpanded ? '▾' : '▸';
-
-        const header = `
-            <div class="section-header" style="margin-top: 32px; cursor: pointer;" onclick="DevicesPage._toggleDiscovered()">
-                ${caret} Discovered (${discovered.length})
-            </div>
-        `;
-        if (!this._discoveredExpanded) return header;
-
-        const cards = discovered.map(d => {
-            const idAttr = this._escape(d.device_id || '');
-            const adopting = this._adoptingId === d.device_id;
-            // Adopt button is add-on-only — it relies on the add-on's
-            // /api/ha/adopt endpoint to bridge to Supabase. Outside the
-            // add-on the Discovered section doesn't render at all, but
-            // belt-and-suspenders: hide the button when no device_id is
-            // available (it's required for the route lookup).
-            const canAdopt = !!d.device_id && DashieAuth.isAddonMode;
-            return `
-            <div class="card">
-                <div class="card-body device-card">
-                    <div class="device-card-header">
-                        <div class="device-card-icon">🔍</div>
-                        <div class="device-card-info" style="flex: 1;">
-                            <div class="device-card-name">${this._escape(d.device_name || 'Unknown device')}</div>
-                            <div class="device-card-type">Reported by Home Assistant</div>
-                            <div class="device-card-status">
-                                This device is pushing state to HA but isn't linked to your account yet.
-                            </div>
-                        </div>
-                        ${canAdopt ? `
-                            <div style="flex-shrink: 0;">
-                                <button class="btn btn-primary btn-sm" ${adopting ? 'disabled' : ''}
-                                    onclick="DevicesPage._adoptDiscovered('${idAttr}', '${this._escape(d.device_name || 'this device')}')">
-                                    ${adopting ? 'Adopting…' : 'Adopt'}
-                                </button>
-                            </div>
-                        ` : ''}
-                    </div>
-                </div>
-            </div>
-        `;
-        }).join('');
-
-        return `${header}
-            <p class="page-summary" style="margin-top: -4px; margin-bottom: 12px;">
-                Home Assistant sees these devices but they aren't linked to your account.
-                Tap <strong>Adopt</strong> to link a kiosk-mode tablet without signing in
-                on the device — or, if a device is on your network and already signed in,
-                claim it from the banner above.
-            </p>
-            <div class="card-grid">${cards}</div>
-        `;
-    },
-
-    /** Adopt a Discovered HA-only device into the caller's account.
-     *  Add-on-only — calls the add-on's /api/ha/adopt route which bridges
-     *  to Supabase's adopt_device_from_ha edge fn. */
-    _adoptingId: null,
-    async _adoptDiscovered(deviceId, deviceName) {
-        if (!deviceId || this._adoptingId) return;
-        this._adoptingId = deviceId;
-        App.renderPage();
-        try {
-            const url = DashieAuth._addonUrl(`/api/ha/adopt/${encodeURIComponent(deviceId)}`);
-            const resp = await fetch(url, { method: 'POST' });
-            const body = await resp.json().catch(() => ({}));
-            if (!resp.ok) {
-                throw new Error(body?.message || body?.error || `HTTP ${resp.status}`);
-            }
-            Toast.success(`Adopted "${deviceName}"`);
-            // Refresh devices + claim banner; the new install will surface
-            // as a fresh user_devices row in Online / Offline. The worker
-            // refresh triggered by the add-on drops the device from the
-            // Discovered section on the next status poll.
-            this._lastListDevicesAt = 0;
-            await this._refreshSilent();
-            if (typeof DevicesClaim !== 'undefined') await DevicesClaim.fetch();
-            App.renderPage();
-        } catch (e) {
-            console.error('[DevicesPage] adopt failed:', e);
-            Toast.error(Toast.friendly(e, 'adopt this device'));
-        } finally {
-            this._adoptingId = null;
-            App.renderPage();
-        }
-    },
-
-    _toggleDiscovered() {
-        this._discoveredExpanded = !this._discoveredExpanded;
-        App.renderPage();
-    },
+    // (Discovered section + Adopt handler removed — HA-discovered kiosk
+    //  devices now appear in DevicesClaim.renderBanner() alongside
+    //  installable ones, with routing handled by DevicesClaim.claimSelected.)
 
     _renderArchiveSection(devices) {
         if (devices.length === 0) return '';
