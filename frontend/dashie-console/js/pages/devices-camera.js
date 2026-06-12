@@ -69,6 +69,58 @@ const DevicesCamera = {
         App.renderPage();
     },
 
+    /**
+     * Strip HA's dashboard chrome from inside the iframe so only the
+     * more-info dialog is visible. Console is same-origin with HA (we're
+     * served from Ingress), so cross-iframe scripting is allowed.
+     *
+     * <home-assistant-main> wraps the sidebar + dashboard content; HA
+     * dialogs are mounted to <home-assistant> as siblings, outside of
+     * <home-assistant-main>. Hiding <home-assistant-main> + the scrim
+     * leaves just the floating dialog over a transparent backdrop.
+     *
+     * Called from the iframe's onload via inline attribute below. Also
+     * re-runs on a short interval for ~3s in case the dialog opens
+     * after the SPA boot (some HA versions stage the dialog open in a
+     * microtask after the route handler fires).
+     */
+    _stripChrome(iframe) {
+        const inject = () => {
+            try {
+                const doc = iframe.contentDocument;
+                if (!doc) return false;
+                if (doc.getElementById('dashie-camera-chrome-strip')) return true;
+                const style = doc.createElement('style');
+                style.id = 'dashie-camera-chrome-strip';
+                style.textContent = `
+                    /* Hide the dashboard / sidebar; the more-info dialog
+                       sits as a sibling of <home-assistant-main> so it
+                       stays visible. */
+                    home-assistant-main { visibility: hidden !important; }
+                    /* Transparent scrim — our own modal already darkens. */
+                    ha-dialog, dialog, .mdc-dialog__scrim {
+                        --mdc-dialog-scrim-color: transparent !important;
+                    }
+                    body { background: transparent !important; }
+                `;
+                doc.head.appendChild(style);
+                return true;
+            } catch (e) {
+                console.warn('[DevicesCamera] inject failed (cross-origin?)', e);
+                return false;
+            }
+        };
+        if (inject()) return;
+        // Retry briefly in case the head wasn't ready at first paint.
+        const start = performance.now();
+        const tick = () => {
+            if (inject()) return;
+            if (performance.now() - start > 3000) return;
+            setTimeout(tick, 100);
+        };
+        setTimeout(tick, 50);
+    },
+
     _maybeCloseBackdrop(e) {
         if (e.target === e.currentTarget) this.close();
     },
@@ -106,7 +158,8 @@ const DevicesCamera = {
             // other modal panels for visual consistency.
             body = `
                 <iframe src="${iframeSrc}" allow="autoplay; fullscreen"
-                    style="width: 95vw; height: 88vh; border: 0; background: #000; border-radius: 6px;">
+                    onload="DevicesCamera._stripChrome(this)"
+                    style="width: 95vw; height: 88vh; border: 0; background: transparent; border-radius: 6px;">
                 </iframe>`;
         }
 
