@@ -43,18 +43,29 @@ function readStoredJwt() {
     }
 }
 
-/** Write JWT atomically. */
-function writeStoredJwt({ jwt, userId, userEmail, userName }) {
+/** Write JWT atomically. Identity fields (userId/Email/Name/Picture) are
+ *  preserved across refreshes when the caller doesn't provide new values —
+ *  reads the previous storage and inherits anything missing. The JWT payload
+ *  is also consulted (sub, email, name, picture claims) as a final fallback. */
+function writeStoredJwt({ jwt, userId, userEmail, userName, userPicture }) {
     let expiry = null;
+    let payload = {};
     try {
-        const payload = JSON.parse(Buffer.from(jwt.split('.')[1], 'base64url').toString());
+        payload = JSON.parse(Buffer.from(jwt.split('.')[1], 'base64url').toString());
         expiry = payload.exp ? payload.exp * 1000 : null;
-        userId = userId || payload.sub || null;
-        userEmail = userEmail || payload.email || null;
     } catch (e) {
-        console.warn('[auth] Could not parse JWT expiry:', e.message);
+        console.warn('[auth] Could not parse JWT payload:', e.message);
     }
-    const data = { jwt, expiry, userId, userEmail, userName: userName || null, savedAt: Date.now() };
+    // Inherit anything the caller didn't pass from the previous storage so a
+    // bare refresh (writeStoredJwt({jwt}) on refreshJwt) doesn't wipe identity.
+    const prev = readStoredJwt() || {};
+    const meta = payload.user_metadata || {};
+    userId       = userId       ?? prev.userId       ?? payload.sub                                    ?? null;
+    userEmail    = userEmail    ?? prev.userEmail    ?? payload.email   ?? meta.email                  ?? null;
+    userName     = userName     ?? prev.userName     ?? payload.name    ?? meta.name    ?? meta.full_name ?? null;
+    userPicture  = userPicture  ?? prev.userPicture  ?? payload.picture ?? meta.picture ?? meta.avatar_url ?? null;
+
+    const data = { jwt, expiry, userId, userEmail, userName, userPicture, savedAt: Date.now() };
     const tmp = JWT_FILE + '.tmp';
     fs.writeFileSync(tmp, JSON.stringify(data, null, 2));
     fs.renameSync(tmp, JWT_FILE);
@@ -143,6 +154,7 @@ async function pollDeviceCode(deviceCode) {
             userId: result.user?.id,
             userEmail: result.user?.email,
             userName: result.user?.name,
+            userPicture: result.user?.picture,
         });
         return { status: 'authorized', jwtStored: stored };
     }

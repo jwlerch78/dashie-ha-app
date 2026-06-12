@@ -30,6 +30,7 @@ router.get('/status', async (req, res) => {
         user_id: stored.userId,
         user_email: stored.userEmail,
         user_name: stored.userName || null,
+        user_picture: stored.userPicture || null,
         jwt_expires_at: stored.expiry ? new Date(stored.expiry).toISOString() : null,
         ...base,
     });
@@ -85,6 +86,7 @@ router.post('/poll-link', async (req, res) => {
                 user_id: result.jwtStored.userId,
                 user_email: result.jwtStored.userEmail,
                 user_name: result.jwtStored.userName || null,
+                user_picture: result.jwtStored.userPicture || null,
             });
         }
         if (result.status === 'expired') {
@@ -119,6 +121,8 @@ router.get('/jwt', async (req, res) => {
             jwt: stored.jwt,
             user_id: stored.userId,
             user_email: stored.userEmail,
+            user_name: stored.userName || null,
+            user_picture: stored.userPicture || null,
             jwt_expires_at: stored.expiry ? new Date(stored.expiry).toISOString() : null,
         });
     } catch (e) {
