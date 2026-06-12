@@ -298,9 +298,11 @@ const App = {
             if (stored) {
                 MockData.user.email = stored.email || DashieAuth.user.email;
                 MockData.user.name = stored.name || '';
+                MockData.user.picture = stored.picture || '';
                 MockData.user.initials = this._getInitials(MockData.user.name || MockData.user.email);
             } else {
                 MockData.user.email = DashieAuth.user.email;
+                MockData.user.picture = '';
                 MockData.user.initials = this._getInitials(DashieAuth.user.email);
             }
         }

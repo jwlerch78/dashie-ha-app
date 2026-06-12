@@ -7,6 +7,15 @@ const TopBar = {
 
     render(pageTitle, subtitle) {
         const user = MockData.user;
+        // Google profile photo when available (stored at sign-in), initials
+        // fallback otherwise — or when the photo URL fails to load (expired
+        // googleusercontent link). referrerpolicy avoids Google's 403 on
+        // referred image requests.
+        const avatar = user.picture
+            ? `<img class="top-bar-avatar" src="${user.picture}" alt="" referrerpolicy="no-referrer"
+                    style="object-fit: cover;"
+                    onerror="this.outerHTML = TopBar._initialsAvatarHtml()">`
+            : this._initialsAvatarHtml();
         // Avatar group is clickable — opens an account menu (Account
         // Settings, Sign Out). Click outside closes via _onDocumentClick.
         return `
@@ -20,7 +29,7 @@ const TopBar = {
                     <div class="top-bar-user" id="top-bar-user-trigger"
                          onclick="event.stopPropagation(); TopBar.toggleMenu()"
                          style="cursor: pointer; user-select: none;">
-                        <div class="top-bar-avatar">${user.initials}</div>
+                        ${avatar}
                         <span class="top-bar-username">${user.email}</span>
                         <span class="top-bar-chevron" style="font-size: 10px; opacity: 0.6; margin-left: 2px;">▾</span>
                     </div>
@@ -28,6 +37,10 @@ const TopBar = {
                 </div>
             </div>
         `;
+    },
+
+    _initialsAvatarHtml() {
+        return `<div class="top-bar-avatar">${MockData.user.initials}</div>`;
     },
 
     _renderMenu() {

@@ -85,12 +85,20 @@ const DevicesClaim = {
         // user already owns doesn't reappear as a "new" addable).
         const discovered = (typeof DevicesPage !== 'undefined' && DevicesPage._discoveredDevices)
             ? DevicesPage._discoveredDevices() : [];
-        const claimedIds = (typeof DevicesPage !== 'undefined' && DevicesPage._devices)
-            ? new Set(DevicesPage._devices.map(d => d.device_id).filter(Boolean))
-            : new Set();
+        const claimedDevices = (typeof DevicesPage !== 'undefined' && DevicesPage._devices) ? DevicesPage._devices : [];
+        const claimedIds = new Set(claimedDevices.map(d => d.device_id).filter(Boolean));
+        // Name-based fallback: same physical device can land in user_devices
+        // under one identifier path and in HA's registry under another (e.g.
+        // user_devices.device_id from Dashie sign-in vs HA's device entry
+        // created during a separate registration flow). When the IDs don't
+        // match, fall back to a normalized device_name comparison — false
+        // positives are recoverable via the Dismissed section.
+        const norm = s => (typeof s === 'string' ? s.trim().toLowerCase() : '');
+        const claimedNames = new Set(claimedDevices.map(d => norm(d.device_name)).filter(Boolean));
         for (const d of discovered) {
             if (!d.device_id) continue;   // need device_id to call /api/ha/adopt
-            if (claimedIds.has(d.device_id)) continue;  // already in user's account
+            if (claimedIds.has(d.device_id)) continue;  // already in user's account (by id)
+            if (claimedNames.has(norm(d.device_name))) continue;  // ...or by name
             const installRow = (this._claimable || []).find(c => c.android_id === d.device_id);
             if (installRow) continue;     // already represented by the install entry
             list.push({
@@ -171,9 +179,6 @@ const DevicesClaim = {
             <div class="card" style="margin-bottom: 16px; border-left: 3px solid var(--accent);">
                 <div class="card-body">
                     <strong>${items.length} device${items.length === 1 ? '' : 's'} can be added to your account.</strong>
-                    <div style="color: var(--text-muted); font-size: var(--font-size-sm); margin: 4px 0 8px;">
-                        Select the ones you own, or dismiss (✕) any you don't.
-                    </div>
                     <div style="display: flex; justify-content: flex-end; padding: 4px 0 6px;">
                         <button class="btn btn-secondary btn-sm" onclick="DevicesClaim.toggleSelectAll()">
                             ${allChecked ? 'Clear all' : 'Select all'}

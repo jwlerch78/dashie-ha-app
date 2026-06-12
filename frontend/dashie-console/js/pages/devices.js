@@ -116,7 +116,15 @@ const DevicesPage = {
             // both time-archived (>30d since last_seen) AND user-dismissed
             // devices so the count matches what the user actually sees.
             const active = this._devices.filter(d => !this._isArchived(d) && !this._isDismissed(d)).length;
-            return `${active} active`;
+            // Inline manual-refresh affordance next to the count — easier to
+            // find than buried under the Online section header.
+            const busy = this._manualRefreshing;
+            const refreshBtn = `
+                <button title="Refresh thumbnails and metrics" onclick="DevicesPage._manualRefresh()" ${busy ? 'disabled' : ''}
+                    style="background: none; border: 1px solid var(--border, #d1d5db); border-radius: 4px; padding: 3px 8px; cursor: ${busy ? 'wait' : 'pointer'}; line-height: 0; opacity: ${busy ? 0.5 : 0.85}; vertical-align: middle; margin-left: 8px;">
+                    <img src="assets/icons/icon-reload.svg" alt="Refresh" style="width: 12px; height: 12px; vertical-align: middle;">
+                </button>`;
+            return `${active} active${refreshBtn}`;
         }
         const device = this._findDevice(this._detailDeviceId);
         return device ? this._typeLabel(device) : '';
@@ -571,14 +579,11 @@ const DevicesPage = {
     },
 
     _renderOnlineSection(devices) {
-        const busy = this._manualRefreshing;
+        // Manual refresh button has moved to the page subtitle (next to the
+        // "N active" count) so the section header stays tidy.
         const header = `
-            <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px;">
+            <div style="margin-bottom: 8px;">
                 <span style="font-size: 11px; font-weight: 600; color: #10b981; text-transform: uppercase; letter-spacing: 0.5px;">Online (${devices.length})</span>
-                <button title="Refresh thumbnails and metrics" onclick="DevicesPage._manualRefresh()" ${busy ? 'disabled' : ''}
-                    style="background: none; border: 1px solid var(--border, #d1d5db); border-radius: 4px; padding: 4px 10px; cursor: ${busy ? 'wait' : 'pointer'}; line-height: 0; opacity: ${busy ? 0.5 : 0.85};">
-                    <img src="assets/icons/icon-reload.svg" alt="Refresh" style="width: 14px; height: 14px; vertical-align: middle;">
-                </button>
             </div>
         `;
         if (devices.length === 0) {

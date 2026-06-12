@@ -339,7 +339,12 @@ const DevicesCard = {
             : null;
         const imgStyle = 'width: 100%; height: 100%; object-fit: cover; display: block;';
         // Screen off overlay — fade the screenshot and show "Screen off" text on top.
-        const screenOff = m.controls?.screen === false;
+        // Only trust controls.screen when we DON'T have a fresh screenshot stream.
+        // When imageReady is true, the device is actively producing screenshots —
+        // a contradictory controls.screen=false is almost always a stale flag
+        // (some devices fail to flip it back to true after sleep/wake races).
+        // The live image is the source of truth in that case.
+        const screenOff = m.controls?.screen === false && !imageReady;
         const overlay = screenOff
             ? `<div style="position: absolute; inset: 0; background: rgba(0,0,0,0.55); display: flex; align-items: center; justify-content: center; color: white; font-size: 13px; font-weight: 500; pointer-events: none;">Screen off</div>`
             : '';

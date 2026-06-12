@@ -378,10 +378,16 @@ const DashieAuth = {
         // Seed the user-data localStorage entry the SPA uses for display
         try {
             if (user?.name || user?.email) {
+                // Preserve a previously stored Google avatar — this path (add-on
+                // JWT) has no picture of its own and used to clobber it.
+                let prevPicture = '';
+                try {
+                    prevPicture = JSON.parse(localStorage.getItem('dashie-user-data') || '{}').picture || '';
+                } catch (e) {}
                 localStorage.setItem('dashie-user-data', JSON.stringify({
                     name: user?.name || '',
                     email: user?.email || '',
-                    picture: '',
+                    picture: user?.picture || prevPicture,
                 }));
             }
         } catch (e) {}
