@@ -110,10 +110,19 @@ const DevicesClaim = {
             if (claimedNames.has(norm(d.device_name))) continue;  // ...or by name
             const installRow = (this._claimable || []).find(c => c.android_id === d.device_id);
             if (installRow) continue;     // already represented by the install entry
+            // Tag with -dev / -loc when the worker's freshDevices entry tells
+            // us this device is running a non-prod build. Same convention as
+            // install rows — keeps a multi-flavor dev fleet legible.
+            let discoveredName = d.device_name || `Device ${d.device_id.slice(0, 8)}`;
+            const fresh = (typeof DevicesPage._freshDeviceFor === 'function')
+                ? DevicesPage._freshDeviceFor(d.device_id) : null;
+            const appVersion = fresh?.metrics?.app?.app_version || '';
+            if (appVersion.endsWith('-staging'))    discoveredName += ' -dev';
+            else if (appVersion.endsWith('-local')) discoveredName += ' -loc';
             list.push({
                 uid: 'ha:' + d.device_id,
                 kind: 'discovered',
-                name: d.device_name || `Device ${d.device_id.slice(0, 8)}`,
+                name: discoveredName,
                 deviceType: 'device',     // discovered payload doesn't have type
                 lastSeen: null,           // worker doesn't surface a last-seen for unmatched
                 installId: null,
@@ -283,12 +292,37 @@ const DevicesClaim = {
                             </div>
                         </div>
                     </div>
-                    <div style="flex-shrink: 0;">
+                    <div style="flex-shrink: 0; display: flex; gap: 6px;">
                         <button class="btn btn-secondary btn-sm" onclick="DevicesClaim.restore('${uid}')">Restore</button>
+                        ${a.kind === 'install'
+                            ? `<button class="btn btn-secondary btn-sm" title="Delete this install row from the database — it won't reappear in the Add banner unless the device re-registers."
+                                    onclick="DevicesClaim.deleteInstall('${uid}', ${JSON.stringify(a.name)})">Delete</button>`
+                            : ''}
                     </div>
                 </div>
             </div>
         `;
+    },
+
+    /** Permanently archive an install row (device_installs.is_active = false).
+     *  Removes the dismissal entry too so it doesn't linger after the row
+     *  is gone. Discovered rows have no DB row to delete — only Restore. */
+    async deleteInstall(uid, name) {
+        const ref = this._uidToDismissedRef(uid);
+        if (!ref || ref.kind !== 'installs') return;
+        const label = name || 'this install';
+        if (!confirm(`Delete "${label}" from your account?\n\nThe install row will be archived. If the device re-registers (sign-in or fresh install), it'll come back as a new addable.`)) return;
+        try {
+            await DashieAuth.dbRequest('archive_install', { install_id: ref.id });
+            // Drop the local claimable + dismissal entry so the row disappears.
+            this._claimable = (this._claimable || []).filter(c => c.id !== ref.id);
+            if (typeof ConsoleState !== 'undefined') ConsoleState.restore('installs', ref.id);
+            if (typeof Toast !== 'undefined') Toast.success(`Deleted "${label}"`);
+        } catch (e) {
+            console.error('[DevicesClaim] archive_install failed:', e);
+            if (typeof Toast !== 'undefined') Toast.error(Toast.friendly(e, 'delete this install'));
+        }
+        App.renderPage();
     },
 
     /**

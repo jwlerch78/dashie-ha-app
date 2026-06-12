@@ -326,7 +326,14 @@ const DevicesCard = {
         // by the manual refresh button or after a screen toggle.
         const ts = this._screenshotTs[device.device_id] || this._initialTs;
         const isLive = DevicesPage._isLive(device);
-        const imageReady = DashieAuth.isAddonMode && device.metrics_updated_at && isLive;
+        // imageReady: just trust isLive. metrics_updated_at as a precondition
+        // breaks freshly-adopted devices — the user_devices row exists and the
+        // worker is producing live data (has_live_data=true via freshDevices),
+        // but the Console's cached list_devices result still has
+        // metrics_updated_at=null for up to LIST_DEVICES_REFRESH_MS until the
+        // next refetch. isLive already handles both the cached and worker
+        // signals; if it's true, the screenshot/camera endpoints will serve.
+        const imageReady = DashieAuth.isAddonMode && isLive;
         const screenshotSrc = imageReady
             ? DashieAuth._addonUrl(`/api/ha/image/${encodeURIComponent(device.device_id)}/screenshot?t=${ts}`)
             : null;

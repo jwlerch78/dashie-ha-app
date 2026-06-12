@@ -350,6 +350,26 @@ const DevicesPage = {
         App.renderPage();
     },
 
+    /** Delete a dismissed user_devices row entirely (soft-delete via
+     *  delete_device — sets is_active=false). Also drops the dismissal
+     *  entry so the row doesn't linger in ConsoleState after the row
+     *  is gone. If the device reconnects later, it'll surface fresh
+     *  via discovered / install paths. */
+    async deleteDismissedDevice(deviceId, deviceName) {
+        const label = deviceName || 'this device';
+        if (!confirm(`Delete "${label}" from your account?\n\nThe row will be removed. If the device reconnects later, it'll reappear as a fresh discovered/install entry.`)) return;
+        try {
+            await DashieAuth.dbRequest('delete_device', { device_id: deviceId });
+            this._devices = (this._devices || []).filter(d => d.device_id !== deviceId);
+            if (typeof ConsoleState !== 'undefined') ConsoleState.restore('devices', deviceId);
+            if (typeof Toast !== 'undefined') Toast.success(`Deleted "${label}"`);
+        } catch (e) {
+            console.error('[DevicesPage] delete_device failed:', e);
+            if (typeof Toast !== 'undefined') Toast.error(Toast.friendly(e, 'delete this device'));
+        }
+        App.renderPage();
+    },
+
     /** Toggle for the unified Dismissed section at the bottom of the page. */
     _dismissedExpanded: false,
     _toggleDismissed() {
@@ -554,6 +574,7 @@ const DevicesPage = {
 
         const deviceCards = (dismissedDevices || []).map(d => {
             const idAttr = this._escape(d.device_id);
+            const nameAttr = this._escape(d.device_name || 'this device');
             const icon = this._deviceIcon(d.device_type);
             return `
                 <div class="card" style="margin-bottom: 8px;">
@@ -567,8 +588,11 @@ const DevicesPage = {
                                 </div>
                             </div>
                         </div>
-                        <div style="flex-shrink: 0;">
+                        <div style="flex-shrink: 0; display: flex; gap: 6px;">
                             <button class="btn btn-secondary btn-sm" onclick="DevicesPage.restoreDevice('${idAttr}')">Restore</button>
+                            <button class="btn btn-secondary btn-sm"
+                                title="Delete this device from your account. If it reconnects later, it'll reappear as a fresh discovered/install."
+                                onclick="DevicesPage.deleteDismissedDevice('${idAttr}', '${nameAttr}')">Delete</button>
                         </div>
                     </div>
                 </div>
