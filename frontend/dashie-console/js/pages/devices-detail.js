@@ -168,8 +168,12 @@ const DevicesDetail = {
                 dark ? 'Dark mode — tap for light' : 'Light mode — tap for dark'));
         }
 
-        // Camera stream toggle (only when device has a camera)
-        if (controls.camera_resolution !== undefined || controls.camera_stream_enabled !== undefined) {
+        // Camera stream toggle — only when the device has actual camera
+        // hardware. The Dashie app reports camera_stream_enabled as a switch
+        // regardless of hardware (it's a software toggle), but camera_resolution
+        // is only published when there's a real camera. Mirrors the gate
+        // _renderMediaRow uses for the camera column on the device card.
+        if (controls.camera_resolution !== undefined) {
             const on = !!(controls.camera_streaming || controls.camera_stream_enabled);
             const busy = !!DevicesCard._busyControl[`${device.device_id}:camera_stream_enabled`];
             buttons.push(this._toggleBtn(idAttr, 'camera_stream_enabled', on, busy,
@@ -393,6 +397,7 @@ const DevicesDetail = {
 
     _renderBehaviorSection(device, m) {
         const controls = m.controls || {};
+        const hasCamera = controls.camera_resolution !== undefined;
         const switches = [
             { role: 'screensaver',            label: 'Screensaver',              description: 'Show photo slideshow during sleep' },
             { role: 'keep_screen_on',         label: 'Keep Screen On',           description: 'Prevent sleep while in use' },
@@ -400,8 +405,16 @@ const DevicesDetail = {
             { role: 'hide_sidebar',           label: 'Hide Sidebar',             description: 'Maximize widget area' },
             { role: 'hide_tabs',              label: 'Hide Tabs',                description: 'Remove dashboard tabs' },
             { role: 'start_on_boot',          label: 'Start on Boot',            description: 'Launch Dashie when the device powers on' },
-            { role: 'camera_software_encoding', label: 'Camera Software Encoding', description: 'Use software codec (older devices)' },
-        ].filter(s => controls[s.role] !== undefined);
+            { role: 'camera_software_encoding', label: 'Camera Software Encoding', description: 'Use software codec (older devices)', requiresCamera: true },
+        ].filter(s => {
+            if (controls[s.role] === undefined) return false;
+            // Camera-related switches only show when real camera hardware is present.
+            // The Dashie app publishes the camera_software_encoding switch regardless
+            // (it's a software preference), but the toggle is meaningless without
+            // a camera. camera_resolution is the truth signal for actual hardware.
+            if (s.requiresCamera && !hasCamera) return false;
+            return true;
+        });
 
         if (switches.length === 0) return '';
         const idAttr = DevicesPage._escape(device.device_id);
