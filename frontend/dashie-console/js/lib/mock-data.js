@@ -7,6 +7,7 @@ const MockData = {
         email: 'john@example.com',
         name: 'John Lerch',
         initials: 'JL',
+        picture: '',   // Google avatar URL when signed in (see app.js init)
         provider: 'Google',
     },
 
