@@ -9,9 +9,12 @@
 // Dashie on this add-on.
 
 const express = require('express');
+const crypto = require('crypto');
 const auth = require('../auth');
 const haRegistry = require('../ha-registry');
 const haWorker = require('../ha-worker');
+const haClient = require('../ha-client');
+const config = require('../config');
 
 const router = express.Router();
 
@@ -151,6 +154,87 @@ router.post('/control', requireSignedIn, express.json(), async (req, res) => {
 });
 
 /**
+ * POST /api/ha/adopt/:deviceId
+ *
+ * Adopts a kiosk-mode device that's pushing state to HA but doesn't have a
+ * device_installs row in Supabase (because nobody signed into Dashie on it).
+ * Console calls this from the "Adopt" button on a Discovered card. The
+ * tablet keeps running in pure-kiosk mode — no sign-in required on it.
+ *
+ * Trust model: we already know
+ *   1. The caller is signed-in to the add-on (`requireSignedIn`), AND
+ *   2. The device exists in *this* HA's device_registry (we look it up).
+ * That's sufficient — running inside the user's own HA proves authorization.
+ *
+ * Network_id: synthetic per-HA hash (so adoptions across multiple HAs
+ * stay distinct in device_installs even if a tablet roams).
+ */
+router.post('/adopt/:deviceId', requireSignedIn, async (req, res) => {
+    const deviceId = req.params.deviceId;
+    if (!deviceId) return res.status(400).json({ error: 'device_id required' });
+    if (!haRegistry.isAvailable()) {
+        return res.status(503).json({ error: 'ha_not_configured' });
+    }
+
+    try {
+        // Look up the HA registry entry so we send Supabase real device info,
+        // not whatever the Console claims. Validates the device is in *this*
+        // HA — caller can't adopt arbitrary android_ids.
+        const entry = await haRegistry.getDeviceByDashieId(deviceId, { force: true });
+        if (!entry) {
+            return res.status(404).json({ error: 'device_not_found_in_ha', device_id: deviceId });
+        }
+
+        const haBase = haClient.getConfig().baseUrl || 'unknown-ha';
+        const networkId = 'ha-' + crypto.createHash('sha256').update(haBase).digest('hex').slice(0, 16);
+
+        const adoptPayload = {
+            android_id: deviceId,
+            device_name: entry.name_by_user || entry.name || `Device ${deviceId.slice(0, 8)}`,
+            device_brand: entry.manufacturer || null,
+            device_model: entry.model || null,
+            // HA registry doesn't categorize "tablet vs TV" — pass null and let
+            // handleAdoptDeviceFromHa default to a safe user_devices.device_type.
+            device_type: null,
+            network_id: networkId,
+        };
+
+        const stored = auth.readStoredJwt();
+        const dbOpsUrl = config.SUPABASE.url + '/functions/v1/database-operations';
+        const resp = await fetch(dbOpsUrl, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${stored.jwt}`,
+                'apikey': config.SUPABASE.anonKey,
+            },
+            body: JSON.stringify({ operation: 'adopt_device_from_ha', data: adoptPayload }),
+        });
+        const body = await resp.text();
+        if (!resp.ok) {
+            console.warn(`[api/ha/adopt] ${deviceId} failed: HTTP ${resp.status} ${body.slice(0, 200)}`);
+            // Pass through user-friendly error messages from the edge fn (e.g.
+            // "already claimed by another account") rather than wrapping them.
+            let parsed = null; try { parsed = JSON.parse(body); } catch { /* not JSON */ }
+            return res.status(resp.status).json({
+                error: 'adopt_failed',
+                message: parsed?.error || parsed?.message || body.slice(0, 200),
+            });
+        }
+        const parsed = JSON.parse(body);
+
+        // Trigger a worker refresh so the device leaves the Discovered section
+        // promptly (next /api/ha/status no longer reports it as unmatched).
+        haWorker.triggerRefresh('post-adopt');
+
+        res.json(parsed);
+    } catch (e) {
+        console.warn(`[api/ha/adopt] ${deviceId} failed: ${e.message}`);
+        res.status(500).json({ error: 'adopt_failed', message: e.message });
+    }
+});
+
+/**
  * GET /api/ha/image/:deviceId/:role
  * Proxies HA's image_proxy / camera_proxy so the Console can render the latest
  * screenshot or camera snapshot via a same-origin <img>. role = 'screenshot' | 'camera'.
@@ -159,7 +243,6 @@ router.post('/control', requireSignedIn, express.json(), async (req, res) => {
  * legacy installs (Fire Tablet → image.dashie_fire_tablet, Mio → image.mio_15_dashie)
  * don't follow the modern <slug>_<role> entity-id convention.
  */
-const haClient = require('../ha-client');
 async function findMediaEntity(dashieDeviceId, role) {
     const entry = await haRegistry.getDeviceByDashieId(dashieDeviceId);
     if (!entry) return null;
