@@ -112,7 +112,10 @@ const DevicesPage = {
     topBarSubtitle() {
         if (!this._detailDeviceId) {
             if (!this._devices) return '';
-            const active = this._devices.filter(d => !this._isArchived(d)).length;
+            // "active" = visible in the Online/Offline sections — exclude
+            // both time-archived (>30d since last_seen) AND user-dismissed
+            // devices so the count matches what the user actually sees.
+            const active = this._devices.filter(d => !this._isArchived(d) && !this._isDismissed(d)).length;
             return `${active} active`;
         }
         const device = this._findDevice(this._detailDeviceId);
