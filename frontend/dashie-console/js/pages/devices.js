@@ -546,31 +546,83 @@ const DevicesPage = {
         `;
         if (!this._discoveredExpanded) return header;
 
-        const cards = discovered.map(d => `
+        const cards = discovered.map(d => {
+            const idAttr = this._escape(d.device_id || '');
+            const adopting = this._adoptingId === d.device_id;
+            // Adopt button is add-on-only — it relies on the add-on's
+            // /api/ha/adopt endpoint to bridge to Supabase. Outside the
+            // add-on the Discovered section doesn't render at all, but
+            // belt-and-suspenders: hide the button when no device_id is
+            // available (it's required for the route lookup).
+            const canAdopt = !!d.device_id && DashieAuth.isAddonMode;
+            return `
             <div class="card">
                 <div class="card-body device-card">
                     <div class="device-card-header">
                         <div class="device-card-icon">🔍</div>
-                        <div class="device-card-info">
+                        <div class="device-card-info" style="flex: 1;">
                             <div class="device-card-name">${this._escape(d.device_name || 'Unknown device')}</div>
                             <div class="device-card-type">Reported by Home Assistant</div>
                             <div class="device-card-status">
                                 This device is pushing state to HA but isn't linked to your account yet.
                             </div>
                         </div>
+                        ${canAdopt ? `
+                            <div style="flex-shrink: 0;">
+                                <button class="btn btn-primary btn-sm" ${adopting ? 'disabled' : ''}
+                                    onclick="DevicesPage._adoptDiscovered('${idAttr}', '${this._escape(d.device_name || 'this device')}')">
+                                    ${adopting ? 'Adopting…' : 'Adopt'}
+                                </button>
+                            </div>
+                        ` : ''}
                     </div>
                 </div>
             </div>
-        `).join('');
+        `;
+        }).join('');
 
         return `${header}
             <p class="page-summary" style="margin-top: -4px; margin-bottom: 12px;">
                 Home Assistant sees these devices but they aren't linked to your account.
-                Sign into Dashie on each tablet to register it — or, if a device is
-                already on your network, claim it from the banner above.
+                Tap <strong>Adopt</strong> to link a kiosk-mode tablet without signing in
+                on the device — or, if a device is on your network and already signed in,
+                claim it from the banner above.
             </p>
             <div class="card-grid">${cards}</div>
         `;
+    },
+
+    /** Adopt a Discovered HA-only device into the caller's account.
+     *  Add-on-only — calls the add-on's /api/ha/adopt route which bridges
+     *  to Supabase's adopt_device_from_ha edge fn. */
+    _adoptingId: null,
+    async _adoptDiscovered(deviceId, deviceName) {
+        if (!deviceId || this._adoptingId) return;
+        this._adoptingId = deviceId;
+        App.renderPage();
+        try {
+            const url = DashieAuth._addonUrl(`/api/ha/adopt/${encodeURIComponent(deviceId)}`);
+            const resp = await fetch(url, { method: 'POST' });
+            const body = await resp.json().catch(() => ({}));
+            if (!resp.ok) {
+                throw new Error(body?.message || body?.error || `HTTP ${resp.status}`);
+            }
+            Toast.success(`Adopted "${deviceName}"`);
+            // Refresh devices + claim banner; the new install will surface
+            // as a fresh user_devices row in Online / Offline. The worker
+            // refresh triggered by the add-on drops the device from the
+            // Discovered section on the next status poll.
+            this._lastListDevicesAt = 0;
+            await this._refreshSilent();
+            if (typeof DevicesClaim !== 'undefined') await DevicesClaim.fetch();
+            App.renderPage();
+        } catch (e) {
+            console.error('[DevicesPage] adopt failed:', e);
+            Toast.error(Toast.friendly(e, 'adopt this device'));
+        } finally {
+            this._adoptingId = null;
+            App.renderPage();
+        }
     },
 
     _toggleDiscovered() {
