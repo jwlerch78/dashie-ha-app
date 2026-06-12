@@ -785,6 +785,24 @@ const DashieAuth = {
      * Call database-operations edge function with auth
      */
     async dbRequest(operation, data = {}) {
+        // First-load race: in add-on mode, the page can render and fire
+        // _fetchDevices before _initAddonMode has finished setting the JWT
+        // (e.g. /api/auth/jwt is slow, or status said authenticated but jwt
+        // came back null). Try to pull a fresh JWT from the add-on before
+        // failing. One-shot — if this still fails, we throw and surface the
+        // error normally (the user gets a Retry button).
+        if (!this.jwt && this._addonMode) {
+            try {
+                const resp = await fetch(this._addonUrl('/api/auth/jwt'));
+                if (resp.ok) {
+                    const data = await resp.json();
+                    if (data?.jwt) {
+                        this._setJWTFromAddon(data.jwt, { id: this.jwtUserId, email: this.jwtUserEmail });
+                        console.log('[DashieAuth] Recovered JWT from add-on after first-load race');
+                    }
+                }
+            } catch (e) { /* fall through to throw below */ }
+        }
         if (!this.jwt) throw new Error('Not authenticated');
 
         // source_client_id tags every settings write with this Console

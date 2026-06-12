@@ -58,13 +58,13 @@ const DevicesClaim = {
             const uids = new Set(this._addable().map(a => a.uid));
             // Drop selections that are no longer addable.
             this._selected = new Set([...this._selected].filter(uid => uids.has(uid)));
-            // Prune stale dismissals — anything not currently addable gets
-            // dropped so localStorage doesn't grow unbounded.
-            const prunedDismissed = new Set([...this._dismissed].filter(uid => uids.has(uid)));
-            if (prunedDismissed.size !== this._dismissed.size) {
-                this._dismissed = prunedDismissed;
-                this._saveDismissed();
-            }
+            // NOTE: do NOT prune _dismissed here. _addable() pulls discovered
+            // rows from DevicesPage._discoveredDevices(), which can be empty
+            // on first fetch (worker not warm). Pruning then would silently
+            // forget dismissals for discovered devices, and they'd reappear
+            // in the banner once the worker reports them. _visible()/_hidden()
+            // already filter through _addable() before rendering, so stale
+            // UIDs in the Set are harmless.
         } catch (e) {
             console.warn('[DevicesClaim] list_claimable_devices failed:', e.message);
             this._claimable = this._claimable || [];
@@ -82,7 +82,12 @@ const DevicesClaim = {
         const list = [];
         // install rows from list_claimable_devices
         for (const d of (this._claimable || [])) {
-            const name = `${d.device_brand || ''} ${d.device_model || ''}`.trim() || d.android_id || 'Unknown device';
+            let name = `${d.device_brand || ''} ${d.device_model || ''}`.trim() || d.android_id || 'Unknown device';
+            // Tag non-prod debug builds so a dev's fleet (same physical
+            // tablet running multiple flavors) is visually distinguishable.
+            // Real end users only ever install one flavor, so they see no tag.
+            if (d.build_flavor === 'staging') name += ' -dev';
+            else if (d.build_flavor === 'local') name += ' -loc';
             list.push({
                 uid: d.id,                // install_id UUID
                 kind: 'install',
