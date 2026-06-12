@@ -343,14 +343,17 @@ const DashieAuth = {
             }
 
             if (status?.authenticated) {
-                // Pull the actual JWT from the add-on
+                // Pull the actual JWT from the add-on. /api/auth/jwt also returns
+                // user_picture (Google profile photo) so the top-bar avatar can
+                // render without requiring a direct Google sign-in in this browser.
                 const jwtResp = await fetch(this._addonUrl('/api/auth/jwt'));
                 if (jwtResp.ok) {
                     const data = await jwtResp.json();
                     this._setJWTFromAddon(data.jwt, {
                         id: status.user_id,
                         email: status.user_email,
-                        name: status.user_name,
+                        name: data.user_name || status.user_name,
+                        picture: data.user_picture || status.user_picture,
                     });
                     return true;
                 }
@@ -410,6 +413,8 @@ const DashieAuth = {
             this._setJWTFromAddon(data.jwt, {
                 id: this.jwtUserId,
                 email: this.jwtUserEmail,
+                name: data.user_name,
+                picture: data.user_picture,
             });
             console.log('[DashieAuth] JWT re-fetched from add-on');
         } catch (e) {
@@ -803,7 +808,12 @@ const DashieAuth = {
                 if (resp.ok) {
                     const data = await resp.json();
                     if (data?.jwt) {
-                        this._setJWTFromAddon(data.jwt, { id: this.jwtUserId, email: this.jwtUserEmail });
+                        this._setJWTFromAddon(data.jwt, {
+                            id: this.jwtUserId,
+                            email: this.jwtUserEmail,
+                            name: data.user_name,
+                            picture: data.user_picture,
+                        });
                         console.log('[DashieAuth] Recovered JWT from add-on after first-load race');
                     }
                 }
