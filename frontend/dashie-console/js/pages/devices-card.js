@@ -430,22 +430,25 @@ const DevicesCard = {
         // "detection is off", distinct from "idle/no detection right now".
         // data-detect-* attrs let SSE handlers update these spans in place
         // without a full re-render (motion/face fire frequently).
-        const motionIcon = `
+        // Hide motion / face icons entirely when their detection isn't running
+        // on the device. The presence sensors go unavailable (motion_active /
+        // face_active === false) when the toggle is off OR when the device
+        // doesn't have a camera at all — in either case there's no signal to
+        // show, so the slashed-icon-as-disabled affordance just adds noise.
+        const motionIcon = motionActive ? `
             <span data-card-id="${idAttr}" data-detect-role="motion" title="${this._detectTitle('motion', motion, motionActive)}"
                   style="${this._detectIconStyle(motion)}">
                 ${iconImg('icon-motion-detection.svg', 18, this._detectIconOpacity(motion, motionActive))}
                 <span data-detect-overlay style="${this._detectOverlayStyle(motion)}"></span>
-                ${!motionActive ? slashSvg(18, '#9ca3af', 1, 0.4) : ''}
             </span>
-        `;
-        const faceIcon = `
+        ` : '';
+        const faceIcon = faceActive ? `
             <span data-card-id="${idAttr}" data-detect-role="face" title="${this._detectTitle('face', face, faceActive)}"
                   style="${this._detectIconStyle(face)}">
                 ${iconImg('icon-face-detection.svg', 18, this._detectIconOpacity(face, faceActive))}
                 <span data-detect-overlay style="${this._detectOverlayStyle(face)}"></span>
-                ${!faceActive ? slashSvg(18, '#9ca3af', 1, 0.4) : ''}
             </span>
-        `;
+        ` : '';
 
         // Three-column layout per media row: left / center / right justified.
         // 10% horizontal padding indents the left+right items inward so they don't sit
@@ -460,13 +463,12 @@ const DevicesCard = {
         `;
 
         // Show the camera column when the device has actual camera hardware.
-        // camera_resolution comes from the device's getRtspConfig API and is
-        // populated for any device with a real camera — independent of whether
-        // the camera is currently streaming or off. Stays null for Mio / Fire
-        // TV / etc. that don't have one. (camera_stream_url alone wasn't
-        // reliable: it goes null when the user turns the camera off, which
-        // hid the toggle button along with the section.)
-        const hasCameraSection = !!m.controls?.camera_resolution;
+        // camera_resolution is the truth signal — but some devices without a
+        // camera still report a placeholder value ('', '0x0', or similar)
+        // rather than null/undefined, so a bare truthy check leaks the
+        // panel onto non-camera devices like the Mio rk3576_u. Require a
+        // real WxH resolution with both dimensions > 0.
+        const hasCameraSection = DevicesCard._isRealCameraResolution(m.controls?.camera_resolution);
 
         // Sub-toggles — the user can hide the screenshot panel and/or the
         // camera panel individually from the top-bar Screenshots / Cameras
@@ -533,6 +535,16 @@ const DevicesCard = {
                 <span style="overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${DevicesPage._escape(text)}</span>
             </div>
         `;
+    },
+
+    /** True iff `val` is a real camera resolution ("WxH" with W>0 and H>0).
+     *  Devices without a camera occasionally report a placeholder ('', '0x0',
+     *  'unknown') which a bare truthy check would treat as "has camera". */
+    _isRealCameraResolution(val) {
+        if (typeof val !== 'string') return false;
+        const m = val.match(/^\s*(\d+)\s*[xX]\s*(\d+)\s*$/);
+        if (!m) return false;
+        return parseInt(m[1], 10) > 0 && parseInt(m[2], 10) > 0;
     },
 
     /** Inline style for the motion/face icon wrapper, by detected state. */

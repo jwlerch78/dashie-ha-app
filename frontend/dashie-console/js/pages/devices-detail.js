@@ -171,9 +171,9 @@ const DevicesDetail = {
         // Camera stream toggle — only when the device has actual camera
         // hardware. The Dashie app reports camera_stream_enabled as a switch
         // regardless of hardware (it's a software toggle), but camera_resolution
-        // is only published when there's a real camera. Mirrors the gate
-        // _renderMediaRow uses for the camera column on the device card.
-        if (controls.camera_resolution !== undefined) {
+        // only resolves to a real WxH on devices with a camera. Mirrors the
+        // gate _renderMediaRow uses for the camera column on the device card.
+        if (DevicesCard._isRealCameraResolution(controls.camera_resolution)) {
             const on = !!(controls.camera_streaming || controls.camera_stream_enabled);
             const busy = !!DevicesCard._busyControl[`${device.device_id}:camera_stream_enabled`];
             buttons.push(this._toggleBtn(idAttr, 'camera_stream_enabled', on, busy,
@@ -397,7 +397,7 @@ const DevicesDetail = {
 
     _renderBehaviorSection(device, m) {
         const controls = m.controls || {};
-        const hasCamera = controls.camera_resolution !== undefined;
+        const hasCamera = DevicesCard._isRealCameraResolution(controls.camera_resolution);
         const switches = [
             { role: 'screensaver',            label: 'Screensaver',              description: 'Show photo slideshow during sleep' },
             { role: 'keep_screen_on',         label: 'Keep Screen On',           description: 'Prevent sleep while in use' },
