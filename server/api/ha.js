@@ -260,6 +260,89 @@ async function findMediaEntity(dashieDeviceId, role) {
     return null;
 }
 
+/**
+ * GET /api/ha/mjpeg/:deviceId/:role
+ * Multipart MJPEG stream — same upstream as /api/ha/image/:role but in a loop
+ * with a multipart/x-mixed-replace envelope. Browsers play this natively
+ * inside an <img> tag (no Hls.js, no <video>, no iframe, no signed URL games).
+ *
+ * Targets ~10 fps. Each frame is a fresh fetch of the HA-signed
+ * entity_picture URL, which HA serves by calling the integration's
+ * async_camera_image() — i.e. a fresh getCamshot from the device. No
+ * frame_interval throttle on the single-image path, unlike HA's own
+ * /api/camera_proxy_stream/.
+ *
+ * Closes cleanly when the client disconnects (e.g. user closes the modal).
+ */
+router.get('/mjpeg/:deviceId/:role', requireSignedIn, async (req, res) => {
+    const { deviceId, role } = req.params;
+    if (role !== 'screenshot' && role !== 'camera') {
+        return res.status(400).json({ error: 'unknown role (screenshot|camera)' });
+    }
+
+    let state;
+    try {
+        state = await findMediaEntity(deviceId, role);
+    } catch (e) {
+        return res.status(500).json({ error: 'lookup_failed', message: e.message });
+    }
+    if (!state) return res.status(404).json({ error: `no ${role} entity found for device` });
+    const entityPicture = state.attributes?.entity_picture;
+    if (!entityPicture) return res.status(404).json({ error: 'entity has no entity_picture yet' });
+
+    const config = haClient.getConfig();
+    const fullUrl = entityPicture.startsWith('http')
+        ? entityPicture
+        : config.baseUrl + entityPicture;
+
+    res.set({
+        'Content-Type': 'multipart/x-mixed-replace; boundary=frame',
+        'Cache-Control': 'no-cache, no-store, must-revalidate',
+        'Pragma': 'no-cache',
+        'Connection': 'close',
+    });
+    res.flushHeaders?.();
+
+    let closed = false;
+    req.on('close', () => { closed = true; });
+    req.on('aborted', () => { closed = true; });
+
+    const FRAME_INTERVAL_MS = 100;  // ~10 fps
+    const FRAME_TIMEOUT_MS = 1500;  // give up on a single frame
+
+    try {
+        while (!closed) {
+            const tickStart = Date.now();
+            try {
+                const ctrl = new AbortController();
+                const t = setTimeout(() => ctrl.abort(), FRAME_TIMEOUT_MS);
+                const upstream = await fetch(fullUrl, {
+                    headers: { Authorization: `Bearer ${config.token}` },
+                    signal: ctrl.signal,
+                });
+                clearTimeout(t);
+                if (closed) break;
+                if (upstream.ok) {
+                    const buf = Buffer.from(await upstream.arrayBuffer());
+                    if (closed) break;
+                    res.write(`--frame\r\nContent-Type: image/jpeg\r\nContent-Length: ${buf.length}\r\n\r\n`);
+                    res.write(buf);
+                    res.write('\r\n');
+                }
+            } catch (e) {
+                // Swallow single-frame failures (timeout, transient device error) —
+                // next tick will retry. Bail only if the client disconnected.
+                if (closed) break;
+            }
+            const elapsed = Date.now() - tickStart;
+            const sleep = Math.max(0, FRAME_INTERVAL_MS - elapsed);
+            if (sleep > 0) await new Promise(r => setTimeout(r, sleep));
+        }
+    } finally {
+        try { res.end(); } catch (e) { /* ignore */ }
+    }
+});
+
 router.get('/image/:deviceId/:role', requireSignedIn, async (req, res) => {
     const { deviceId, role } = req.params;
     if (role !== 'screenshot' && role !== 'camera') {
