@@ -86,6 +86,13 @@ const DevicesDetail = {
                         ${DevicesPage._escape(DevicesPage._typeLabel(device))} ·
                         <span class="status-dot ${live ? 'online' : 'offline'}"></span>${live ? 'Live' : 'Offline'}
                     </div>
+                    <div style="font-size: 11px; color: var(--text-muted); margin-top: 4px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; user-select: all;"
+                         title="Device ID — click to copy. Useful for diagnosing HA worker matching when a device shows Offline despite being reachable.">
+                        ${DevicesPage._escape(device.device_id || '—')}
+                        <button onclick="event.stopPropagation(); navigator.clipboard.writeText('${DevicesPage._escape(device.device_id || '')}').then(() => Toast.success('Device ID copied'))"
+                            style="background: none; border: none; color: var(--text-muted); cursor: pointer; padding: 0 4px; font-size: 11px; line-height: 1;"
+                            title="Copy device_id">📋</button>
+                    </div>
                     ${conflictBadge}
                 </div>
             </div>

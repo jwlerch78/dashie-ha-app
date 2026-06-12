@@ -91,10 +91,19 @@ const DevicesClaim = {
         // under one identifier path and in HA's registry under another (e.g.
         // user_devices.device_id from Dashie sign-in vs HA's device entry
         // created during a separate registration flow). When the IDs don't
-        // match, fall back to a normalized device_name comparison — false
-        // positives are recoverable via the Dismissed section.
+        // match, fall back to a normalized device_name comparison — BUT
+        // only against LIVE claimed devices. A stale offline same-name row
+        // (e.g. an old sign-in under a previous android_id) shouldn't block
+        // the user from adopting the freshly-reachable device under its new
+        // identifier; that's the only path back to "Online" when the install
+        // signing key changes (flavor swap, reinstall, factory reset, etc.).
         const norm = s => (typeof s === 'string' ? s.trim().toLowerCase() : '');
-        const claimedNames = new Set(claimedDevices.map(d => norm(d.device_name)).filter(Boolean));
+        const claimedNames = new Set(
+            claimedDevices
+                .filter(d => typeof DevicesPage._isLive === 'function' && DevicesPage._isLive(d))
+                .map(d => norm(d.device_name))
+                .filter(Boolean)
+        );
         for (const d of discovered) {
             if (!d.device_id) continue;   // need device_id to call /api/ha/adopt
             if (claimedIds.has(d.device_id)) continue;  // already in user's account (by id)
