@@ -174,22 +174,22 @@ const DevicesClaim = {
                     <div style="color: var(--text-muted); font-size: var(--font-size-sm); margin: 4px 0 8px;">
                         Select the ones you own, or dismiss (✕) any you don't.
                     </div>
+                    <div style="display: flex; justify-content: flex-end; padding: 4px 0 6px;">
+                        <button class="btn btn-secondary btn-sm" onclick="DevicesClaim.toggleSelectAll()">
+                            ${allChecked ? 'Clear all' : 'Select all'}
+                        </button>
+                    </div>
                     <div style="border-top: 1px solid var(--border, #d1d5db);">
                         ${rows}
                     </div>
-                    <div style="display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 8px; flex-wrap: wrap;">
-                        <div style="display: flex; gap: 8px; align-items: center;">
-                            <button class="btn btn-secondary btn-sm" onclick="DevicesClaim.toggleSelectAll()">
-                                ${allChecked ? 'Clear all' : 'Select all'}
-                            </button>
-                            <button class="btn btn-secondary btn-sm" title="Hide every device in this banner — they'll move to the Dismissed section at the bottom of the page"
-                                onclick="DevicesClaim.dismissAll()">
-                                Dismiss all
-                            </button>
-                        </div>
+                    <div style="display: flex; align-items: center; gap: 8px; margin-top: 8px; flex-wrap: wrap;">
                         <button class="btn btn-primary btn-sm" ${n === 0 || this._claiming ? 'disabled' : ''}
                             onclick="DevicesClaim.claimSelected()">
                             ${addLabel}
+                        </button>
+                        <button class="btn btn-secondary btn-sm" title="Hide every device in this banner — they'll move to the Dismissed section at the bottom of the page"
+                            onclick="DevicesClaim.dismissAll()">
+                            Dismiss all
                         </button>
                     </div>
                 </div>
