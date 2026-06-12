@@ -267,6 +267,44 @@ async function getCameraStreamUrl(entityId, format = 'hls') {
 }
 
 /**
+ * Resolve a URL path the user's HA frontend will accept WITHOUT issuing
+ * a server-side redirect that strips the query string. Used by the
+ * Console's camera modal to iframe HA's own more-info dialog at
+ * `<path>?more-info-entity-id=<entity>`.
+ *
+ * Strategy:
+ *   - Ask HA for its lovelace dashboard list (WS `lovelace/dashboards/list`).
+ *   - If any dashboard has `url_path: null` (the lone "default" entry on
+ *     storage-mode installs), '/lovelace' is the canonical URL.
+ *   - Otherwise pick the first dashboard's url_path → `/<url_path>`.
+ *   - Cache the result (dashboards rarely change at runtime).
+ *
+ * Falls back to '/' if HA returns nothing useful. The Console then relies
+ * on HA's client-side router to preserve the query string through any
+ * default-dashboard hop — which works in iframes even when it didn't in
+ * the previous popup approach.
+ */
+let _defaultDashboardPath = null;
+async function getDefaultDashboardPath() {
+    if (_defaultDashboardPath) return _defaultDashboardPath;
+    try {
+        const list = await _send({ type: 'lovelace/dashboards/list' });
+        if (Array.isArray(list) && list.length > 0) {
+            // url_path === null on the default storage-mode dashboard.
+            const def = list.find(d => d?.url_path == null) || list[0];
+            if (def?.url_path == null) {
+                _defaultDashboardPath = '/lovelace';
+            } else if (typeof def.url_path === 'string' && def.url_path.length > 0) {
+                _defaultDashboardPath = '/' + def.url_path.replace(/^\//, '');
+            }
+        }
+    } catch (e) {
+        console.warn('[ha-registry] dashboards/list failed:', e.message);
+    }
+    return _defaultDashboardPath || '/';
+}
+
+/**
  * Call an HA service (switch.turn_on, number.set_value, button.press, etc.)
  * targeting a specific entity. Returns whatever HA echoes back.
  */
@@ -351,6 +389,7 @@ module.exports = {
     getEntitiesForHaDevice,
     getAllEntities,
     getCameraStreamUrl,
+    getDefaultDashboardPath,
     subscribeStateChanged,
     renameDevice,
     callService,

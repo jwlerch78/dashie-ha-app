@@ -305,14 +305,17 @@ router.get('/stream/:deviceId', requireSignedIn, async (req, res) => {
     try {
         const state = await findMediaEntity(deviceId, 'camera');
         if (!state) return res.status(404).json({ error: 'no camera entity for device' });
-        const result = await haRegistry.getCameraStreamUrl(state.entity_id);
-        if (!result?.url) return res.status(502).json({ error: 'HA did not return a stream URL' });
-        // Return HA's HLS URL as an absolute path. We're inside HA Ingress
-        // (same origin as HA itself), so the browser can hit /api/hls/<token>/...
-        // directly — same code path as HA's own integration UI uses, and the
-        // signed token in the URL is sufficient auth (no cookie required).
-        // This avoids fighting Express/Ingress over content-type and compression.
-        res.json({ entity_id: state.entity_id, hls_url: result.url, poster: state.attributes?.entity_picture || null });
+        // hls_url remains for any direct-player fallback; the Console now
+        // iframes HA's more-info dialog (which already wraps the entity in
+        // <ha-hls-player>), so dashboard_path is the field it actually uses.
+        const result = await haRegistry.getCameraStreamUrl(state.entity_id).catch(() => null);
+        const dashboardPath = await haRegistry.getDefaultDashboardPath().catch(() => '/');
+        res.json({
+            entity_id: state.entity_id,
+            hls_url: result?.url || null,
+            poster: state.attributes?.entity_picture || null,
+            dashboard_path: dashboardPath,
+        });
     } catch (e) {
         console.warn(`[api/ha/stream] ${deviceId} failed: ${e.message}`);
         res.status(500).json({ error: 'stream_resolve_failed', message: e.message });
