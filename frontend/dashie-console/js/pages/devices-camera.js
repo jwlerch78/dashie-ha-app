@@ -85,37 +85,78 @@ const DevicesCamera = {
      * microtask after the route handler fires).
      */
     _stripChrome(iframe) {
+        // HA's <home-assistant> and <home-assistant-main> both use shadow
+        // DOM. CSS injected into the document head doesn't cross shadow
+        // boundaries — it has to be appended into each shadow root that
+        // hosts the chrome we want to hide. Same-origin iframes give us
+        // full DOM access including shadow roots (assuming they're "open"
+        // mode, which HA's are).
+        //
+        // The structure looks roughly like:
+        //   document
+        //     <home-assistant>             ← shadow root
+        //       <home-assistant-main>      ← shadow root
+        //         <ha-drawer>              (sidebar)
+        //         <partial-panel-resolver> (dashboard content)
+        //         <ha-more-info-dialog>    (open dialog)
+        //
+        // We inject a style into <home-assistant-main>'s shadow root to
+        // hide everything except the more-info dialog. Also drop a few
+        // global rules into document.head as backstop in case structure
+        // varies across HA versions.
         const inject = () => {
             try {
                 const doc = iframe.contentDocument;
                 if (!doc) return false;
-                if (doc.getElementById('dashie-camera-chrome-strip')) return true;
-                const style = doc.createElement('style');
-                style.id = 'dashie-camera-chrome-strip';
-                style.textContent = `
-                    /* Hide the dashboard / sidebar; the more-info dialog
-                       sits as a sibling of <home-assistant-main> so it
-                       stays visible. */
-                    home-assistant-main { visibility: hidden !important; }
-                    /* Transparent scrim — our own modal already darkens. */
-                    ha-dialog, dialog, .mdc-dialog__scrim {
-                        --mdc-dialog-scrim-color: transparent !important;
-                    }
-                    body { background: transparent !important; }
-                `;
-                doc.head.appendChild(style);
+
+                // Global / document-level styles (transparent scrim + body).
+                if (!doc.getElementById('dashie-camera-strip')) {
+                    const style = doc.createElement('style');
+                    style.id = 'dashie-camera-strip';
+                    style.textContent = `
+                        :root, body { background: transparent !important; }
+                        .mdc-dialog__scrim { background: transparent !important; }
+                    `;
+                    doc.head.appendChild(style);
+                }
+
+                // Reach into <home-assistant-main>'s shadow DOM. Walk both
+                // shadow boundaries: <home-assistant> → <home-assistant-main>.
+                const haRoot = doc.querySelector('home-assistant');
+                const haShadow = haRoot?.shadowRoot;
+                if (!haShadow) return false;
+                const main = haShadow.querySelector('home-assistant-main');
+                const mainShadow = main?.shadowRoot;
+                if (!mainShadow) return false;
+
+                if (!mainShadow.getElementById('dashie-camera-strip-shadow')) {
+                    const style = doc.createElement('style');
+                    style.id = 'dashie-camera-strip-shadow';
+                    style.textContent = `
+                        /* Sidebar, header, dashboard content — gone.
+                           Leave dialogs visible (they're siblings here). */
+                        ha-drawer, mwc-drawer, .mdc-drawer { display: none !important; }
+                        partial-panel-resolver, .main-content,
+                        app-toolbar, .toolbar, app-header, mwc-top-app-bar-fixed {
+                            display: none !important;
+                        }
+                    `;
+                    mainShadow.appendChild(style);
+                }
                 return true;
             } catch (e) {
-                console.warn('[DevicesCamera] inject failed (cross-origin?)', e);
+                console.warn('[DevicesCamera] strip failed', e);
                 return false;
             }
         };
+
         if (inject()) return;
-        // Retry briefly in case the head wasn't ready at first paint.
+        // Retry every 100ms for up to 5s in case the SPA boots after the
+        // iframe load event fires (shadow roots aren't there until then).
         const start = performance.now();
         const tick = () => {
             if (inject()) return;
-            if (performance.now() - start > 3000) return;
+            if (performance.now() - start > 5000) return;
             setTimeout(tick, 100);
         };
         setTimeout(tick, 50);
