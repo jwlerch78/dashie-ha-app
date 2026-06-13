@@ -6,6 +6,16 @@ const AccountPage = {
     _data: null,
     _loading: false,
     _error: null,
+    _activeTab: 'account',   // 'account' | 'usage'
+
+    setTab(tab) {
+        if (tab !== 'account' && tab !== 'usage') return;
+        this._activeTab = tab;
+        if (tab === 'usage' && typeof AccountUsage !== 'undefined' && !AccountUsage._balance && !AccountUsage._loading) {
+            AccountUsage._fetchAll();
+        }
+        App.renderPage();
+    },
 
     render() {
         // Kick off data fetch if not loaded
@@ -16,7 +26,33 @@ const AccountPage = {
 
         if (this._loading) return this._renderLoading();
         if (this._error) return this._renderError();
-        return this._renderLoaded();
+
+        const tabBar = this._renderTabBar();
+        if (this._activeTab === 'usage' && typeof AccountUsage !== 'undefined') {
+            return `${tabBar}${AccountUsage.render()}`;
+        }
+        return `${tabBar}${this._renderLoaded()}`;
+    },
+
+    /** Tab strip shared with the Token Usage subpage. Matches the Voice & AI
+     *  page's tab pattern (same colors, same active-underline behavior). */
+    _renderTabBar() {
+        const tab = (id, label) => {
+            const active = this._activeTab === id;
+            return `
+                <button onclick="AccountPage.setTab('${id}')"
+                    style="background: none; border: none; padding: 10px 4px; cursor: pointer; font-size: 14px; font-weight: ${active ? '600' : '500'};
+                           color: ${active ? 'var(--text-primary)' : 'var(--text-muted)'};
+                           border-bottom: 2px solid ${active ? 'var(--accent)' : 'transparent'};
+                           margin-bottom: -1px;">
+                    ${label}
+                </button>`;
+        };
+        return `
+            <div style="display: flex; gap: 24px; border-bottom: 1px solid var(--border, #d1d5db); margin-bottom: 20px; max-width: 800px;">
+                ${tab('account', 'Account')}
+                ${tab('usage', 'Token Usage')}
+            </div>`;
     },
 
     topBarTitle() { return 'Account & Credits'; },

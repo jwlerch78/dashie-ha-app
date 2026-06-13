@@ -341,6 +341,39 @@
         return [costs.input, costs.output];
     }
 
+    /** USD cost of an STT call. {provider, seconds} → number.
+     *  Falls back to 0 (free) for unknown providers / native paths. */
+    function sttCost({ provider, seconds = 0 }) {
+        const row = TOKEN_COSTS.stt?.[provider];
+        if (!row) return 0;
+        if (typeof row.perMinute === 'number') return (seconds / 60) * row.perMinute;
+        return 0;
+    }
+
+    /** USD cost of a TTS call. {provider, characters, voiceTier} → number.
+     *  voiceTier disambiguates Google (standard/wavenet/neural2) and OpenAI
+     *  (tts-1/tts-1-hd). ElevenLabs is flat per-1000-chars. */
+    function ttsCost({ provider, characters = 0, voiceTier }) {
+        const row = TOKEN_COSTS.tts?.[provider];
+        if (!row) return 0;
+        if (provider === 'elevenlabs' && typeof row.per1000Chars === 'number') {
+            return (characters / 1000) * row.per1000Chars;
+        }
+        // Google / OpenAI: tiered per-1M-char rates keyed by voice/model.
+        const tierKey = voiceTier || Object.keys(row).find(k => typeof row[k] === 'number');
+        const rate = typeof row[tierKey] === 'number' ? row[tierKey] : null;
+        if (rate == null) return 0;
+        return (characters / 1_000_000) * rate;
+    }
+
+    /** USD cost of a web-search call. {provider, count} → number. */
+    function searchCost({ provider, count = 1 }) {
+        const row = TOKEN_COSTS.search?.[provider];
+        if (!row) return 0;
+        if (typeof row.perQuery === 'number') return count * row.perQuery;
+        return 0;
+    }
+
     /** Group the catalog by provider for the test-chat dropdown.
      *  Returns [[providerLabel, [[id, label], …]], …] — the shape the
      *  voice-ai page's <select><optgroup> renderer expects. */
@@ -360,6 +393,9 @@
         VOICE_AI_MODELS,
         TOKEN_COSTS,
         pricingFor,
+        sttCost,
+        ttsCost,
+        searchCost,
         dropdownGroups,
     };
 })();
