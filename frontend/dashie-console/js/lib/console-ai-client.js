@@ -66,24 +66,66 @@ const ConsoleAiClient = {
         }
     },
 
+    /** Resolve a personality row by id-or-key. Source order:
+     *    1. VoiceAiPage._templates (built-ins keyed by `key`). These rows
+     *       are already loaded into memory when the page renders the picker
+     *       and have all the structured fields (overview/persona/adjectives/
+     *       topics/example_phrases) we need. The previous server-fetch path
+     *       hit handlers that returned null for template keys, leaving the
+     *       personality undefined and the AI defaulting to the generic
+     *       "I'm a family assistant" persona regardless of pick.
+     *    2. VoiceAiPage._custom (custom rows keyed by UUID).
+     *    3. Falls back to the dbRequest path (kept for the case where the
+     *       chat is opened before VoiceAiPage has fetched its lists).
+     *    For templates, family_notes from _overrides[key] is merged in via
+     *    mergePersonalityWithOverride — same pattern the webapp uses. */
     async _getPersonality(personalityId) {
         if (!personalityId) return null;
         if (this._personalityCache.has(personalityId)) {
             return this._personalityCache.get(personalityId);
         }
+
+        const VAP = (typeof VoiceAiPage !== 'undefined') ? VoiceAiPage : null;
         let row = null;
-        try {
-            const result = await DashieAuth.dbRequest('get_personality', { id: personalityId });
-            row = result?.data || result?.personality || null;
-        } catch (e) { /* try by key */ }
+
+        // 1. Built-in template by key.
+        if (VAP?._templates) {
+            const tpl = VAP._templates.find(t => (t.key || t.id) === personalityId);
+            if (tpl) {
+                const override = VAP._overrides?.[tpl.key];
+                row = (override && window.PersonalityPromptBuilder?.mergePersonalityWithOverride)
+                    ? window.PersonalityPromptBuilder.mergePersonalityWithOverride(tpl, override)
+                    : tpl;
+            }
+        }
+
+        // 2. Custom row by id.
+        if (!row && VAP?._custom) {
+            row = VAP._custom.find(c => c.id === personalityId) || null;
+        }
+
+        // 3. Server fallback (rare — chat opened before lists loaded).
         if (!row) {
             try {
-                const result = await DashieAuth.dbRequest('get_personality', { key: personalityId });
+                const result = await DashieAuth.dbRequest('get_personality', { id: personalityId });
                 row = result?.data || result?.personality || null;
-            } catch (e) { /* leave null */ }
+            } catch (e) { /* try by key */ }
+            if (!row) {
+                try {
+                    const result = await DashieAuth.dbRequest('get_personality', { key: personalityId });
+                    row = result?.data || result?.personality || null;
+                } catch (e) { /* leave null */ }
+            }
         }
+
         this._personalityCache.set(personalityId, row);
         return row;
+    },
+
+    /** Drop cached personalities — called when the user edits a personality
+     *  in the Voice & AI page so the next chat turn picks up the change. */
+    invalidatePersonalityCache() {
+        this._personalityCache.clear();
     },
 
     /** Per-token cost estimation. Pricing sourced from
@@ -176,46 +218,55 @@ const ConsoleAiClient = {
     /** Second-pass HA prompt — inquiries/home-assistant.md filled with the
      *  user's entity list. Matches buildPrompt({inquiryType: 'home-assistant',
      *  retrievedData: {entities, entities_by_domain, command_hint}}). */
-    _buildHomeAssistantPrompt({ userRequest, personalityWrap, retrievedData }) {
-        const T = window.AiPromptTemplates;
-        const baseValues = {
-            DATE_TIME: T.formatDateTime(),
-            USER_REQUEST: userRequest,
-            HA_ENTITIES: JSON.stringify(retrievedData.entities || [], null, 2),
-            HA_ENTITIES_BY_DOMAIN: JSON.stringify(retrievedData.entities_by_domain || {}, null, 2),
-            COMMAND_HINT: retrievedData.command_hint || userRequest,
-        };
-        let prompt = T.fillTemplate(T.INQUIRY_HOME_ASSISTANT, baseValues);
-        // Webapp parity: prompt-builder.js appends response-format.md after
-        // every inquiry template when retrievedData is present, even when
-        // the inquiry has its own format guidance. Keep the pattern uniform.
-        prompt += '\n\n' + T.fillTemplate(T.RESPONSE_FORMAT_FULL, baseValues);
-        if (personalityWrap.responsePrefix) {
-            prompt = personalityWrap.responsePrefix + '\n\n' + prompt;
-        }
-        if (personalityWrap.responseSuffix) {
-            prompt += personalityWrap.responseSuffix;
-        }
-        return prompt;
+    _buildHomeAssistantPrompt({ userRequest, personalityWrap, retrievedData, history }) {
+        return this._buildSecondPassPrompt({
+            userRequest, personalityWrap, history,
+            inquiryTemplate: window.AiPromptTemplates.INQUIRY_HOME_ASSISTANT,
+            inquiryValues: {
+                HA_ENTITIES: JSON.stringify(retrievedData.entities || [], null, 2),
+                HA_ENTITIES_BY_DOMAIN: JSON.stringify(retrievedData.entities_by_domain || {}, null, 2),
+                COMMAND_HINT: retrievedData.command_hint || userRequest,
+            },
+        });
     },
 
-    /** Second-pass web-search prompt — inquiries/web-search.md + the full
-     *  response-format spec, wrapped in personality. The webapp's
-     *  prompt-builder.js appends response-format.md after every inquiry
-     *  template; without it the model returns prose markdown instead of
-     *  the structured JSON our parser needs. */
-    _buildWebSearchPrompt({ userRequest, personalityWrap, retrievedData }) {
+    /** Shared second-pass prompt assembler. Matches webapp prompt-builder.js
+     *  buildPrompt(inquiryType, retrievedData) flow exactly: lead with
+     *  base-context (filled with DATE_TIME + USER_REQUEST + CHAT_HISTORY +
+     *  AVAILABLE_TOOLS_LIST), append the inquiry template, append the FULL
+     *  response-format, with personality prefix/suffix wrapping the whole
+     *  thing.
+     *
+     *  Why this matters: some inquiry templates (web-search.md) don't
+     *  include {{DATE_TIME}} themselves. Without base-context as the
+     *  foundation, the model has no idea what "today" is and renders
+     *  events that ALREADY HAPPENED as "tonight" (June 12 match read
+     *  by the model on June 13 sounded like it was still upcoming). */
+    _buildSecondPassPrompt({ userRequest, personalityWrap, history, inquiryTemplate, inquiryValues = {} }) {
         const T = window.AiPromptTemplates;
         const baseValues = {
             DATE_TIME: T.formatDateTime(),
             USER_REQUEST: userRequest,
-            SEARCH_RESULTS: retrievedData.formatted || JSON.stringify(retrievedData, null, 2),
+            CHAT_HISTORY: this._formatHistory(history || []),
+            AVAILABLE_TOOLS_LIST: T.AVAILABLE_TOOLS_LIST,
+            ...inquiryValues,
         };
-        let prompt = T.fillTemplate(T.INQUIRY_WEB_SEARCH, baseValues);
+        let prompt = T.fillTemplate(T.BASE_CONTEXT, baseValues);
+        prompt += '\n\n' + T.fillTemplate(inquiryTemplate, baseValues);
         prompt += '\n\n' + T.fillTemplate(T.RESPONSE_FORMAT_FULL, baseValues);
         if (personalityWrap.responsePrefix) prompt = personalityWrap.responsePrefix + '\n\n' + prompt;
         if (personalityWrap.responseSuffix) prompt += personalityWrap.responseSuffix;
         return prompt;
+    },
+
+    _buildWebSearchPrompt({ userRequest, personalityWrap, retrievedData, history }) {
+        return this._buildSecondPassPrompt({
+            userRequest, personalityWrap, history,
+            inquiryTemplate: window.AiPromptTemplates.INQUIRY_WEB_SEARCH,
+            inquiryValues: {
+                SEARCH_RESULTS: retrievedData.formatted || JSON.stringify(retrievedData, null, 2),
+            },
+        });
     },
 
     _formatHistory(history) {
@@ -530,7 +581,7 @@ const ConsoleAiClient = {
             // Pass 2
             const formatted = this._formatSearchResultsForPrompt(searchResp);
             const wsPrompt = this._buildWebSearchPrompt({
-                userRequest: text, personalityWrap,
+                userRequest: text, personalityWrap, history,
                 retrievedData: { formatted },
             });
             onStage('pass2_start', {});
@@ -602,7 +653,7 @@ const ConsoleAiClient = {
         // ── PASS 2 ─────────────────────────────────────────────────
         const commandHint = pass1Parsed.query?.command_hint || text;
         const haPrompt = this._buildHomeAssistantPrompt({
-            userRequest: text, personalityWrap,
+            userRequest: text, personalityWrap, history,
             retrievedData: { ...retrievedData, command_hint: commandHint },
         });
         onStage('pass2_start', {});
