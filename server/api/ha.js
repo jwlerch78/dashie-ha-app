@@ -234,7 +234,7 @@ router.get('/entities', requireSignedIn, async (req, res) => {
  * a hard 500 for normal HA-rejection cases like "entity not found" so the
  * Console chat can show the rejection inline rather than blowing up.)
  */
-router.post('/service', requireSignedIn, async (req, res) => {
+router.post('/service', requireSignedIn, express.json(), async (req, res) => {
     const { domain, service, data } = req.body || {};
     if (!domain || !service || typeof domain !== 'string' || typeof service !== 'string') {
         return res.status(400).json({ success: false, error: 'domain and service are required' });
@@ -263,7 +263,7 @@ router.post('/service', requireSignedIn, async (req, res) => {
  * Used when the AI emits action.command === 'forward_to_assist'. Mirrors
  * the mobile-app path haService.sendConversation() takes.
  */
-router.post('/conversation', requireSignedIn, async (req, res) => {
+router.post('/conversation', requireSignedIn, express.json(), async (req, res) => {
     const { text, conversation_id, language } = req.body || {};
     if (!text || typeof text !== 'string') {
         return res.status(400).json({ success: false, error: 'text is required' });
