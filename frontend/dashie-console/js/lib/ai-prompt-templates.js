@@ -211,6 +211,52 @@ Return an ACTION response with \`category: "homeassistant"\` and \`command: "exe
         return `${date}, ${time}`;
     }
 
+    // Verbatim copy of /js/ai/prompts/response-format.md (the full version,
+    // appended after any inquiry template — same pattern as the webapp's
+    // prompt-builder.js does when retrievedData is present). Without this,
+    // the model returns markdown prose instead of the structured JSON our
+    // parser expects, and the chat UI falls back to "raw output" mode.
+    const RESPONSE_FORMAT_FULL = `# Response Format
+
+Respond with ONE of these JSON formats:
+
+## 1. RESPONSE (can answer now)
+\`\`\`json
+{
+  "type": "response",
+  "voice": "Brief spoken answer (max 20 words)",
+  "text": "Extra details NOT in voice (max 100 words) or null"
+}
+\`\`\`
+
+Rules:
+- voice ≠ text (don't repeat)
+- voice is what gets read aloud — keep it concise and conversational
+- text is optional supplemental detail — only include when useful, max 100 words
+- Be CONCISE and family-friendly
+
+## 2. INFO_REQUEST (need more data)
+\`\`\`json
+{
+  "type": "info_request",
+  "tool": "tool_name",
+  "query": {/* tool-specific params */}
+}
+\`\`\`
+
+## 3. ACTION (change dashboard or fire Home Assistant)
+\`\`\`json
+{
+  "type": "action",
+  "voice": "Confirmation (max 20 words)",
+  "text": null,
+  "action": {"category": "homeassistant", "command": "...", "parameters": {...}}
+}
+\`\`\`
+
+CRITICAL: Respond ONLY with raw JSON. Do NOT wrap in markdown code fences (no \`\`\`json blocks). Just the JSON object directly.
+`;
+
     // Verbatim copy of /js/ai/prompts/inquiries/web-search.md.
     const INQUIRY_WEB_SEARCH = `# Inquiry Context: Web Search
 
@@ -235,6 +281,7 @@ Please provide a helpful response based on these search results.
     window.AiPromptTemplates = {
         BASE_CONTEXT,
         RESPONSE_FORMAT_INITIAL,
+        RESPONSE_FORMAT_FULL,
         AVAILABLE_TOOLS_LIST,
         INQUIRY_HOME_ASSISTANT,
         INQUIRY_WEB_SEARCH,

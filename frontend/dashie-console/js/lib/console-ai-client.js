@@ -194,8 +194,11 @@ const ConsoleAiClient = {
         return prompt;
     },
 
-    /** Second-pass web-search prompt — inquiries/web-search.md filled with
-     *  the formatted search results, wrapped in personality. */
+    /** Second-pass web-search prompt — inquiries/web-search.md + the full
+     *  response-format spec, wrapped in personality. The webapp's
+     *  prompt-builder.js appends response-format.md after every inquiry
+     *  template; without it the model returns prose markdown instead of
+     *  the structured JSON our parser needs. */
     _buildWebSearchPrompt({ userRequest, personalityWrap, retrievedData }) {
         const T = window.AiPromptTemplates;
         const baseValues = {
@@ -204,6 +207,7 @@ const ConsoleAiClient = {
             SEARCH_RESULTS: retrievedData.formatted || JSON.stringify(retrievedData, null, 2),
         };
         let prompt = T.fillTemplate(T.INQUIRY_WEB_SEARCH, baseValues);
+        prompt += '\n\n' + T.fillTemplate(T.RESPONSE_FORMAT_FULL, baseValues);
         if (personalityWrap.responsePrefix) prompt = personalityWrap.responsePrefix + '\n\n' + prompt;
         if (personalityWrap.responseSuffix) prompt += personalityWrap.responseSuffix;
         return prompt;

@@ -388,7 +388,7 @@ const VoiceAiChat = {
             <div style="margin-bottom: 24px; padding: 18px 22px; background: #0f0f10; border-radius: 10px; color: #fff;">
                 ${this._renderUserPill(user)}
                 <div style="font-size: 28px; line-height: 1.3; font-weight: 700; color: #fff; white-space: pre-wrap; margin-bottom: ${h.text ? '14px' : '0'};">${esc(h.voice || '')}</div>
-                ${h.text ? `<div style="font-size: 18px; line-height: 1.5; color: rgba(255, 255, 255, 0.78); white-space: pre-wrap;">${esc(h.text)}</div>` : ''}
+                ${h.text ? `<div style="font-size: 14px; line-height: 1.5; color: rgba(255, 255, 255, 0.72); white-space: pre-wrap;">${esc(h.text)}</div>` : ''}
                 ${action}
                 ${parsedWarning}
                 <div style="margin-top: 14px; padding-top: 10px; border-top: 1px solid rgba(255, 255, 255, 0.1); font-size: 11px; color: rgba(255, 255, 255, 0.5); font-family: ui-monospace, SFMono-Regular, Menlo, monospace;">
