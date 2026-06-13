@@ -66,6 +66,13 @@
             "id": "gemini-3.5-flash",
             "provider": "gemini",
             "name": "Gemini 3.5 Flash",
+            "description": "Top flash quality (premium)",
+            "supportsStreaming": true
+        },
+        {
+            "id": "gemini-2.5-flash",
+            "provider": "gemini",
+            "name": "Gemini 2.5 Flash",
             "description": "Best price-performance (recommended)",
             "supportsStreaming": true
         },
@@ -106,7 +113,7 @@
         }
     ];
 
-    const DEFAULT_AI_MODEL = "gemini-3.1-flash-lite";
+    const DEFAULT_AI_MODEL = "gemini-2.5-flash";
 
     const VOICE_AI_MODELS = {
         "choreCompletion": {

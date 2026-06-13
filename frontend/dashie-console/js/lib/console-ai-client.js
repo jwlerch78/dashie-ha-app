@@ -230,27 +230,57 @@ const ConsoleAiClient = {
     _parseContent(content) {
         if (!content || typeof content !== 'string') return null;
         let body = content.trim();
-        body = body.replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/i, '').trim();
+        // Strip ```json ... ``` fences (both inline and newline-separated).
+        body = body
+            .replace(/^\s*```(?:json|JSON)?\s*\r?\n?/i, '')
+            .replace(/\r?\n?\s*```\s*$/i, '')
+            .trim();
         const firstBrace = body.indexOf('{');
         if (firstBrace > 0) body = body.slice(firstBrace);
 
         // Try as-is first.
-        try { return JSON.parse(body); } catch (_) { /* fall through */ }
+        let parsed = null;
+        try { parsed = JSON.parse(body); } catch (_) { /* fall through */ }
 
         // Strip trailing commas before } or ]. Common Gemini quirk.
-        const cleaned = body.replace(/,(\s*[}\]])/g, '$1');
-        try { return JSON.parse(cleaned); } catch (_) { /* fall through */ }
-
-        // Truncated response repair: trim to the last balanced brace.
-        // Walks the string tracking quote/brace state and remembers the
-        // last index where outer depth returned to 0 — that's the largest
-        // valid JSON prefix. Then close any still-open braces.
-        const repaired = this._repairTruncatedJson(cleaned);
-        if (repaired) {
-            try { return JSON.parse(repaired); } catch (_) { /* fall through */ }
+        if (!parsed) {
+            const cleaned = body.replace(/,(\s*[}\]])/g, '$1');
+            try { parsed = JSON.parse(cleaned); } catch (_) { /* fall through */ }
+            if (!parsed) {
+                // Truncated response repair: trim to the last balanced brace.
+                const repaired = this._repairTruncatedJson(cleaned);
+                if (repaired) {
+                    try { parsed = JSON.parse(repaired); } catch (_) { /* still null */ }
+                }
+            }
         }
 
-        return null;
+        return parsed ? this._normalizeParsedShape(parsed) : null;
+    },
+
+    /** Lenient normalization for common model misformats:
+     *  - `type: 'web_search'` (or any other tool name) instead of the
+     *    canonical `type: 'info_request', tool: 'web_search'`. Both
+     *    Gemini and OpenAI hit this when conversation history primes
+     *    them to think the tool is the response type. Rewrite to
+     *    canonical shape so our dispatch code finds it. */
+    _normalizeParsedShape(parsed) {
+        if (!parsed || typeof parsed !== 'object') return parsed;
+        const KNOWN_TOOLS = new Set([
+            'web_search', 'calendar_events', 'family_members', 'chores', 'rewards',
+            'location_events', 'travel_time', 'family_locations', 'weather_data',
+            'home_assistant',
+        ]);
+        if (parsed.type && KNOWN_TOOLS.has(parsed.type) && parsed.type !== 'info_request') {
+            return {
+                type: 'info_request',
+                tool: parsed.type,
+                query: parsed.query,
+                context: parsed.context,
+                processing_message: parsed.processing_message,
+            };
+        }
+        return parsed;
     },
 
     /** Best-effort recovery of a JSON object whose tail was cut off by

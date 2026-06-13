@@ -404,7 +404,8 @@ const VoiceAiChat = {
                 ${action}
                 ${parsedWarning}
                 <div style="margin-top: 14px; padding-top: 10px; border-top: 1px solid rgba(255, 255, 255, 0.1); display: flex; flex-direction: column; gap: 3px;">
-                    ${timingLine ? `<div style="${monoStyle}" title="${headerBits.join(' · ')}">${timingLine}</div>` : ''}
+                    ${headerBits.length ? `<div style="${monoStyle}">${headerBits.join('  ·  ')}</div>` : ''}
+                    ${timingLine ? `<div style="${monoStyle}">${timingLine}</div>` : ''}
                     ${costLine ? `<div style="${monoStyle}">${costLine}</div>` : ''}
                 </div>
             </div>
