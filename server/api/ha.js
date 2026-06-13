@@ -154,6 +154,72 @@ router.post('/control', requireSignedIn, express.json(), async (req, res) => {
 });
 
 /**
+ * GET /api/ha/entities
+ * Returns the user's controllable HA entities formatted for AI consumption.
+ * Mirrors webapp ai-info-gatherer.fetchHomeAssistantData(): filters to the
+ * same controllable domains, includes friendly_name, state, and a small
+ * set of domain-specific attributes (brightness, temperature, position),
+ * and groups by domain for easier prompt parsing.
+ *
+ * Cached for 60s on the worker side via haClient.getStates() — no extra
+ * cache here. Callers (Console test-chat) cache on their own.
+ */
+const CONTROLLABLE_DOMAINS = [
+    'light', 'switch', 'cover', 'climate', 'fan', 'scene', 'script',
+    'input_boolean', 'automation', 'lock', 'media_player',
+];
+
+router.get('/entities', requireSignedIn, async (req, res) => {
+    try {
+        const all = await haClient.getStates();
+        if (!Array.isArray(all)) {
+            return res.status(502).json({ error: 'unexpected /api/states response shape' });
+        }
+        const controllable = all.filter(e => {
+            const domain = (e.entity_id || '').split('.')[0];
+            return CONTROLLABLE_DOMAINS.includes(domain);
+        });
+
+        const formatted = controllable.map(entity => {
+            const domain = entity.entity_id.split('.')[0];
+            const row = {
+                entity_id: entity.entity_id,
+                domain,
+                friendly_name: entity.attributes?.friendly_name || entity.entity_id,
+                state: entity.state,
+            };
+            if (domain === 'light') {
+                if (entity.attributes?.brightness != null) row.brightness = entity.attributes.brightness;
+                if (entity.attributes?.color_mode) row.color_mode = entity.attributes.color_mode;
+            } else if (domain === 'climate') {
+                if (entity.attributes?.current_temperature != null) row.current_temperature = entity.attributes.current_temperature;
+                if (entity.attributes?.temperature != null) row.temperature = entity.attributes.temperature;
+                if (entity.attributes?.hvac_modes) row.hvac_modes = entity.attributes.hvac_modes;
+            } else if (domain === 'cover') {
+                if (entity.attributes?.current_position != null) row.current_position = entity.attributes.current_position;
+            }
+            return row;
+        });
+
+        const byDomain = {};
+        for (const e of formatted) {
+            if (!byDomain[e.domain]) byDomain[e.domain] = [];
+            byDomain[e.domain].push(e);
+        }
+
+        return res.json({
+            success: true,
+            total_entities: formatted.length,
+            entities_by_domain: byDomain,
+            entities: formatted,
+        });
+    } catch (e) {
+        console.warn('[api/ha/entities] failed:', e.message);
+        return res.status(500).json({ success: false, error: e.message });
+    }
+});
+
+/**
  * POST /api/ha/service
  * Generic HA service-call passthrough. Body: { domain, service, data }.
  * Used by the Console's test-chat to dispatch AI-emitted actions
