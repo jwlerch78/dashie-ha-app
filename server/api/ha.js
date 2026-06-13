@@ -154,6 +154,79 @@ router.post('/control', requireSignedIn, express.json(), async (req, res) => {
 });
 
 /**
+ * POST /api/ha/service
+ * Generic HA service-call passthrough. Body: { domain, service, data }.
+ * Used by the Console's test-chat to dispatch AI-emitted actions
+ * (e.g. {domain:'light', service:'turn_on', data:{entity_id:'light.kitchen'}}).
+ *
+ * Trust model: caller must already be signed in to the add-on
+ * (requireSignedIn). The add-on holds the supervisor / long-lived HA
+ * token, so we never expose it to the frontend.
+ *
+ * Returns { success: true, result } on HA success; { success: false, error }
+ * with an HTTP 500 on HA failure. (We return 200/success:false instead of
+ * a hard 500 for normal HA-rejection cases like "entity not found" so the
+ * Console chat can show the rejection inline rather than blowing up.)
+ */
+router.post('/service', requireSignedIn, async (req, res) => {
+    const { domain, service, data } = req.body || {};
+    if (!domain || !service || typeof domain !== 'string' || typeof service !== 'string') {
+        return res.status(400).json({ success: false, error: 'domain and service are required' });
+    }
+    // Light entity-id presence check — every HA service call we'd normally
+    // issue from chat targets at least one entity. Allow data-less calls
+    // through anyway (e.g. script.execute with no args) but require object.
+    const payload = (data && typeof data === 'object' && !Array.isArray(data)) ? data : {};
+    try {
+        const entityId = payload.entity_id;
+        // haRegistry.callService signature is (domain, service, entityId, serviceData)
+        // — peel entity_id out of `data` for the target field.
+        const serviceData = { ...payload };
+        delete serviceData.entity_id;
+        const result = await haRegistry.callService(domain, service, entityId, serviceData);
+        return res.json({ success: true, result });
+    } catch (e) {
+        console.warn(`[api/ha/service] ${domain}.${service} failed:`, e.message);
+        return res.json({ success: false, error: e.message || 'ha_service_failed' });
+    }
+});
+
+/**
+ * POST /api/ha/conversation
+ * Forwards a transcript to HA's Assist pipeline (/api/conversation/process).
+ * Used when the AI emits action.command === 'forward_to_assist'. Mirrors
+ * the mobile-app path haService.sendConversation() takes.
+ */
+router.post('/conversation', requireSignedIn, async (req, res) => {
+    const { text, conversation_id, language } = req.body || {};
+    if (!text || typeof text !== 'string') {
+        return res.status(400).json({ success: false, error: 'text is required' });
+    }
+    try {
+        const config = haClient.getConfig();
+        if (!config) return res.status(503).json({ success: false, error: 'ha_not_configured' });
+        const body = { text, language: language || 'en' };
+        if (conversation_id) body.conversation_id = conversation_id;
+        const resp = await fetch(`${config.baseUrl}/api/conversation/process`, {
+            method: 'POST',
+            headers: {
+                'Authorization': `Bearer ${config.token}`,
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify(body),
+        });
+        const respBody = await resp.json().catch(() => ({}));
+        if (!resp.ok) {
+            return res.json({ success: false, error: respBody?.message || `HTTP ${resp.status}`, response: respBody });
+        }
+        return res.json({ success: true, response: respBody });
+    } catch (e) {
+        console.warn('[api/ha/conversation] failed:', e.message);
+        return res.json({ success: false, error: e.message });
+    }
+});
+
+/**
  * POST /api/ha/adopt/:deviceId
  *
  * Adopts a kiosk-mode device that's pushing state to HA but doesn't have a
