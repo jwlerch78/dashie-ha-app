@@ -1,255 +1,157 @@
 /* ============================================================
-   ConsoleAiClient — test-chat surface to the same ai-gateway
-   the tablets use.
+   ConsoleAiClient — same pipeline the tablets run, in the Console.
    ------------------------------------------------------------
+   Mirrors the webapp's
+       _buildPrompt → ai-gateway → ai-response-parser →
+       info_request fetch → _buildPrompt(inquiry) → ai-gateway →
+       execute_commands → haService.callService()
+   flow as closely as possible. Uses the actual webapp prompt
+   templates (vendored in ai-prompt-templates.js) and the actual
+   personality wrapper (personality-prompt-builder.js).
+
+   Two-pass for HA:
+     1. Initial prompt = base-context + response-format-initial + personality.
+     2. AI replies — usually info_request { tool: 'home_assistant',
+        query: { command_hint } } for any smart-home command.
+     3. We fetch the user's controllable HA entities via the add-on
+        (/api/ha/entities), exactly the shape the webapp builds via
+        haService.discoverEntities() + the controllableDomains filter.
+     4. Second prompt = inquiries/home-assistant.md filled with the
+        entity list + personality. AI returns `execute_commands`.
+     5. We dispatch each command via the add-on (/api/ha/service),
+        same shape haService.callService(domain, service, data) sends.
+
    Public API:
      await ConsoleAiClient.sendQuery(text, {
-        personalityId, modelId, history
-     }) → {
-        voice, text, action, type,
-        usage: {input_tokens, output_tokens, total_tokens},
-        model, provider,
-        latency_ms,            // wall-clock for the gateway round trip
-        total_latency_ms,      // includes personality fetch + action dispatch
-        action_result          // when type === 'action' and dispatch ran
-     }
-
-   Pipeline:
-     1. Resolve personality (cached) via DashieAuth.dbRequest('get_personality').
-     2. Build a system prompt = personality prefix + JSON-format spec.
-     3. POST to ai-gateway with {provider, prompt, options.model}.
-     4. Strip markdown fences and JSON.parse the content.
-     5. If action.category === 'homeassistant', dispatch via the add-on
-        (POST /api/ha/service) and attach the result.
-     6. Return everything the chat UI needs to render a turn.
-
-   Sandboxing:
-     - ai-gateway does no analytics logging itself, only console.log.
-     - The structured client-side analytics path (ai-service.js in the
-       webapp) is bypassed entirely. Test-chat traffic does not appear
-       in production usage metrics.
+        personalityId, modelId, history,
+        onStage(stageName, detail)   // optional progress callback
+     }) → turn object (see end of file for shape)
    ============================================================ */
 
 const ConsoleAiClient = {
-    /** Cache: personalityId → resolved row from get_personality. */
     _personalityCache: new Map(),
+    _entityCache: null,
+    _entityCacheAt: 0,
+    _ENTITY_CACHE_MS: 60_000,
 
-    /** Pick the AI provider for a given model id by prefix. Mirrors the
-     *  webapp's provider switch — anything we don't recognize defaults to
-     *  Claude, the same as the gateway's fallback. */
     _providerForModel(modelId) {
         if (!modelId || typeof modelId !== 'string') return 'claude';
         const id = modelId.toLowerCase();
         if (id.startsWith('claude-')) return 'claude';
-        if (id.startsWith('gpt-'))    return 'openai';
-        if (id.startsWith('o1')   || id.startsWith('o3')) return 'openai';
+        if (id.startsWith('gpt-') || id.startsWith('o1') || id.startsWith('o3')) return 'openai';
         if (id.startsWith('gemini-')) return 'gemini';
         if (id.startsWith('bedrock-')) return 'bedrock';
         return 'claude';
     },
 
-    /** Fetch a personality row (memoized). Returns null if the id resolves
-     *  to nothing — caller falls back to a plain system prompt. */
     async _getPersonality(personalityId) {
         if (!personalityId) return null;
         if (this._personalityCache.has(personalityId)) {
             return this._personalityCache.get(personalityId);
         }
+        let row = null;
         try {
             const result = await DashieAuth.dbRequest('get_personality', { id: personalityId });
-            const row = result?.data || result?.personality || null;
-            this._personalityCache.set(personalityId, row);
-            return row;
-        } catch (e) {
-            console.warn('[ConsoleAiClient] get_personality failed for', personalityId, e?.message);
-            // Try by key (built-in personalities are keyed, not UUIDed).
+            row = result?.data || result?.personality || null;
+        } catch (e) { /* try by key */ }
+        if (!row) {
             try {
                 const result = await DashieAuth.dbRequest('get_personality', { key: personalityId });
-                const row = result?.data || result?.personality || null;
-                this._personalityCache.set(personalityId, row);
-                return row;
-            } catch (e2) {
-                this._personalityCache.set(personalityId, null);
-                return null;
-            }
+                row = result?.data || result?.personality || null;
+            } catch (e) { /* leave null */ }
         }
+        this._personalityCache.set(personalityId, row);
+        return row;
     },
 
-    /** Build the personality wrapper for the system prompt. Mirrors the
-     *  webapp's personality-prompt-builder roughly — overview + adjectives
-     *  + topics up front, example phrases + family notes at the end. The
-     *  test-chat doesn't need every nuance of the production prompt path;
-     *  it needs to verify the personality steers the response. */
-    _personalityWrap(personality) {
-        if (!personality) return { prefix: '', suffix: '' };
-        const parts = [];
-        if (personality.personality_overview) parts.push(personality.personality_overview);
-        if (personality.similar_persona)      parts.push(`Channel a personality similar to ${personality.similar_persona}.`);
-        if (Array.isArray(personality.adjectives) && personality.adjectives.length) {
-            parts.push(`Be ${personality.adjectives.join(', ')} in your responses.`);
+    /** Fetch + cache the controllable HA entity list from the add-on.
+     *  Cache TTL matches the webapp's haService entity cache window. */
+    async _getControllableEntities() {
+        const now = Date.now();
+        if (this._entityCache && (now - this._entityCacheAt) < this._ENTITY_CACHE_MS) {
+            return this._entityCache;
         }
-        if (Array.isArray(personality.topics) && personality.topics.length) {
-            parts.push(`Topics you naturally reference: ${personality.topics.join(', ')}.`);
+        const resp = await fetch(DashieAuth._addonUrl('/api/ha/entities'));
+        if (!resp.ok) {
+            const body = await resp.json().catch(() => ({}));
+            throw new Error(body.message || body.error || `HTTP ${resp.status}`);
         }
-        const prefix = parts.length
-            ? `Embody this character (${personality.name || personality.key || 'persona'}):\n${parts.join('\n')}\n\n`
-            : '';
-
-        const suffixParts = [];
-        if (Array.isArray(personality.example_phrases) && personality.example_phrases.length) {
-            suffixParts.push(`Use phrases like:\n${personality.example_phrases.map(p => `  - "${p}"`).join('\n')}`);
-        }
-        if (personality.family_notes) {
-            suffixParts.push(`Family-specific notes: ${personality.family_notes}`);
-        }
-        suffixParts.push("VARY YOUR RESPONSES — don't start every reply the same way.");
-        const suffix = '\n\n' + suffixParts.join('\n\n');
-        return { prefix, suffix };
+        const body = await resp.json();
+        this._entityCache = body;
+        this._entityCacheAt = now;
+        return body;
     },
 
-    /** The structured JSON response contract the tablets parse against. */
-    _RESPONSE_FORMAT_SPEC: `\
-You must respond ONLY with a single JSON object — no markdown fences, no commentary.
-
-Shape:
-  {
-    "type": "response" | "action",
-    "voice": "<max 20 words; the spoken portion>",
-    "text": "<optional; up to 100 words; extra details NOT in voice; null if none>",
-    "action": null | {
-      "category": "homeassistant",
-      "command": "execute_commands" | "forward_to_assist",
-      "parameters": {
-        // For execute_commands:
-        //   "commands": [{ "domain": "light", "service": "turn_on", "data": { "entity_id": "light.kitchen" } }, ...]
-        // For forward_to_assist:
-        //   "transcript": "<verbatim user request>"
-      }
-    }
-  }
-
-Rules:
-  - type "response" → answer the user. Set action to null.
-  - type "action"   → user is asking to control Home Assistant. Set
-                      voice to a brief acknowledgement, fill action with
-                      the service call(s) to fire, and leave text null
-                      unless the user asked a question alongside the
-                      command.
-  - Always include voice. Keep it speakable.
-  - When unsure whether to act, use forward_to_assist and let HA's
-    Assist parse the transcript.`,
-
-    _buildSystemPrompt(personality, userText, history) {
-        const { prefix, suffix } = this._personalityWrap(personality);
-        const histBlock = (Array.isArray(history) && history.length)
-            ? '\n\nRecent conversation:\n' + history.slice(-4).map(h => {
-                const role = h.role === 'user' ? 'User' : 'You';
-                const content = h.voice || h.text || h.content || '';
-                return `${role}: ${content}`;
-            }).join('\n')
-            : '';
-        return `${prefix}${this._RESPONSE_FORMAT_SPEC}${histBlock}\n\nUser request: ${userText}${suffix}`;
+    /** Build the initial prompt — base context filled with date/time/user
+     *  request, prepended with personality prefix, appended with the slim
+     *  response-format-initial spec, then personality suffix. Matches the
+     *  webapp's buildPrompt() with inquiryType=null. */
+    _buildInitialPrompt({ userRequest, personalityWrap, history }) {
+        const T = window.AiPromptTemplates;
+        const baseValues = {
+            DATE_TIME: T.formatDateTime(),
+            USER_REQUEST: userRequest,
+            CHAT_HISTORY: this._formatHistory(history),
+            AVAILABLE_TOOLS_LIST: T.AVAILABLE_TOOLS_LIST,
+        };
+        let prompt = T.fillTemplate(T.BASE_CONTEXT, baseValues);
+        if (personalityWrap.responsePrefix) {
+            prompt = personalityWrap.responsePrefix + '\n\n' + prompt;
+        }
+        prompt += '\n\n' + T.fillTemplate(T.RESPONSE_FORMAT_INITIAL, baseValues);
+        if (personalityWrap.responseSuffix) {
+            prompt += personalityWrap.responseSuffix;
+        }
+        return prompt;
     },
 
-    /** Strip markdown code fences and parse the AI's JSON response. */
+    /** Second-pass HA prompt — inquiries/home-assistant.md filled with the
+     *  user's entity list. Matches buildPrompt({inquiryType: 'home-assistant',
+     *  retrievedData: {entities, entities_by_domain, command_hint}}). */
+    _buildHomeAssistantPrompt({ userRequest, personalityWrap, retrievedData }) {
+        const T = window.AiPromptTemplates;
+        const baseValues = {
+            DATE_TIME: T.formatDateTime(),
+            USER_REQUEST: userRequest,
+            HA_ENTITIES: JSON.stringify(retrievedData.entities || [], null, 2),
+            HA_ENTITIES_BY_DOMAIN: JSON.stringify(retrievedData.entities_by_domain || {}, null, 2),
+            COMMAND_HINT: retrievedData.command_hint || userRequest,
+        };
+        let prompt = T.fillTemplate(T.INQUIRY_HOME_ASSISTANT, baseValues);
+        if (personalityWrap.responsePrefix) {
+            prompt = personalityWrap.responsePrefix + '\n\n' + prompt;
+        }
+        if (personalityWrap.responseSuffix) {
+            prompt += personalityWrap.responseSuffix;
+        }
+        return prompt;
+    },
+
+    _formatHistory(history) {
+        if (!Array.isArray(history) || history.length === 0) return '';
+        const lines = history.slice(-4).map(h => {
+            const speaker = h.role === 'user' ? 'User' : 'You';
+            return `${speaker}: ${h.content || ''}`;
+        });
+        return `Recent conversation:\n${lines.join('\n')}\n`;
+    },
+
     _parseContent(content) {
         if (!content || typeof content !== 'string') return null;
         let body = content.trim();
-        // ```json ... ``` or ``` ... ```
         body = body.replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/i, '').trim();
-        // Some models prepend an "Output:" or similar — strip up to the first {.
         const firstBrace = body.indexOf('{');
         if (firstBrace > 0) body = body.slice(firstBrace);
         const lastBrace = body.lastIndexOf('}');
         if (lastBrace > 0 && lastBrace < body.length - 1) body = body.slice(0, lastBrace + 1);
-        try {
-            return JSON.parse(body);
-        } catch (e) {
-            return null;
-        }
+        try { return JSON.parse(body); } catch (e) { return null; }
     },
 
-    /** Fire an HA action via the add-on. Only HOMEASSISTANT actions are
-     *  routed today; other categories return a stub so the UI can show
-     *  them without failing. */
-    async _dispatchAction(action) {
-        if (!action || typeof action !== 'object') return { dispatched: false };
-        if (action.category !== 'homeassistant') {
-            return { dispatched: false, reason: `unsupported category: ${action.category}` };
-        }
-        const cmd = action.command;
-        const params = action.parameters || {};
-
-        if (cmd === 'execute_commands') {
-            const commands = Array.isArray(params.commands) ? params.commands : [];
-            const results = [];
-            for (const c of commands) {
-                try {
-                    const resp = await fetch(DashieAuth._addonUrl('/api/ha/service'), {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({
-                            domain: c.domain,
-                            service: c.service,
-                            data: c.data || {},
-                        }),
-                    });
-                    const body = await resp.json().catch(() => ({}));
-                    results.push({
-                        domain: c.domain, service: c.service, data: c.data || {},
-                        ok: resp.ok && body.success !== false,
-                        error: !resp.ok || body.success === false
-                            ? (body.message || body.error || `HTTP ${resp.status}`)
-                            : null,
-                    });
-                } catch (e) {
-                    results.push({
-                        domain: c.domain, service: c.service, data: c.data || {},
-                        ok: false, error: e?.message || String(e),
-                    });
-                }
-            }
-            return { dispatched: true, kind: 'execute_commands', results };
-        }
-
-        if (cmd === 'forward_to_assist') {
-            try {
-                const resp = await fetch(DashieAuth._addonUrl('/api/ha/conversation'), {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ text: params.transcript || '' }),
-                });
-                const body = await resp.json().catch(() => ({}));
-                return {
-                    dispatched: resp.ok,
-                    kind: 'forward_to_assist',
-                    response: body,
-                    error: resp.ok ? null : (body.message || body.error || `HTTP ${resp.status}`),
-                };
-            } catch (e) {
-                return { dispatched: false, kind: 'forward_to_assist', error: e?.message || String(e) };
-            }
-        }
-
-        return { dispatched: false, reason: `unsupported command: ${cmd}` };
-    },
-
-    /** Main entry point. */
-    async sendQuery(text, opts = {}) {
+    /** POST the prompt to ai-gateway and return { ok, raw, latency_ms, error }. */
+    async _callGateway({ provider, prompt, modelId }) {
         const t0 = performance.now();
-        const personalityId = opts.personalityId || null;
-        const modelId = opts.modelId || 'claude-sonnet-4-5';
-        const history = Array.isArray(opts.history) ? opts.history : [];
-
-        const personality = await this._getPersonality(personalityId);
-        const provider = this._providerForModel(modelId);
-        const prompt = this._buildSystemPrompt(personality, text, history);
-
-        const gatewayUrl = `${DashieAuth.config.url}/functions/v1/ai-gateway`;
-        const tGateway0 = performance.now();
-        let raw, gatewayError;
         try {
-            const resp = await fetch(gatewayUrl, {
+            const resp = await fetch(`${DashieAuth.config.url}/functions/v1/ai-gateway`, {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
@@ -260,53 +162,270 @@ Rules:
                     provider,
                     prompt,
                     stream: false,
-                    options: { model: modelId, max_tokens: 512, temperature: 0.7 },
+                    options: { model: modelId, max_tokens: 1024, temperature: 0.7 },
                 }),
             });
             const body = await resp.json().catch(() => ({}));
+            const latency_ms = Math.round(performance.now() - t0);
             if (!resp.ok) {
-                gatewayError = body.error || body.message || `HTTP ${resp.status}`;
-            } else {
-                raw = body;
+                return { ok: false, error: body.error || body.message || `HTTP ${resp.status}`, latency_ms };
             }
+            return { ok: true, raw: body, latency_ms };
         } catch (e) {
-            gatewayError = e?.message || String(e);
+            return { ok: false, error: e?.message || String(e), latency_ms: Math.round(performance.now() - t0) };
         }
-        const tGateway1 = performance.now();
+    },
 
-        if (gatewayError) {
+    /** Fire an HA service call via the add-on. */
+    async _callHaService(domain, service, data) {
+        try {
+            const resp = await fetch(DashieAuth._addonUrl('/api/ha/service'), {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ domain, service, data: data || {} }),
+            });
+            const body = await resp.json().catch(() => ({}));
+            if (!resp.ok || body.success === false) {
+                return { ok: false, error: body.error || body.message || `HTTP ${resp.status}` };
+            }
+            return { ok: true, result: body.result };
+        } catch (e) {
+            return { ok: false, error: e?.message || String(e) };
+        }
+    },
+
+    async _dispatchExecuteCommands(commands) {
+        const results = [];
+        for (const c of commands) {
+            const r = await this._callHaService(c.domain, c.service, c.data);
+            results.push({
+                domain: c.domain, service: c.service, data: c.data || {},
+                ok: r.ok, error: r.error || null,
+            });
+        }
+        return results;
+    },
+
+    /** forward_to_assist — POST text to HA Assist via the add-on. */
+    async _dispatchForwardToAssist(transcript) {
+        try {
+            const resp = await fetch(DashieAuth._addonUrl('/api/ha/conversation'), {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ text: transcript || '' }),
+            });
+            const body = await resp.json().catch(() => ({}));
             return {
-                ok: false,
-                error: gatewayError,
-                latency_ms: Math.round(tGateway1 - tGateway0),
-                total_latency_ms: Math.round(tGateway1 - t0),
+                ok: resp.ok && body.success !== false,
+                response: body.response || body,
+                error: !resp.ok ? (body.message || body.error || `HTTP ${resp.status}`) : null,
+            };
+        } catch (e) {
+            return { ok: false, error: e?.message || String(e) };
+        }
+    },
+
+    /** Main entry point. Returns a structured "turn" object. */
+    async sendQuery(text, opts = {}) {
+        const t0 = performance.now();
+        const personalityId = opts.personalityId || null;
+        const modelId = opts.modelId || 'claude-sonnet-4-5';
+        const history = Array.isArray(opts.history) ? opts.history : [];
+        const onStage = typeof opts.onStage === 'function' ? opts.onStage : () => {};
+
+        const provider = this._providerForModel(modelId);
+        const personality = await this._getPersonality(personalityId);
+        const personalityWrap = (window.PersonalityPromptBuilder
+            ? window.PersonalityPromptBuilder.buildPersonalityPrompt(personality)
+            : { responsePrefix: '', responseSuffix: '' });
+
+        onStage('pass1_start', { provider, modelId });
+
+        // ── PASS 1 ─────────────────────────────────────────────────
+        const initialPrompt = this._buildInitialPrompt({ userRequest: text, personalityWrap, history });
+        const pass1 = await this._callGateway({ provider, prompt: initialPrompt, modelId });
+
+        if (!pass1.ok) {
+            return {
+                ok: false, error: pass1.error,
+                latency_ms: pass1.latency_ms,
+                total_latency_ms: Math.round(performance.now() - t0),
+                stages: [{ name: 'pass1', latency_ms: pass1.latency_ms, error: pass1.error }],
             };
         }
 
-        const parsed = this._parseContent(raw.content);
+        const pass1Parsed = this._parseContent(pass1.raw.content);
+        const pass1Stage = {
+            name: 'pass1',
+            latency_ms: pass1.latency_ms,
+            model: pass1.raw.model,
+            provider: pass1.raw.provider,
+            usage: pass1.raw.usage,
+            type: pass1Parsed?.type || 'response',
+            parsed: pass1Parsed,
+            raw_content: pass1.raw.content,
+        };
+        onStage('pass1_done', pass1Stage);
+
+        // ── If it's a direct response or non-HA action, we're done.
+        if (!pass1Parsed || pass1Parsed.type === 'response' || pass1Parsed.type === 'action') {
+            return await this._finalize({
+                t0, parsed: pass1Parsed, raw: pass1.raw,
+                stages: [pass1Stage],
+                primary_model: pass1.raw.model, primary_provider: pass1.raw.provider,
+                primary_usage: pass1.raw.usage, primary_latency: pass1.latency_ms,
+            });
+        }
+
+        // ── info_request, but only the home_assistant tool is wired today.
+        if (pass1Parsed.type !== 'info_request' || pass1Parsed.tool !== 'home_assistant') {
+            return await this._finalize({
+                t0, parsed: pass1Parsed, raw: pass1.raw,
+                stages: [pass1Stage],
+                primary_model: pass1.raw.model, primary_provider: pass1.raw.provider,
+                primary_usage: pass1.raw.usage, primary_latency: pass1.latency_ms,
+                unsupported_tool: pass1Parsed.tool,
+            });
+        }
+
+        // ── FETCH HA ENTITIES ──────────────────────────────────────
+        onStage('fetch_entities_start', {});
+        const tFetch0 = performance.now();
+        let retrievedData;
+        try {
+            retrievedData = await this._getControllableEntities();
+        } catch (e) {
+            const fetchErr = e?.message || String(e);
+            return {
+                ok: false, error: `HA entity fetch failed: ${fetchErr}`,
+                latency_ms: pass1.latency_ms,
+                total_latency_ms: Math.round(performance.now() - t0),
+                stages: [
+                    pass1Stage,
+                    { name: 'fetch_entities', latency_ms: Math.round(performance.now() - tFetch0), error: fetchErr },
+                ],
+            };
+        }
+        const fetchStage = {
+            name: 'fetch_entities',
+            latency_ms: Math.round(performance.now() - tFetch0),
+            entity_count: retrievedData?.entities?.length || 0,
+        };
+        onStage('fetch_entities_done', fetchStage);
+
+        // ── PASS 2 ─────────────────────────────────────────────────
+        const commandHint = pass1Parsed.query?.command_hint || text;
+        const haPrompt = this._buildHomeAssistantPrompt({
+            userRequest: text, personalityWrap,
+            retrievedData: { ...retrievedData, command_hint: commandHint },
+        });
+        onStage('pass2_start', {});
+        const pass2 = await this._callGateway({ provider, prompt: haPrompt, modelId });
+        if (!pass2.ok) {
+            return {
+                ok: false, error: pass2.error,
+                latency_ms: pass2.latency_ms,
+                total_latency_ms: Math.round(performance.now() - t0),
+                stages: [pass1Stage, fetchStage, { name: 'pass2', latency_ms: pass2.latency_ms, error: pass2.error }],
+            };
+        }
+        const pass2Parsed = this._parseContent(pass2.raw.content);
+        const pass2Stage = {
+            name: 'pass2',
+            latency_ms: pass2.latency_ms,
+            model: pass2.raw.model, provider: pass2.raw.provider,
+            usage: pass2.raw.usage,
+            type: pass2Parsed?.type || 'response',
+            parsed: pass2Parsed, raw_content: pass2.raw.content,
+        };
+        onStage('pass2_done', pass2Stage);
+
+        // Sum usage across passes.
+        const totalUsage = this._sumUsage([pass1.raw.usage, pass2.raw.usage]);
+        return await this._finalize({
+            t0, parsed: pass2Parsed, raw: pass2.raw,
+            stages: [pass1Stage, fetchStage, pass2Stage],
+            primary_model: pass2.raw.model, primary_provider: pass2.raw.provider,
+            primary_usage: totalUsage,
+            primary_latency: pass1.latency_ms + pass2.latency_ms,
+        });
+    },
+
+    _sumUsage(usages) {
+        const total = { input_tokens: 0, output_tokens: 0, total_tokens: 0 };
+        for (const u of usages) {
+            if (!u) continue;
+            total.input_tokens  += u.input_tokens  || 0;
+            total.output_tokens += u.output_tokens || 0;
+            total.total_tokens  += u.total_tokens  || 0;
+        }
+        return total;
+    },
+
+    /** Build the final turn object. Dispatch any action present. */
+    async _finalize({ t0, parsed, raw, stages, primary_model, primary_provider, primary_usage, primary_latency, unsupported_tool }) {
         const out = {
             ok: true,
             type: parsed?.type || 'response',
             voice: parsed?.voice || raw.content || '',
             text: parsed?.text || null,
             action: parsed?.action || null,
-            raw_content: raw.content,
             parsed_ok: !!parsed,
-            usage: raw.usage || { input_tokens: 0, output_tokens: 0, total_tokens: 0 },
-            model: raw.model || modelId,
-            provider: raw.provider || provider,
-            latency_ms: Math.round(tGateway1 - tGateway0),
+            raw_content: raw.content,
+            usage: primary_usage || { input_tokens: 0, output_tokens: 0, total_tokens: 0 },
+            model: primary_model,
+            provider: primary_provider,
+            latency_ms: primary_latency,
+            stages,
+            unsupported_tool: unsupported_tool || null,
         };
-
         if (out.action) {
             const tAct0 = performance.now();
-            out.action_result = await this._dispatchAction(out.action);
+            out.action_result = await this._runAction(out.action);
             out.action_latency_ms = Math.round(performance.now() - tAct0);
         }
-
         out.total_latency_ms = Math.round(performance.now() - t0);
         return out;
+    },
+
+    async _runAction(action) {
+        if (!action || typeof action !== 'object') return { dispatched: false };
+        if (action.category !== 'homeassistant') {
+            return { dispatched: false, reason: `unsupported category: ${action.category}` };
+        }
+        const cmd = action.command;
+        const params = action.parameters || {};
+        if (cmd === 'execute_commands') {
+            const commands = Array.isArray(params.commands) ? params.commands : [];
+            return { dispatched: true, kind: 'execute_commands', results: await this._dispatchExecuteCommands(commands) };
+        }
+        if (cmd === 'forward_to_assist') {
+            return { dispatched: true, kind: 'forward_to_assist', ...(await this._dispatchForwardToAssist(params.transcript || '')) };
+        }
+        return { dispatched: false, reason: `unsupported command: ${cmd}` };
     },
 };
 
 window.ConsoleAiClient = ConsoleAiClient;
+
+/*
+   Turn object shape:
+   {
+     ok: true,
+     type: 'response'|'info_request'|'action',
+     voice, text, action,
+     parsed_ok, raw_content,
+     usage: {input_tokens, output_tokens, total_tokens},  // summed across passes
+     model, provider,
+     latency_ms,                  // gateway round trips only (sum across passes)
+     total_latency_ms,            // wall clock incl. fetches and action dispatch
+     action_result?: { dispatched, kind, results, error? },
+     action_latency_ms?,
+     unsupported_tool?: string,   // if the AI asked for a tool we don't have
+     stages: [
+       { name: 'pass1', latency_ms, model, provider, usage, type, parsed, raw_content },
+       { name: 'fetch_entities', latency_ms, entity_count, error? },
+       { name: 'pass2', latency_ms, model, provider, usage, type, parsed, raw_content },
+     ],
+   }
+*/

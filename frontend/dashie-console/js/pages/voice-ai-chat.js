@@ -102,20 +102,37 @@ const VoiceAiChat = {
         if (!text) return;
 
         const turnId = Date.now();
+        const pendingId = turnId + 1;
         this._open.busy = true;
         this._open.lastError = null;
         this._open.history.unshift({ id: turnId, role: 'user', text });
-        this._open.history.unshift({ id: turnId + 1, role: 'pending' });
+        this._open.history.unshift({ id: pendingId, role: 'pending', stage: 'Calling AI…', stages: [] });
         this._open.draft = '';
         if (ta) ta.value = '';
         App.renderPage();
-        // Restore focus for fast iteration.
         setTimeout(() => document.getElementById('voice-ai-chat-input')?.focus(), 0);
+
+        const onStage = (name, detail) => {
+            if (!this._open) return;
+            const pending = this._open.history.find(h => h.id === pendingId);
+            if (!pending) return;
+            const labels = {
+                pass1_start: 'Calling AI…',
+                pass1_done: detail?.type === 'info_request'
+                    ? 'AI requested HA entities…'
+                    : 'AI replied — wrapping up…',
+                fetch_entities_start: 'Fetching HA entities…',
+                fetch_entities_done: `Got ${detail?.entity_count || 0} entities. Calling AI again…`,
+                pass2_start: 'Calling AI again with entity context…',
+                pass2_done: 'AI replied — dispatching…',
+            };
+            pending.stage = labels[name] || name;
+            pending.stages.push({ name, t: Date.now(), detail });
+            App.renderPage();
+        };
 
         let result;
         try {
-            // Prior turns the model can see — most-recent-first in our
-            // store, so reverse + skip the pending marker before sending.
             const prior = this._open.history
                 .filter(h => h.role === 'user' || h.role === 'ai')
                 .slice()
@@ -127,18 +144,18 @@ const VoiceAiChat = {
                 personalityId: this._open.personalityId,
                 modelId: this._open.modelId,
                 history: prior,
+                onStage,
             });
         } catch (e) {
             result = { ok: false, error: e?.message || String(e) };
         }
 
-        if (!this._open) return;  // user closed the page mid-flight
-        // Replace the pending marker with the real reply.
-        this._open.history = this._open.history.filter(h => h.role !== 'pending');
+        if (!this._open) return;
+        this._open.history = this._open.history.filter(h => h.id !== pendingId);
         if (result?.ok) {
-            this._open.history.unshift({ id: turnId + 1, role: 'ai', ...result });
+            this._open.history.unshift({ id: pendingId, role: 'ai', ...result });
         } else {
-            this._open.history.unshift({ id: turnId + 1, role: 'ai-error', error: result?.error || 'Unknown error', latency_ms: result?.latency_ms });
+            this._open.history.unshift({ id: pendingId, role: 'ai-error', error: result?.error || 'Unknown error', latency_ms: result?.latency_ms, stages: result?.stages });
             this._open.lastError = result?.error || null;
         }
         this._open.busy = false;
@@ -236,7 +253,7 @@ const VoiceAiChat = {
         if (h.role === 'pending') {
             return `
                 <div style="margin-bottom: 18px; padding: 10px 12px; background: var(--bg-card, #fff); border-left: 3px solid var(--accent); font-size: 13px; color: var(--text-muted);">
-                    <em>Thinking…</em>
+                    <em>${esc(h.stage || 'Thinking…')}</em>
                 </div>`;
         }
         if (h.role === 'ai-error') {
@@ -253,13 +270,25 @@ const VoiceAiChat = {
         const meta = [];
         if (h.model)    meta.push(esc(h.model));
         if (h.provider && h.provider !== h.model) meta.push(esc(h.provider));
-        if (h.latency_ms != null) meta.push(`${h.latency_ms} ms`);
+        if (h.latency_ms != null) meta.push(`${h.latency_ms} ms gateway`);
         if (usage.input_tokens || usage.output_tokens) {
             meta.push(`${usage.input_tokens || 0} in / ${usage.output_tokens || 0} out`);
         }
         if (h.total_latency_ms != null && h.total_latency_ms !== h.latency_ms) {
-            meta.push(`+${h.total_latency_ms - (h.latency_ms || 0)} ms overhead`);
+            meta.push(`${h.total_latency_ms} ms total`);
         }
+
+        // Per-stage breakdown shown as a second meta line when there's
+        // more than just pass1 (i.e. we did the two-pass HA flow).
+        const stageBits = [];
+        for (const s of (h.stages || [])) {
+            if (s.name === 'pass1') stageBits.push(`pass1 ${s.latency_ms}ms`);
+            else if (s.name === 'fetch_entities') stageBits.push(`entities ${s.latency_ms}ms (${s.entity_count})`);
+            else if (s.name === 'pass2') stageBits.push(`pass2 ${s.latency_ms}ms`);
+        }
+        const stagesLine = stageBits.length > 1
+            ? `<div style="margin-top: 4px; font-size: 11px; color: var(--text-muted); font-family: ui-monospace, SFMono-Regular, Menlo, monospace;">${stageBits.join('  ·  ')}</div>`
+            : '';
 
         const parsedWarning = h.parsed_ok === false
             ? `<div style="font-size: 11px; color: var(--accent); margin-top: 4px;">⚠ Model didn't return valid JSON — showing raw output</div>`
@@ -277,6 +306,7 @@ const VoiceAiChat = {
                 <div style="margin-top: 10px; padding-top: 8px; border-top: 1px dashed var(--border, #e5e7eb); font-size: 11px; color: var(--text-muted); font-family: ui-monospace, SFMono-Regular, Menlo, monospace;">
                     ${meta.join('  ·  ')}
                 </div>
+                ${stagesLine}
             </div>
         `;
     },
