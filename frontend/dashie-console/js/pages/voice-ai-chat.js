@@ -208,6 +208,12 @@ const VoiceAiChat = {
         const sendLabel = sendBusy ? 'Thinking…' : 'Send (⌘⏎)';
 
         return `
+            <style>
+                @keyframes voiceAiChatPulse {
+                    0%, 100% { opacity: 0.3; transform: scale(0.8); }
+                    50%      { opacity: 1;   transform: scale(1.2); }
+                }
+            </style>
             <div style="max-width: 760px;">
                 <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 16px;">
                     <button class="btn btn-ghost btn-sm" onclick="VoiceAiChat.close()">← Back to Voice & AI</button>
@@ -260,25 +266,34 @@ const VoiceAiChat = {
 
     _renderTurn(h) {
         const esc = VoiceAiPage._escape.bind(VoiceAiPage);
+
         if (h.role === 'user') {
+            // White pill on dark bg — mirrors the tablet's voice-overlay__user-message.
             return `
-                <div style="margin-bottom: 18px; padding: 10px 12px; background: var(--bg-muted, #f4f4f5); border-radius: 6px; font-size: 13px;">
-                    <div style="font-size: 11px; font-weight: 600; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 4px;">You</div>
+                <div style="margin-bottom: 18px; padding: 12px 18px; background: rgba(255, 255, 255, 0.92); color: #000; border-radius: 8px; font-size: 18px; line-height: 1.4;">
                     ${esc(h.text)}
                 </div>`;
         }
+
         if (h.role === 'pending') {
+            // Animated dots + stage label — voice-overlay__thinking pattern.
             return `
-                <div style="margin-bottom: 18px; padding: 10px 12px; background: var(--bg-card, #fff); border-left: 3px solid var(--accent); font-size: 13px; color: var(--text-muted);">
-                    <em>${esc(h.stage || 'Thinking…')}</em>
+                <div style="margin-bottom: 18px; padding: 14px 18px; background: #0f0f10; border-radius: 8px; display: flex; align-items: center; gap: 14px; min-height: 48px;">
+                    <span style="display: inline-flex; gap: 6px;">
+                        <span class="voice-ai-chat-dot" style="width: 9px; height: 9px; border-radius: 50%; background: #ff6b1a; animation: voiceAiChatPulse 1.4s ease-in-out infinite;"></span>
+                        <span class="voice-ai-chat-dot" style="width: 9px; height: 9px; border-radius: 50%; background: #ff6b1a; animation: voiceAiChatPulse 1.4s ease-in-out 0.2s infinite;"></span>
+                        <span class="voice-ai-chat-dot" style="width: 9px; height: 9px; border-radius: 50%; background: #ff6b1a; animation: voiceAiChatPulse 1.4s ease-in-out 0.4s infinite;"></span>
+                    </span>
+                    <span style="font-size: 14px; color: rgba(220, 220, 220, 0.9);">${esc(h.stage || 'Thinking…')}</span>
                 </div>`;
         }
+
         if (h.role === 'ai-error') {
             return `
-                <div style="margin-bottom: 18px; padding: 10px 12px; background: #fff5f5; border-left: 3px solid var(--status-error, #c00); border-radius: 0 4px 4px 0;">
-                    <div style="font-size: 11px; font-weight: 600; color: var(--status-error, #c00); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 4px;">Error</div>
-                    <div style="font-size: 13px; color: #831818;">${esc(h.error || 'Unknown error')}</div>
-                    ${h.latency_ms ? `<div style="font-size: 11px; color: var(--text-muted); margin-top: 6px;">${h.latency_ms} ms before failure</div>` : ''}
+                <div style="margin-bottom: 18px; padding: 14px 18px; background: #1a0a0a; border-left: 3px solid #f87171; border-radius: 0 8px 8px 0;">
+                    <div style="font-size: 11px; font-weight: 600; color: #f87171; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 6px;">Error</div>
+                    <div style="font-size: 14px; color: #fca5a5;">${esc(h.error || 'Unknown error')}</div>
+                    ${h.latency_ms ? `<div style="font-size: 11px; color: rgba(255,255,255,0.5); margin-top: 6px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace;">${h.latency_ms} ms before failure</div>` : ''}
                 </div>`;
         }
 
@@ -304,23 +319,22 @@ const VoiceAiChat = {
             else if (s.name === 'pass2') stageBits.push(`pass2 ${s.latency_ms}ms`);
         }
         const stagesLine = stageBits.length > 1
-            ? `<div style="margin-top: 4px; font-size: 11px; color: var(--text-muted); font-family: ui-monospace, SFMono-Regular, Menlo, monospace;">${stageBits.join('  ·  ')}</div>`
+            ? `<div style="margin-top: 4px; font-size: 11px; color: rgba(255, 255, 255, 0.4); font-family: ui-monospace, SFMono-Regular, Menlo, monospace;">${stageBits.join('  ·  ')}</div>`
             : '';
 
         const parsedWarning = h.parsed_ok === false
-            ? `<div style="font-size: 11px; color: var(--accent); margin-top: 4px;">⚠ Model didn't return valid JSON — showing raw output</div>`
+            ? `<div style="font-size: 12px; color: #fbbf24; margin-top: 8px;">⚠ Model didn't return valid JSON — showing raw output</div>`
             : '';
 
         const action = h.action ? this._renderAction(h) : '';
 
         return `
-            <div style="margin-bottom: 24px; padding: 12px 14px; background: var(--bg-card, #fff); border: 1px solid var(--border, #e5e7eb); border-radius: 6px;">
-                <div style="font-size: 11px; font-weight: 600; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 8px;">Assistant</div>
-                <div style="font-size: 18px; line-height: 1.4; color: var(--text-primary); white-space: pre-wrap;">${esc(h.voice || '')}</div>
-                ${h.text ? `<div style="margin-top: 8px; font-size: 13px; line-height: 1.5; color: var(--text-secondary); white-space: pre-wrap;">${esc(h.text)}</div>` : ''}
+            <div style="margin-bottom: 24px; padding: 18px 22px; background: #0f0f10; border-radius: 10px; color: #fff;">
+                <div style="font-size: 28px; line-height: 1.3; font-weight: 700; color: #fff; white-space: pre-wrap; margin-bottom: ${h.text ? '14px' : '0'};">${esc(h.voice || '')}</div>
+                ${h.text ? `<div style="font-size: 18px; line-height: 1.5; color: rgba(255, 255, 255, 0.78); white-space: pre-wrap;">${esc(h.text)}</div>` : ''}
                 ${action}
                 ${parsedWarning}
-                <div style="margin-top: 10px; padding-top: 8px; border-top: 1px dashed var(--border, #e5e7eb); font-size: 11px; color: var(--text-muted); font-family: ui-monospace, SFMono-Regular, Menlo, monospace;">
+                <div style="margin-top: 14px; padding-top: 10px; border-top: 1px solid rgba(255, 255, 255, 0.1); font-size: 11px; color: rgba(255, 255, 255, 0.5); font-family: ui-monospace, SFMono-Regular, Menlo, monospace;">
                     ${meta.join('  ·  ')}
                 </div>
                 ${stagesLine}
@@ -333,7 +347,7 @@ const VoiceAiChat = {
         const a = h.action;
         const r = h.action_result;
         const lines = [];
-        lines.push(`<div style="font-size: 11px; font-weight: 600; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px; margin-top: 12px;">Action</div>`);
+        lines.push(`<div style="font-size: 11px; font-weight: 600; color: rgba(255, 255, 255, 0.5); text-transform: uppercase; letter-spacing: 0.5px; margin-top: 16px;">Action</div>`);
 
         if (a.command === 'execute_commands') {
             const cmds = Array.isArray(a.parameters?.commands) ? a.parameters.commands : [];
@@ -342,26 +356,26 @@ const VoiceAiChat = {
                 const status = !r || !r.dispatched ? '·'
                     : result?.ok ? '✓'
                     : '✗';
-                const color = result?.ok ? '#10b981' : (result === undefined ? 'var(--text-muted)' : '#c00');
+                const color = result?.ok ? '#34d399' : (result === undefined ? 'rgba(255,255,255,0.5)' : '#f87171');
                 const errLine = result?.error
-                    ? `<div style="font-size: 11px; color: #c00; margin-left: 18px;">${esc(result.error)}</div>` : '';
+                    ? `<div style="font-size: 11px; color: #f87171; margin-left: 18px;">${esc(result.error)}</div>` : '';
                 return `
-                    <div style="font-size: 12px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; margin-top: 4px;">
+                    <div style="font-size: 12px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; margin-top: 6px; color: rgba(255, 255, 255, 0.85);">
                         <span style="color: ${color}; font-weight: 700; display: inline-block; width: 14px;">${status}</span>
                         ${esc(`${c.domain || ''}.${c.service || ''}`)}
-                        ${c.data?.entity_id ? `<span style="color: var(--text-muted);"> → ${esc(c.data.entity_id)}</span>` : ''}
+                        ${c.data?.entity_id ? `<span style="color: rgba(255, 255, 255, 0.45);"> → ${esc(c.data.entity_id)}</span>` : ''}
                         ${errLine}
                     </div>`;
             }).join('');
             lines.push(`<div style="margin-top: 4px;">${rows}</div>`);
         } else if (a.command === 'forward_to_assist') {
             const speech = r?.response?.response?.speech?.plain?.speech || '';
-            lines.push(`<div style="font-size: 12px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; margin-top: 4px; color: var(--text-secondary);">→ HA Assist: ${esc(a.parameters?.transcript || '')}</div>`);
-            if (speech) lines.push(`<div style="font-size: 12px; margin-top: 4px; color: var(--text-secondary);">↩ ${esc(speech)}</div>`);
-            if (r?.error) lines.push(`<div style="font-size: 11px; color: #c00; margin-top: 4px;">${esc(r.error)}</div>`);
+            lines.push(`<div style="font-size: 12px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; margin-top: 6px; color: rgba(255, 255, 255, 0.7);">→ HA Assist: ${esc(a.parameters?.transcript || '')}</div>`);
+            if (speech) lines.push(`<div style="font-size: 12px; margin-top: 4px; color: rgba(255, 255, 255, 0.7);">↩ ${esc(speech)}</div>`);
+            if (r?.error) lines.push(`<div style="font-size: 11px; color: #f87171; margin-top: 4px;">${esc(r.error)}</div>`);
         } else {
-            lines.push(`<pre style="font-size: 11px; background: var(--bg-muted, #f4f4f5); padding: 8px; border-radius: 4px; overflow-x: auto; margin: 4px 0 0;">${esc(JSON.stringify(a, null, 2))}</pre>`);
-            if (r?.reason) lines.push(`<div style="font-size: 11px; color: var(--text-muted); margin-top: 4px;">${esc(r.reason)}</div>`);
+            lines.push(`<pre style="font-size: 11px; background: rgba(255,255,255,0.06); color: rgba(255,255,255,0.85); padding: 8px; border-radius: 4px; overflow-x: auto; margin: 6px 0 0;">${esc(JSON.stringify(a, null, 2))}</pre>`);
+            if (r?.reason) lines.push(`<div style="font-size: 11px; color: rgba(255,255,255,0.5); margin-top: 4px;">${esc(r.reason)}</div>`);
         }
 
         return lines.join('');
