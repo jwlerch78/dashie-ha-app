@@ -34,14 +34,36 @@ const ConsoleAiClient = {
     _entityCacheAt: 0,
     _ENTITY_CACHE_MS: 60_000,
 
+    /** Look up the provider for a model from the bundled catalog. The catalog
+     *  is the source of truth used by web + Android + here; prefix-sniffing
+     *  the id breaks on shapes like 'us.amazon.nova-2-lite-v1:0' (was falling
+     *  through to 'claude' default, which is why a Nova selection got routed
+     *  to Anthropic and 400'd on the Claude API). Falls back to prefix-sniff
+     *  only if the catalog isn't loaded yet. */
     _providerForModel(modelId) {
         if (!modelId || typeof modelId !== 'string') return 'claude';
+        const row = window.AiModelCatalog?.AI_MODEL_CATALOG?.find(m => m.id === modelId);
+        if (row?.provider) return row.provider;
         const id = modelId.toLowerCase();
         if (id.startsWith('claude-')) return 'claude';
         if (id.startsWith('gpt-') || id.startsWith('o1') || id.startsWith('o3')) return 'openai';
         if (id.startsWith('gemini-')) return 'gemini';
-        if (id.startsWith('bedrock-')) return 'bedrock';
+        if (id.startsWith('us.amazon.') || id.startsWith('bedrock-') || id.includes('nova')) return 'bedrock';
         return 'claude';
+    },
+
+    /** Per-provider max_tokens — matches webapp ai-context.js AI_CONFIG.
+     *  Gemini gets a much larger budget because search-result synthesis
+     *  often blows past 1500 tokens; truncation mid-JSON makes the parser
+     *  fail and the chat ends up rendering literal half-finished JSON. */
+    _maxTokensForProvider(provider) {
+        switch (provider) {
+            case 'claude':  return 1500;
+            case 'openai':  return 1500;
+            case 'gemini':  return 50000;
+            case 'bedrock': return 5000;
+            default:        return 2048;
+        }
     },
 
     async _getPersonality(personalityId) {
@@ -211,9 +233,62 @@ const ConsoleAiClient = {
         body = body.replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/i, '').trim();
         const firstBrace = body.indexOf('{');
         if (firstBrace > 0) body = body.slice(firstBrace);
-        const lastBrace = body.lastIndexOf('}');
-        if (lastBrace > 0 && lastBrace < body.length - 1) body = body.slice(0, lastBrace + 1);
-        try { return JSON.parse(body); } catch (e) { return null; }
+
+        // Try as-is first.
+        try { return JSON.parse(body); } catch (_) { /* fall through */ }
+
+        // Strip trailing commas before } or ]. Common Gemini quirk.
+        const cleaned = body.replace(/,(\s*[}\]])/g, '$1');
+        try { return JSON.parse(cleaned); } catch (_) { /* fall through */ }
+
+        // Truncated response repair: trim to the last balanced brace.
+        // Walks the string tracking quote/brace state and remembers the
+        // last index where outer depth returned to 0 — that's the largest
+        // valid JSON prefix. Then close any still-open braces.
+        const repaired = this._repairTruncatedJson(cleaned);
+        if (repaired) {
+            try { return JSON.parse(repaired); } catch (_) { /* fall through */ }
+        }
+
+        return null;
+    },
+
+    /** Best-effort recovery of a JSON object whose tail was cut off by
+     *  max_tokens. We track brace/bracket depth, ignore characters inside
+     *  string literals, and remember the longest prefix that ends inside
+     *  a value position with balanced quotes. Then we close every still-
+     *  open scope. Not perfect (won't recover an unfinished string field),
+     *  but salvages the common case where truncation lands between fields. */
+    _repairTruncatedJson(s) {
+        if (!s || s[0] !== '{') return null;
+        let inString = false;
+        let escape = false;
+        const stack = [];
+        let validEnd = -1;
+        for (let i = 0; i < s.length; i++) {
+            const ch = s[i];
+            if (escape) { escape = false; continue; }
+            if (inString) {
+                if (ch === '\\') escape = true;
+                else if (ch === '"') inString = false;
+                continue;
+            }
+            if (ch === '"') { inString = true; continue; }
+            if (ch === '{' || ch === '[') stack.push(ch);
+            else if (ch === '}' || ch === ']') stack.pop();
+            // Mark valid end after a value-terminating char with empty stack
+            // — anything past this is mid-field and unparseable.
+            if (stack.length > 0 && (ch === ',' || ch === '}' || ch === ']')) validEnd = i;
+        }
+        if (inString) return null;          // truncated inside a string — give up
+        if (stack.length === 0) return s;   // already balanced; outer parse already failed for another reason
+        // Trim trailing comma if any (we may have stopped after one).
+        let prefix = s;
+        if (validEnd !== -1 && validEnd < s.length - 1) prefix = s.slice(0, validEnd + 1);
+        prefix = prefix.replace(/,(\s*)$/, '$1');
+        // Close all open scopes.
+        const closers = stack.map(c => (c === '{' ? '}' : ']')).reverse().join('');
+        return prefix + closers;
     },
 
     /** POST the prompt to ai-gateway and return { ok, raw, latency_ms, error }. */
@@ -231,7 +306,11 @@ const ConsoleAiClient = {
                     provider,
                     prompt,
                     stream: false,
-                    options: { model: modelId, max_tokens: 1024, temperature: 0.7 },
+                    options: {
+                        model: modelId,
+                        max_tokens: this._maxTokensForProvider(provider),
+                        temperature: 0.7,
+                    },
                 }),
             });
             const body = await resp.json().catch(() => ({}));

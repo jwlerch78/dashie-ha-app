@@ -25,6 +25,16 @@ const VoiceAiPage = {
     _error: null,
     _savingKey: null,       // dotted key currently saving (for inline "saving…")
     _syncRegistered: false,
+    _activeTab: 'settings', // 'settings' | 'chat'
+
+    setTab(tab) {
+        if (tab !== 'settings' && tab !== 'chat') return;
+        this._activeTab = tab;
+        if (tab === 'chat' && typeof VoiceAiChat !== 'undefined' && !VoiceAiChat._open) {
+            VoiceAiChat.open();
+        }
+        App.renderPage();
+    },
 
     // Account-default AI model catalog, grouped by provider. Single source
     // of truth: js/ai/ai-models-catalog.js in dashieapp_staging (bundled
@@ -42,37 +52,54 @@ const VoiceAiPage = {
     ],
 
     render() {
-        // Test Chat subpage takes over the full page when open — it's not
-        // a modal overlay like the personality editor.
-        if (typeof VoiceAiChat !== 'undefined' && VoiceAiChat._open) {
-            return VoiceAiChat.render();
-        }
         const editorHtml = (typeof VoiceAiPersonalityEdit !== 'undefined') ? VoiceAiPersonalityEdit.render() : '';
+        const tabBar = this._renderTabBar();
+
+        if (this._activeTab === 'chat') {
+            // VoiceAiChat owns its own state; just render it under the tab bar.
+            const chatHtml = (typeof VoiceAiChat !== 'undefined' && VoiceAiChat._open)
+                ? VoiceAiChat.render()
+                : `<div style="color: var(--text-muted); padding: 40px 0; text-align: center;">Opening chat…</div>`;
+            return `${tabBar}${chatHtml}${editorHtml}`;
+        }
 
         if (!this._defaults && !this._loading && !this._error) {
             this._fetch();
-            return this._renderLoading() + editorHtml;
+            return `${tabBar}${this._renderLoading()}${editorHtml}`;
         }
-        if (this._loading && !this._defaults) return this._renderLoading() + editorHtml;
-        if (this._error && !this._defaults) return this._renderError() + editorHtml;
+        if (this._loading && !this._defaults) return `${tabBar}${this._renderLoading()}${editorHtml}`;
+        if (this._error && !this._defaults) return `${tabBar}${this._renderError()}${editorHtml}`;
 
-        return this._renderMain() + editorHtml;
+        return `${tabBar}${this._renderMain()}${editorHtml}`;
+    },
+
+    /** Tab strip rendered at the top of every Voice & AI sub-view.
+     *  Replaces the old "AI Chat Interface" top-bar button. */
+    _renderTabBar() {
+        const tab = (id, label) => {
+            const active = this._activeTab === id;
+            return `
+                <button onclick="VoiceAiPage.setTab('${id}')"
+                    style="background: none; border: none; padding: 10px 4px; cursor: pointer; font-size: 14px; font-weight: ${active ? '600' : '500'};
+                           color: ${active ? 'var(--text-primary)' : 'var(--text-muted)'};
+                           border-bottom: 2px solid ${active ? 'var(--accent)' : 'transparent'};
+                           margin-bottom: -1px;">
+                    ${label}
+                </button>`;
+        };
+        return `
+            <div style="display: flex; gap: 24px; border-bottom: 1px solid var(--border, #d1d5db); margin-bottom: 20px; max-width: 760px;">
+                ${tab('settings', 'Voice & AI Settings')}
+                ${tab('chat', 'AI Chat Interface')}
+            </div>`;
     },
 
     topBarTitle() { return 'Voice & AI'; },
     topBarSubtitle() { return 'Account-wide AI defaults and personalities'; },
 
-    /** Top-bar action button — opens the Test Chat subpage. Hidden while
-     *  the subpage is itself rendered (its own back button is enough). */
-    topBarActions() {
-        if (typeof VoiceAiChat !== 'undefined' && VoiceAiChat._open) return '';
-        return `
-            <button class="btn btn-primary"
-                    onclick="VoiceAiChat.open()"
-                    title="Send test queries to the AI pipeline with a chosen personality and model.">
-                AI Chat Interface
-            </button>`;
-    },
+    // Tab strip in _renderTabBar() replaces the old "AI Chat Interface"
+    // action button — keeping topBarActions absent so the top-bar UI is
+    // empty here (matches every other inline-tabbed page in the Console).
 
     onNavigateTo() { this._fetch(); },
 

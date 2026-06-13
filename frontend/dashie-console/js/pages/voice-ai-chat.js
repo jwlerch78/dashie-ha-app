@@ -165,9 +165,15 @@ const VoiceAiChat = {
         App.renderPage();
     },
 
-    clearHistory() {
+    async clearHistory() {
         if (!this._open) return;
-        if (!confirm('Clear the chat history?')) return;
+        const ok = await ConfirmModal.confirm({
+            title: 'Clear chat history?',
+            message: 'This removes the conversation from this session. The Settings tab is unaffected.',
+            confirmLabel: 'Clear history',
+            danger: true,
+        });
+        if (!ok) return;
         this._open.history = [];
         App.renderPage();
     },
@@ -225,11 +231,10 @@ const VoiceAiChat = {
                 }
             </style>
             <div style="max-width: 760px;">
-                <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 16px;">
-                    <button class="btn btn-ghost btn-sm" onclick="VoiceAiChat.close()">← Back to Voice & AI</button>
-                    <h2 style="margin: 0; font-size: 18px; flex: 1;">AI Chat Interface</h2>
-                    ${m.history.length ? `<button class="btn btn-ghost btn-sm" onclick="VoiceAiChat.clearHistory()">Clear history</button>` : ''}
-                </div>
+                ${m.history.length ? `
+                    <div style="display: flex; justify-content: flex-end; margin-bottom: 8px;">
+                        <button class="btn btn-ghost btn-sm" onclick="VoiceAiChat.clearHistory()">Clear history</button>
+                    </div>` : ''}
 
                 <div style="display: flex; gap: 12px; flex-wrap: wrap; align-items: center; margin-bottom: 12px;">
                     <label style="display: flex; align-items: center; gap: 6px; font-size: 13px; color: var(--text-muted);">
@@ -350,35 +355,37 @@ const VoiceAiChat = {
 
         // ai turn
         const usage = h.usage || {};
-        const meta = [];
+
+        // Model + provider line — top of the metadata, no tokens here.
+        const headerBits = [];
         if (h.model === 'nlp') {
-            meta.push('NLP');
-            meta.push(`${h.nlp_confidence ? (h.nlp_confidence * 100).toFixed(0) + '%' : 'matched'}`);
+            headerBits.push('NLP');
+            headerBits.push(h.nlp_confidence ? (h.nlp_confidence * 100).toFixed(0) + '%' : 'matched');
         } else {
-            if (h.model)    meta.push(esc(h.model));
-            if (h.provider && h.provider !== h.model) meta.push(esc(h.provider));
-        }
-        if (h.latency_ms != null) meta.push(`${this._fmtSeconds(h.latency_ms)} gateway`);
-        if (usage.input_tokens || usage.output_tokens) {
-            meta.push(`${usage.input_tokens || 0} in / ${usage.output_tokens || 0} out`);
-        }
-        if (h.total_latency_ms != null && h.total_latency_ms !== h.latency_ms) {
-            meta.push(`${this._fmtSeconds(h.total_latency_ms)} total`);
+            if (h.model) headerBits.push(esc(h.model));
+            if (h.provider && h.provider !== h.model) headerBits.push(esc(h.provider));
         }
 
-        // Per-stage breakdown shown as a second meta line. Multi-stage
-        // (two-pass HA flow) or single-stage NLP intercept both surface
-        // their timings.
+        // Timing line: "<total> - pass(1) X · search Y · pass(2) Z"
         const stageBits = [];
         for (const s of (h.stages || [])) {
-            if (s.name === 'pass1') stageBits.push(`pass1 ${this._fmtSeconds(s.latency_ms)}`);
+            if (s.name === 'pass1') stageBits.push(`pass(1) ${this._fmtSeconds(s.latency_ms)}`);
             else if (s.name === 'fetch_entities') stageBits.push(`entities ${this._fmtSeconds(s.latency_ms)} (${s.entity_count})`);
             else if (s.name === 'fetch_search') stageBits.push(`search ${this._fmtSeconds(s.latency_ms)} (${s.result_count})`);
-            else if (s.name === 'pass2') stageBits.push(`pass2 ${this._fmtSeconds(s.latency_ms)}`);
+            else if (s.name === 'pass2') stageBits.push(`pass(2) ${this._fmtSeconds(s.latency_ms)}`);
             else if (s.name === 'nlp_intercept') stageBits.push(`HA Assist ${this._fmtSeconds(s.latency_ms)}`);
         }
-        const stagesLine = stageBits.length > 1
-            ? `<div style="margin-top: 4px; font-size: 11px; color: rgba(255, 255, 255, 0.4); font-family: ui-monospace, SFMono-Regular, Menlo, monospace;">${stageBits.join('  ·  ')}</div>`
+        const total = h.total_latency_ms != null ? this._fmtSeconds(h.total_latency_ms) : null;
+        const timingLine = (total || stageBits.length > 0)
+            ? `${total || ''}${total && stageBits.length ? ' - ' : ''}${stageBits.join(' · ')}`
+            : '';
+
+        // Cost line: "$total - X in ($input) / Y out ($output)"
+        const cost = h.model && window.ConsoleAiClient
+            ? ConsoleAiClient.estimateCost(h.model, usage.input_tokens, usage.output_tokens)
+            : null;
+        const costLine = (cost?.known && (usage.input_tokens || usage.output_tokens))
+            ? `${this._fmtCost(cost.total)} - ${usage.input_tokens || 0} in (${this._fmtCost(cost.input)}) / ${usage.output_tokens || 0} out (${this._fmtCost(cost.output)})`
             : '';
 
         const parsedWarning = h.parsed_ok === false
@@ -387,13 +394,7 @@ const VoiceAiChat = {
 
         const action = h.action ? this._renderAction(h) : '';
 
-        // Cost estimation per turn — only when we know the model's pricing.
-        const cost = h.model && window.ConsoleAiClient
-            ? ConsoleAiClient.estimateCost(h.model, usage.input_tokens, usage.output_tokens)
-            : null;
-        const costLine = (cost?.known && (usage.input_tokens || usage.output_tokens))
-            ? `<div style="margin-top: 4px; font-size: 11px; color: rgba(255, 255, 255, 0.55); font-family: ui-monospace, SFMono-Regular, Menlo, monospace;">${this._fmtCost(cost.total)} - ${usage.input_tokens || 0} in (${this._fmtCost(cost.input)}) / ${usage.output_tokens || 0} out (${this._fmtCost(cost.output)})</div>`
-            : '';
+        const monoStyle = 'font-size: 11px; color: rgba(255, 255, 255, 0.55); font-family: ui-monospace, SFMono-Regular, Menlo, monospace;';
 
         return `
             <div style="margin-bottom: 24px; padding: 18px 22px; background: #0f0f10; border-radius: 10px; color: #fff;">
@@ -402,11 +403,10 @@ const VoiceAiChat = {
                 ${h.text ? `<div style="font-size: 14px; line-height: 1.5; color: rgba(255, 255, 255, 0.72); white-space: pre-wrap;">${esc(h.text)}</div>` : ''}
                 ${action}
                 ${parsedWarning}
-                <div style="margin-top: 14px; padding-top: 10px; border-top: 1px solid rgba(255, 255, 255, 0.1); font-size: 11px; color: rgba(255, 255, 255, 0.5); font-family: ui-monospace, SFMono-Regular, Menlo, monospace;">
-                    ${meta.join('  ·  ')}
+                <div style="margin-top: 14px; padding-top: 10px; border-top: 1px solid rgba(255, 255, 255, 0.1); display: flex; flex-direction: column; gap: 3px;">
+                    ${timingLine ? `<div style="${monoStyle}" title="${headerBits.join(' · ')}">${timingLine}</div>` : ''}
+                    ${costLine ? `<div style="${monoStyle}">${costLine}</div>` : ''}
                 </div>
-                ${stagesLine}
-                ${costLine}
             </div>
         `;
     },
