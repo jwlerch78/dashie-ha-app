@@ -69,21 +69,6 @@ const FeatureGate = {
     },
 
     /**
-     * Operator allowlist for admin-only surfaces (e.g. the Feature Adoption
-     * report). Gated by email rather than alpha because the operator's own
-     * prod account is an ordinary 'core' user — promoting it to alpha would
-     * unlock unrelated paid features. Keep in sync with ADMIN_EMAILS in
-     * supabase/functions/database-operations/handlers/admin-adoption.ts.
-     */
-    ADMIN_EMAILS: ['jwlerch@gmail.com'],
-
-    isAdminUser() {
-        if (this.isAlphaUser()) return true;
-        const email = (typeof DashieAuth !== 'undefined' && DashieAuth.jwtUserEmail) || '';
-        return this.ADMIN_EMAILS.includes(email.toLowerCase());
-    },
-
-    /**
      * Per-feature visibility rules.
      *   true              → always visible
      *   false             → always hidden (not ready for beta)
@@ -110,10 +95,6 @@ const FeatureGate = {
         // Cloud product. Mirrors the dashboard's feature_access catalog.
         chores:     'alpha-only',
         rewards:    'alpha-only',
-
-        // Admin-only: cross-account feature adoption report. The edge
-        // operation also enforces the same admin gate server-side.
-        featureAdoption: 'admin-only',
     },
 
     shouldShow(key) {
@@ -124,7 +105,6 @@ const FeatureGate = {
         if (rule === 'addon')      return this.isAddonMode();
         if (rule === 'dev')        return this.isDevEnv();
         if (rule === 'alpha-only') return this.isAlphaUser();
-        if (rule === 'admin-only') return this.isAdminUser();
         return true;
     },
 
@@ -139,7 +119,6 @@ const FeatureGate = {
         'locations':   'locations',
         'chores':      'chores',
         'rewards':     'rewards',
-        'feature-adoption': 'featureAdoption',
     },
 
     /**

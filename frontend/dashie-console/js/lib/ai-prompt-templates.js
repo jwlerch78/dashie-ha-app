@@ -91,9 +91,11 @@ Examples:
 CRITICAL: Respond ONLY with raw JSON. Do NOT wrap in markdown code fences (no \`\`\`json blocks). Just the JSON object directly.
 `;
 
-    // Only home_assistant for the moment — other tools light up as we wire
-    // their data services into the Console.
-    const AVAILABLE_TOOLS_LIST = `- home_assistant: query: {command_hint: "transcript"} - Smart home control (lights, thermostat, garage, etc.)`;
+    // Tools the Console can fetch data for. Each entry pairs with a fetcher
+    // branch in ConsoleAiClient and an inquiry template below. Adding a new
+    // one means: list it here, write its inquiry template, wire its fetcher.
+    const AVAILABLE_TOOLS_LIST = `- home_assistant: query: {command_hint: "transcript"} - Smart home control (lights, thermostat, garage, etc.)
+- web_search: query: "search string" - Current events, news, sports schedules, anything you don't already know. IMPORTANT: query is a STRING, not an object.`;
 
     // Verbatim copy of /js/ai/prompts/inquiries/home-assistant.md.
     const INQUIRY_HOME_ASSISTANT = `# Inquiry Context: Home Assistant Command Parsing
@@ -209,11 +211,33 @@ Return an ACTION response with \`category: "homeassistant"\` and \`command: "exe
         return `${date}, ${time}`;
     }
 
+    // Verbatim copy of /js/ai/prompts/inquiries/web-search.md.
+    const INQUIRY_WEB_SEARCH = `# Inquiry Context: Web Search
+
+This appears to be a request that requires information from the web.
+
+## How to Use Search Results
+
+1. The search results contain relevant web content for the user's query
+2. Synthesize the information into a clear, accurate response
+3. If results are insufficient or unclear, acknowledge limitations
+4. Always provide family-friendly content
+
+## Search Results
+
+\`\`\`json
+{{SEARCH_RESULTS}}
+\`\`\`
+
+Please provide a helpful response based on these search results.
+`;
+
     window.AiPromptTemplates = {
         BASE_CONTEXT,
         RESPONSE_FORMAT_INITIAL,
         AVAILABLE_TOOLS_LIST,
         INQUIRY_HOME_ASSISTANT,
+        INQUIRY_WEB_SEARCH,
         fillTemplate,
         formatDateTime,
     };

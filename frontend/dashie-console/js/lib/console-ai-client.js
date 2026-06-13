@@ -64,6 +64,39 @@ const ConsoleAiClient = {
         return row;
     },
 
+    /** Per-1M-token pricing for cost estimation. Approximate published rates
+     *  for each provider as of mid-2026 — surface this on the chat footer so
+     *  the user can eyeball cost per turn. The webapp's ai-analytics
+     *  estimateCost() uses a single flat rate; we want per-model resolution
+     *  for the test chat where you're comparing models head-to-head. */
+    PRICING_PER_M_TOKENS: {
+        // [input, output] in USD per 1M tokens
+        'gemini-2.5-flash':       [0.30, 2.50],
+        'gemini-2.5-flash-lite':  [0.10, 0.40],
+        'gemini-2.5-pro':         [1.25, 10.00],
+        'gemini-2.0-flash':       [0.10, 0.40],
+        'claude-sonnet-4-5':         [3.00, 15.00],
+        'claude-sonnet-4-5-20250929':[3.00, 15.00],
+        'claude-sonnet-4-20250514':  [3.00, 15.00],
+        'claude-opus-4-20250514':    [15.00, 75.00],
+        'claude-haiku-4-5':       [1.00, 5.00],
+        'gpt-4o':                 [2.50, 10.00],
+        'gpt-4o-mini':            [0.15, 0.60],
+        'gpt-4-turbo':            [10.00, 30.00],
+        'gpt-3.5-turbo':          [0.50, 1.50],
+        'us.amazon.nova-pro-v1:0':  [0.80, 3.20],
+        'us.amazon.nova-lite-v1:0': [0.06, 0.24],
+        'us.amazon.nova-micro-v1:0':[0.035, 0.14],
+    },
+
+    estimateCost(modelId, inputTokens, outputTokens) {
+        const rates = this.PRICING_PER_M_TOKENS[modelId];
+        if (!rates) return { input: 0, output: 0, total: 0, known: false };
+        const input  = (inputTokens  || 0) * rates[0] / 1_000_000;
+        const output = (outputTokens || 0) * rates[1] / 1_000_000;
+        return { input, output, total: input + output, known: true };
+    },
+
     /** Fetch + cache the controllable HA entity list from the add-on.
      *  Cache TTL matches the webapp's haService entity cache window. */
     async _getControllableEntities() {
@@ -80,6 +113,40 @@ const ConsoleAiClient = {
         this._entityCache = body;
         this._entityCacheAt = now;
         return body;
+    },
+
+    /** Call the same web-search-gateway edge fn the webapp uses. Returns the
+     *  raw provider response (results array + provider name + metadata). */
+    async _runWebSearch(query, { provider = 'brave', count = 10 } = {}) {
+        const url = `${DashieAuth.config.url}/functions/v1/web-search-gateway`;
+        const resp = await fetch(url, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'apikey': DashieAuth.anonKey,
+                'Authorization': `Bearer ${DashieAuth.anonKey}`,
+            },
+            body: JSON.stringify({ provider, query, options: { count } }),
+        });
+        const body = await resp.json().catch(() => ({}));
+        if (!resp.ok) throw new Error(body.error || body.message || `HTTP ${resp.status}`);
+        return body;
+    },
+
+    /** Format search results as the AI sees them — mirrors the webapp's
+     *  webSearchService.formatResultsForAI() output. */
+    _formatSearchResultsForPrompt(searchResponse, maxResults = 5) {
+        const results = (searchResponse?.results || []).slice(0, maxResults);
+        let formatted = `Web Search Results (via ${searchResponse?.provider || 'unknown'}):\n\n`;
+        results.forEach((r, i) => {
+            formatted += `${i + 1}. ${r.title || ''}\n`;
+            formatted += `   URL: ${r.url || ''}\n`;
+            formatted += `   ${r.snippet || ''}\n\n`;
+        });
+        if ((searchResponse?.results || []).length > maxResults) {
+            formatted += `... and ${searchResponse.results.length - maxResults} more results\n`;
+        }
+        return formatted;
     },
 
     /** Build the initial prompt — base context filled with date/time/user
@@ -124,6 +191,21 @@ const ConsoleAiClient = {
         if (personalityWrap.responseSuffix) {
             prompt += personalityWrap.responseSuffix;
         }
+        return prompt;
+    },
+
+    /** Second-pass web-search prompt — inquiries/web-search.md filled with
+     *  the formatted search results, wrapped in personality. */
+    _buildWebSearchPrompt({ userRequest, personalityWrap, retrievedData }) {
+        const T = window.AiPromptTemplates;
+        const baseValues = {
+            DATE_TIME: T.formatDateTime(),
+            USER_REQUEST: userRequest,
+            SEARCH_RESULTS: retrievedData.formatted || JSON.stringify(retrievedData, null, 2),
+        };
+        let prompt = T.fillTemplate(T.INQUIRY_WEB_SEARCH, baseValues);
+        if (personalityWrap.responsePrefix) prompt = personalityWrap.responsePrefix + '\n\n' + prompt;
+        if (personalityWrap.responseSuffix) prompt += personalityWrap.responseSuffix;
         return prompt;
     },
 
@@ -322,7 +404,70 @@ const ConsoleAiClient = {
             });
         }
 
-        // ── info_request, but only the home_assistant tool is wired today.
+        // ── info_request → web_search ──────────────────────────────
+        if (pass1Parsed.type === 'info_request' && pass1Parsed.tool === 'web_search') {
+            const queryStr = typeof pass1Parsed.query === 'string'
+                ? pass1Parsed.query
+                : (pass1Parsed.query?.query || pass1Parsed.query?.q || text);
+            onStage('fetch_search_start', { query: queryStr });
+            const tFetch0 = performance.now();
+            let searchResp;
+            try {
+                searchResp = await this._runWebSearch(queryStr);
+            } catch (e) {
+                const fetchErr = e?.message || String(e);
+                return {
+                    ok: false, error: `Web search failed: ${fetchErr}`,
+                    latency_ms: pass1.latency_ms,
+                    total_latency_ms: Math.round(performance.now() - t0),
+                    stages: [pass1Stage, { name: 'fetch_search', latency_ms: Math.round(performance.now() - tFetch0), error: fetchErr }],
+                };
+            }
+            const fetchStage = {
+                name: 'fetch_search',
+                latency_ms: Math.round(performance.now() - tFetch0),
+                result_count: searchResp?.results?.length || 0,
+                provider: searchResp?.provider || 'unknown',
+            };
+            onStage('fetch_search_done', fetchStage);
+
+            // Pass 2
+            const formatted = this._formatSearchResultsForPrompt(searchResp);
+            const wsPrompt = this._buildWebSearchPrompt({
+                userRequest: text, personalityWrap,
+                retrievedData: { formatted },
+            });
+            onStage('pass2_start', {});
+            const pass2 = await this._callGateway({ provider, prompt: wsPrompt, modelId });
+            if (!pass2.ok) {
+                return {
+                    ok: false, error: pass2.error,
+                    latency_ms: pass2.latency_ms,
+                    total_latency_ms: Math.round(performance.now() - t0),
+                    stages: [pass1Stage, fetchStage, { name: 'pass2', latency_ms: pass2.latency_ms, error: pass2.error }],
+                };
+            }
+            const pass2Parsed = this._parseContent(pass2.raw.content);
+            const pass2Stage = {
+                name: 'pass2',
+                latency_ms: pass2.latency_ms,
+                model: pass2.raw.model, provider: pass2.raw.provider,
+                usage: pass2.raw.usage,
+                type: pass2Parsed?.type || 'response',
+                parsed: pass2Parsed, raw_content: pass2.raw.content,
+            };
+            onStage('pass2_done', pass2Stage);
+            const totalUsage = this._sumUsage([pass1.raw.usage, pass2.raw.usage]);
+            return await this._finalize({
+                t0, parsed: pass2Parsed, raw: pass2.raw,
+                stages: [pass1Stage, fetchStage, pass2Stage],
+                primary_model: pass2.raw.model, primary_provider: pass2.raw.provider,
+                primary_usage: totalUsage,
+                primary_latency: pass1.latency_ms + pass2.latency_ms,
+            });
+        }
+
+        // ── info_request → other (unsupported) tool ────────────────
         if (pass1Parsed.type !== 'info_request' || pass1Parsed.tool !== 'home_assistant') {
             return await this._finalize({
                 t0, parsed: pass1Parsed, raw: pass1.raw,

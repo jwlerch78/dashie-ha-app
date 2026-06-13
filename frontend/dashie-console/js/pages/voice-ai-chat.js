@@ -233,7 +233,7 @@ const VoiceAiChat = {
 
                 <div style="display: flex; gap: 8px; align-items: flex-end; margin-bottom: 24px;">
                     <textarea id="voice-ai-chat-input"
-                        placeholder="Ask anything. Try: turn off the kitchen lights, what's on the calendar tomorrow, set the office to 72°"
+                        placeholder="Type command here…"
                         oninput="VoiceAiChat.setDraft(this.value)"
                         onkeydown="VoiceAiChat.onKeyDown(event)"
                         ${sendBusy ? 'disabled' : ''}
@@ -257,42 +257,83 @@ const VoiceAiChat = {
                         ? `<p style="color: var(--text-muted); font-size: 13px; text-align: center; padding: 40px 0;">
                                No turns yet. Type a query above to start. ⌘⏎ to send.
                            </p>`
-                        : m.history.map(h => this._renderTurn(h)).join('')}
+                        : this._renderPairedHistory(m.history)}
                 </div>
             </div>
         `;
     },
 
-    _renderTurn(h) {
+    /** Walk reverse-chrono history and pair each AI entry with its preceding
+     *  user message into a single dark card (the same way the tablet's
+     *  sidebar voice-overlay groups one turn together). History layout:
+     *      [ ai_response(turn=N+1), user_msg(turn=N), ai_response(turn=N-1), … ]
+     *  We pair (history[i], history[i+1]) when ids align (ai.id === user.id+1).
+     */
+    _renderPairedHistory(history) {
+        const out = [];
+        let i = 0;
+        while (i < history.length) {
+            const cur = history[i];
+            const nxt = history[i + 1];
+            const pairedUser = (nxt?.role === 'user' && nxt.id === cur.id - 1) ? nxt : null;
+            if (cur.role === 'ai' || cur.role === 'pending' || cur.role === 'ai-error') {
+                out.push(this._renderTurn(cur, pairedUser));
+                i += pairedUser ? 2 : 1;
+            } else if (cur.role === 'user') {
+                // user with no AI yet — shouldn't happen since send() always
+                // inserts the pending marker before yielding, but render anyway.
+                out.push(this._renderTurn(null, cur));
+                i += 1;
+            } else {
+                i += 1;
+            }
+        }
+        return out.join('');
+    },
+
+    _renderUserPill(user) {
+        if (!user) return '';
+        const esc = VoiceAiPage._escape.bind(VoiceAiPage);
+        return `
+            <div style="background: rgba(255, 255, 255, 0.95); color: #000; border-radius: 6px; padding: 10px 14px; font-size: 15px; line-height: 1.35; margin-bottom: 14px;">
+                ${esc(user.text)}
+            </div>`;
+    },
+
+    /** Render a single turn (AI + paired user message in the same dark card). */
+    _renderTurn(h, user) {
         const esc = VoiceAiPage._escape.bind(VoiceAiPage);
 
-        if (h.role === 'user') {
-            // White pill on dark bg — mirrors the tablet's voice-overlay__user-message.
+        if (!h && user) {
+            // User-only (no reply yet) — shouldn't normally show.
             return `
-                <div style="margin-bottom: 18px; padding: 12px 18px; background: rgba(255, 255, 255, 0.92); color: #000; border-radius: 8px; font-size: 18px; line-height: 1.4;">
-                    ${esc(h.text)}
+                <div style="margin-bottom: 24px; padding: 18px 22px; background: #0f0f10; border-radius: 10px; color: #fff;">
+                    ${this._renderUserPill(user)}
                 </div>`;
         }
 
         if (h.role === 'pending') {
-            // Animated dots + stage label — voice-overlay__thinking pattern.
             return `
-                <div style="margin-bottom: 18px; padding: 14px 18px; background: #0f0f10; border-radius: 8px; display: flex; align-items: center; gap: 14px; min-height: 48px;">
-                    <span style="display: inline-flex; gap: 6px;">
-                        <span class="voice-ai-chat-dot" style="width: 9px; height: 9px; border-radius: 50%; background: #ff6b1a; animation: voiceAiChatPulse 1.4s ease-in-out infinite;"></span>
-                        <span class="voice-ai-chat-dot" style="width: 9px; height: 9px; border-radius: 50%; background: #ff6b1a; animation: voiceAiChatPulse 1.4s ease-in-out 0.2s infinite;"></span>
-                        <span class="voice-ai-chat-dot" style="width: 9px; height: 9px; border-radius: 50%; background: #ff6b1a; animation: voiceAiChatPulse 1.4s ease-in-out 0.4s infinite;"></span>
-                    </span>
-                    <span style="font-size: 14px; color: rgba(220, 220, 220, 0.9);">${esc(h.stage || 'Thinking…')}</span>
+                <div style="margin-bottom: 24px; padding: 18px 22px; background: #0f0f10; border-radius: 10px;">
+                    ${this._renderUserPill(user)}
+                    <div style="display: flex; align-items: center; gap: 14px; min-height: 40px;">
+                        <span style="display: inline-flex; gap: 6px;">
+                            <span class="voice-ai-chat-dot" style="width: 9px; height: 9px; border-radius: 50%; background: #ff6b1a; animation: voiceAiChatPulse 1.4s ease-in-out infinite;"></span>
+                            <span class="voice-ai-chat-dot" style="width: 9px; height: 9px; border-radius: 50%; background: #ff6b1a; animation: voiceAiChatPulse 1.4s ease-in-out 0.2s infinite;"></span>
+                            <span class="voice-ai-chat-dot" style="width: 9px; height: 9px; border-radius: 50%; background: #ff6b1a; animation: voiceAiChatPulse 1.4s ease-in-out 0.4s infinite;"></span>
+                        </span>
+                        <span style="font-size: 14px; color: rgba(220, 220, 220, 0.9);">${esc(h.stage || 'Thinking…')}</span>
+                    </div>
                 </div>`;
         }
 
         if (h.role === 'ai-error') {
             return `
-                <div style="margin-bottom: 18px; padding: 14px 18px; background: #1a0a0a; border-left: 3px solid #f87171; border-radius: 0 8px 8px 0;">
+                <div style="margin-bottom: 24px; padding: 18px 22px; background: #0f0f10; border-left: 3px solid #f87171; border-radius: 0 10px 10px 0;">
+                    ${this._renderUserPill(user)}
                     <div style="font-size: 11px; font-weight: 600; color: #f87171; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 6px;">Error</div>
                     <div style="font-size: 14px; color: #fca5a5;">${esc(h.error || 'Unknown error')}</div>
-                    ${h.latency_ms ? `<div style="font-size: 11px; color: rgba(255,255,255,0.5); margin-top: 6px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace;">${this._fmtSeconds(h.latency_ms)} before failure</div>` : ''}
+                    ${h.latency_ms ? `<div style="font-size: 11px; color: rgba(255,255,255,0.5); margin-top: 8px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace;">${this._fmtSeconds(h.latency_ms)} before failure</div>` : ''}
                 </div>`;
         }
 
@@ -321,6 +362,7 @@ const VoiceAiChat = {
         for (const s of (h.stages || [])) {
             if (s.name === 'pass1') stageBits.push(`pass1 ${this._fmtSeconds(s.latency_ms)}`);
             else if (s.name === 'fetch_entities') stageBits.push(`entities ${this._fmtSeconds(s.latency_ms)} (${s.entity_count})`);
+            else if (s.name === 'fetch_search') stageBits.push(`search ${this._fmtSeconds(s.latency_ms)} (${s.result_count})`);
             else if (s.name === 'pass2') stageBits.push(`pass2 ${this._fmtSeconds(s.latency_ms)}`);
             else if (s.name === 'nlp_intercept') stageBits.push(`HA Assist ${this._fmtSeconds(s.latency_ms)}`);
         }
@@ -334,8 +376,17 @@ const VoiceAiChat = {
 
         const action = h.action ? this._renderAction(h) : '';
 
+        // Cost estimation per turn — only when we know the model's pricing.
+        const cost = h.model && window.ConsoleAiClient
+            ? ConsoleAiClient.estimateCost(h.model, usage.input_tokens, usage.output_tokens)
+            : null;
+        const costLine = (cost?.known && (usage.input_tokens || usage.output_tokens))
+            ? `<div style="margin-top: 4px; font-size: 11px; color: rgba(255, 255, 255, 0.55); font-family: ui-monospace, SFMono-Regular, Menlo, monospace;">${this._fmtCost(cost.total)} - ${usage.input_tokens || 0} in (${this._fmtCost(cost.input)}) / ${usage.output_tokens || 0} out (${this._fmtCost(cost.output)})</div>`
+            : '';
+
         return `
             <div style="margin-bottom: 24px; padding: 18px 22px; background: #0f0f10; border-radius: 10px; color: #fff;">
+                ${this._renderUserPill(user)}
                 <div style="font-size: 28px; line-height: 1.3; font-weight: 700; color: #fff; white-space: pre-wrap; margin-bottom: ${h.text ? '14px' : '0'};">${esc(h.voice || '')}</div>
                 ${h.text ? `<div style="font-size: 18px; line-height: 1.5; color: rgba(255, 255, 255, 0.78); white-space: pre-wrap;">${esc(h.text)}</div>` : ''}
                 ${action}
@@ -344,8 +395,18 @@ const VoiceAiChat = {
                     ${meta.join('  ·  ')}
                 </div>
                 ${stagesLine}
+                ${costLine}
             </div>
         `;
+    },
+
+    /** Format a USD amount. Uses 4 decimals when small, 2 when not (so we
+     *  always show meaningful precision per turn). */
+    _fmtCost(amount) {
+        if (amount == null || !isFinite(amount)) return '$0.00';
+        if (amount === 0) return '$0.00';
+        if (amount < 0.01) return '$' + amount.toFixed(4);
+        return '$' + amount.toFixed(2);
     },
 
     _renderAction(h) {
