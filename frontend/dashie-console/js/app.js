@@ -17,6 +17,7 @@ const App = {
         locations:     { page: LocationsPage },
         photos:        { page: PhotosPage },
         account:       { page: AccountPage },
+        'feature-adoption': { page: FeatureAdoptionPage },
     },
 
     async init() {

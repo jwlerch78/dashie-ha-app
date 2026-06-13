@@ -95,6 +95,10 @@ const FeatureGate = {
         // Cloud product. Mirrors the dashboard's feature_access catalog.
         chores:     'alpha-only',
         rewards:    'alpha-only',
+
+        // Admin-only: cross-account feature adoption report. The edge
+        // operation also enforces an alpha/developer gate server-side.
+        featureAdoption: 'alpha-only',
     },
 
     shouldShow(key) {
@@ -119,6 +123,7 @@ const FeatureGate = {
         'locations':   'locations',
         'chores':      'chores',
         'rewards':     'rewards',
+        'feature-adoption': 'featureAdoption',
     },
 
     /**

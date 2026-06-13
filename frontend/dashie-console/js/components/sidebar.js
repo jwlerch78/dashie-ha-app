@@ -42,6 +42,14 @@ const Sidebar = {
                 ${this._navItem('account', 'Account & Credits', 'icon-settings', activePage)}
             </div>
 
+            ${FeatureGate.isPageEnabled('feature-adoption') ? `
+                <div class="sidebar-divider"></div>
+                <div class="sidebar-section">
+                    <div class="sidebar-section-label">Admin</div>
+                    ${this._navItem('feature-adoption', 'Feature Adoption', 'icon-chart', activePage)}
+                </div>
+            ` : ''}
+
             <div class="sidebar-footer">
                 ${showCredits ? `
                     <div class="sidebar-credits" onclick="App.navigate('account')">

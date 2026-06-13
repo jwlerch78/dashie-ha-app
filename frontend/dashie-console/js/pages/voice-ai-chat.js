@@ -31,14 +31,13 @@ const VoiceAiChat = {
     open() {
         const remembered = (typeof ConsoleState !== 'undefined' && ConsoleState._state?.[this._STATE_KEY]) || {};
         const defaults = VoiceAiPage._defaults || {};
-        const personalityId = remembered.personalityId
-            || defaults.account_personality_id
-            || defaults.personality_id
-            || '';
+        // Personality is per-device on the tablet, not per-account — there's
+        // no account default. Fall back to "dashie" (the canonical built-in).
+        const personalityId = remembered.personalityId || 'dashie';
+        // Model: account default from ai.model lives on user_settings.
         const modelId = remembered.modelId
-            || defaults.account_model
-            || defaults.model
-            || 'claude-sonnet-4-5';
+            || defaults['ai.model']
+            || 'claude-sonnet-4-5-20250929';
         this._open = {
             personalityId,
             modelId,
@@ -175,23 +174,41 @@ const VoiceAiChat = {
         const m = this._open;
         if (!m) return '';
         const esc = VoiceAiPage._escape.bind(VoiceAiPage);
-        const personalities = (typeof OptionCatalog !== 'undefined') ? OptionCatalog.aiPersonalities() : [];
-        const models = (typeof OptionCatalog !== 'undefined') ? OptionCatalog.aiModels() : [];
+        const selectStyle = `padding: 6px 10px; border: 1px solid var(--border, #d1d5db); border-radius: 4px; background: var(--bg-card, #fff); font-size: 13px;`;
 
-        const personalityOptions = [['', '— Account default —'], ...personalities];
-        const modelOptions = models.length ? models : [['claude-sonnet-4-5', 'Claude Sonnet 4.5']];
+        // Personalities: use the same source the parent page renders.
+        // Custom rows (UUID) come first, then built-in templates by key.
+        const customPersonalities = VoiceAiPage._custom || [];
+        const templatePersonalities = VoiceAiPage._templates || [];
+        const personalityHtml = (() => {
+            const opt = (val, label) => `<option value="${esc(val)}" ${m.personalityId === val ? 'selected' : ''}>${esc(label)}</option>`;
+            const groups = [];
+            if (customPersonalities.length) {
+                groups.push(`<optgroup label="Custom">${customPersonalities.map(p => opt(p.id, p.name)).join('')}</optgroup>`);
+            }
+            if (templatePersonalities.length) {
+                groups.push(`<optgroup label="Built-in">${templatePersonalities.map(t => opt(t.key || t.id, t.name)).join('')}</optgroup>`);
+            }
+            if (!groups.length) groups.push(opt('dashie', 'Dashie (default)'));
+            return `<select id="voice-ai-chat-personality" onchange="VoiceAiChat.setPersonality(this.value)" style="${selectStyle}">${groups.join('')}</select>`;
+        })();
 
-        const select = (id, value, opts, handler) => `
-            <select id="${id}" onchange="${handler}(this.value)"
-                style="padding: 6px 10px; border: 1px solid var(--border, #d1d5db); border-radius: 4px; background: var(--bg-card, #fff); font-size: 13px;">
-                ${opts.map(o => `<option value="${esc(o[0])}" ${value === o[0] ? 'selected' : ''}>${esc(o[1])}</option>`).join('')}
-            </select>`;
+        // Models: the same provider-grouped catalog the AI Defaults section
+        // uses. Falls back to a single safe default if VoiceAiPage hasn't
+        // initialised yet.
+        const modelGroups = VoiceAiPage.MODEL_GROUPS || [['Claude', [['claude-sonnet-4-5-20250929', 'Claude Sonnet 4.5']]]];
+        const modelHtml = (() => {
+            const opt = (val, label) => `<option value="${esc(val)}" ${m.modelId === val ? 'selected' : ''}>${esc(label)}</option>`;
+            const groups = modelGroups.map(([groupLabel, items]) =>
+                `<optgroup label="${esc(groupLabel)}">${items.map(([v, l]) => opt(v, l)).join('')}</optgroup>`);
+            return `<select id="voice-ai-chat-model" onchange="VoiceAiChat.setModel(this.value)" style="${selectStyle}">${groups.join('')}</select>`;
+        })();
 
         const sendBusy = m.busy;
         const sendLabel = sendBusy ? 'Thinking…' : 'Send (⌘⏎)';
 
         return `
-            <div style="max-width: 920px; margin: 0 auto; padding: 0 12px;">
+            <div style="max-width: 760px;">
                 <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 16px;">
                     <button class="btn btn-ghost btn-sm" onclick="VoiceAiChat.close()">← Back to Voice & AI</button>
                     <h2 style="margin: 0; font-size: 18px; flex: 1;">AI Chat Interface</h2>
@@ -201,11 +218,11 @@ const VoiceAiChat = {
                 <div style="display: flex; gap: 12px; flex-wrap: wrap; align-items: center; margin-bottom: 12px;">
                     <label style="display: flex; align-items: center; gap: 6px; font-size: 13px; color: var(--text-muted);">
                         Personality
-                        ${select('voice-ai-chat-personality', m.personalityId || '', personalityOptions, 'VoiceAiChat.setPersonality')}
+                        ${personalityHtml}
                     </label>
                     <label style="display: flex; align-items: center; gap: 6px; font-size: 13px; color: var(--text-muted);">
                         Model
-                        ${select('voice-ai-chat-model', m.modelId || '', modelOptions, 'VoiceAiChat.setModel')}
+                        ${modelHtml}
                     </label>
                 </div>
 
