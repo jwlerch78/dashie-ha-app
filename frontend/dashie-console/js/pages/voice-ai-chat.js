@@ -1,0 +1,324 @@
+/* ============================================================
+   Voice & AI — Test Chat subpage
+   ------------------------------------------------------------
+   Full-page subpage (not a modal). VoiceAiPage.render() defers
+   to this module's render() when _open is truthy.
+
+   Layout:
+       [← Back to Voice & AI]
+       [Personality ▾]  [Model ▾]
+       [textarea                                ] [Send]
+       ───── history (newest first) ─────────────────────
+         User: …
+         AI:   <voice in 18px>
+               <text in 13px, muted>
+               [action: 2 commands executed ✓]
+               model · provider · 642 ms · 412 in / 38 out tokens
+
+   State is per-session — history clears when the user navigates
+   away or closes the page. Last-used personality + model persist
+   to ConsoleState so reopening the chat keeps your selections.
+   ============================================================ */
+
+const VoiceAiChat = {
+    /** null when closed; object when open. Shape:
+     *  { personalityId, modelId, draft, busy, history, lastError } */
+    _open: null,
+
+    /** localStorage / ConsoleState keys for "remember last selection". */
+    _STATE_KEY: 'voiceAiChat',
+
+    open() {
+        const remembered = (typeof ConsoleState !== 'undefined' && ConsoleState._state?.[this._STATE_KEY]) || {};
+        const defaults = VoiceAiPage._defaults || {};
+        const personalityId = remembered.personalityId
+            || defaults.account_personality_id
+            || defaults.personality_id
+            || '';
+        const modelId = remembered.modelId
+            || defaults.account_model
+            || defaults.model
+            || 'claude-sonnet-4-5';
+        this._open = {
+            personalityId,
+            modelId,
+            draft: '',
+            busy: false,
+            history: [],   // [{ role: 'user'|'ai', ...payload }]
+            lastError: null,
+        };
+        App.renderPage();
+    },
+
+    close() {
+        this._open = null;
+        App.renderPage();
+    },
+
+    setPersonality(id) {
+        if (!this._open) return;
+        this._open.personalityId = id;
+        this._remember();
+        App.renderPage();
+    },
+
+    setModel(id) {
+        if (!this._open) return;
+        this._open.modelId = id;
+        this._remember();
+        App.renderPage();
+    },
+
+    setDraft(value) {
+        if (!this._open) return;
+        // Don't re-render on keystroke; just capture the value for the
+        // next send. The textarea's defaultValue keeps what the user typed.
+        this._open.draft = value;
+    },
+
+    _remember() {
+        if (!this._open) return;
+        if (typeof ConsoleState === 'undefined') return;
+        ConsoleState._normalize?.();
+        ConsoleState._state[this._STATE_KEY] = {
+            personalityId: this._open.personalityId || null,
+            modelId: this._open.modelId || null,
+        };
+        ConsoleState._save?.({ [this._STATE_KEY]: ConsoleState._state[this._STATE_KEY] });
+    },
+
+    onKeyDown(e) {
+        // Cmd/Ctrl+Enter sends.
+        if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
+            e.preventDefault();
+            this.send();
+        }
+    },
+
+    async send() {
+        if (!this._open || this._open.busy) return;
+        const ta = document.getElementById('voice-ai-chat-input');
+        const text = (ta?.value || this._open.draft || '').trim();
+        if (!text) return;
+
+        const turnId = Date.now();
+        this._open.busy = true;
+        this._open.lastError = null;
+        this._open.history.unshift({ id: turnId, role: 'user', text });
+        this._open.history.unshift({ id: turnId + 1, role: 'pending' });
+        this._open.draft = '';
+        if (ta) ta.value = '';
+        App.renderPage();
+        // Restore focus for fast iteration.
+        setTimeout(() => document.getElementById('voice-ai-chat-input')?.focus(), 0);
+
+        let result;
+        try {
+            // Prior turns the model can see — most-recent-first in our
+            // store, so reverse + skip the pending marker before sending.
+            const prior = this._open.history
+                .filter(h => h.role === 'user' || h.role === 'ai')
+                .slice()
+                .reverse()
+                .map(h => h.role === 'user'
+                    ? { role: 'user', content: h.text }
+                    : { role: 'ai', content: h.voice || h.text || '' });
+            result = await ConsoleAiClient.sendQuery(text, {
+                personalityId: this._open.personalityId,
+                modelId: this._open.modelId,
+                history: prior,
+            });
+        } catch (e) {
+            result = { ok: false, error: e?.message || String(e) };
+        }
+
+        if (!this._open) return;  // user closed the page mid-flight
+        // Replace the pending marker with the real reply.
+        this._open.history = this._open.history.filter(h => h.role !== 'pending');
+        if (result?.ok) {
+            this._open.history.unshift({ id: turnId + 1, role: 'ai', ...result });
+        } else {
+            this._open.history.unshift({ id: turnId + 1, role: 'ai-error', error: result?.error || 'Unknown error', latency_ms: result?.latency_ms });
+            this._open.lastError = result?.error || null;
+        }
+        this._open.busy = false;
+        App.renderPage();
+    },
+
+    clearHistory() {
+        if (!this._open) return;
+        if (!confirm('Clear the chat history?')) return;
+        this._open.history = [];
+        App.renderPage();
+    },
+
+    // ── Render ───────────────────────────────────────────────
+
+    render() {
+        const m = this._open;
+        if (!m) return '';
+        const esc = VoiceAiPage._escape.bind(VoiceAiPage);
+        const personalities = (typeof OptionCatalog !== 'undefined') ? OptionCatalog.aiPersonalities() : [];
+        const models = (typeof OptionCatalog !== 'undefined') ? OptionCatalog.aiModels() : [];
+
+        const personalityOptions = [['', '— Account default —'], ...personalities];
+        const modelOptions = models.length ? models : [['claude-sonnet-4-5', 'Claude Sonnet 4.5']];
+
+        const select = (id, value, opts, handler) => `
+            <select id="${id}" onchange="${handler}(this.value)"
+                style="padding: 6px 10px; border: 1px solid var(--border, #d1d5db); border-radius: 4px; background: var(--bg-card, #fff); font-size: 13px;">
+                ${opts.map(o => `<option value="${esc(o[0])}" ${value === o[0] ? 'selected' : ''}>${esc(o[1])}</option>`).join('')}
+            </select>`;
+
+        const sendBusy = m.busy;
+        const sendLabel = sendBusy ? 'Thinking…' : 'Send (⌘⏎)';
+
+        return `
+            <div style="max-width: 920px; margin: 0 auto; padding: 0 12px;">
+                <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 16px;">
+                    <button class="btn btn-ghost btn-sm" onclick="VoiceAiChat.close()">← Back to Voice & AI</button>
+                    <h2 style="margin: 0; font-size: 18px; flex: 1;">AI Chat Interface</h2>
+                    ${m.history.length ? `<button class="btn btn-ghost btn-sm" onclick="VoiceAiChat.clearHistory()">Clear history</button>` : ''}
+                </div>
+
+                <div style="display: flex; gap: 12px; flex-wrap: wrap; align-items: center; margin-bottom: 12px;">
+                    <label style="display: flex; align-items: center; gap: 6px; font-size: 13px; color: var(--text-muted);">
+                        Personality
+                        ${select('voice-ai-chat-personality', m.personalityId || '', personalityOptions, 'VoiceAiChat.setPersonality')}
+                    </label>
+                    <label style="display: flex; align-items: center; gap: 6px; font-size: 13px; color: var(--text-muted);">
+                        Model
+                        ${select('voice-ai-chat-model', m.modelId || '', modelOptions, 'VoiceAiChat.setModel')}
+                    </label>
+                </div>
+
+                <div style="display: flex; gap: 8px; align-items: flex-end; margin-bottom: 24px;">
+                    <textarea id="voice-ai-chat-input"
+                        placeholder="Ask anything. Try: turn off the kitchen lights, what's on the calendar tomorrow, set the office to 72°"
+                        oninput="VoiceAiChat.setDraft(this.value)"
+                        onkeydown="VoiceAiChat.onKeyDown(event)"
+                        ${sendBusy ? 'disabled' : ''}
+                        rows="3"
+                        style="flex: 1; padding: 10px 12px; border: 1px solid var(--border, #d1d5db); border-radius: 6px; font-family: inherit; font-size: 14px; resize: vertical; min-height: 60px;">${esc(m.draft || '')}</textarea>
+                    <button class="btn btn-primary"
+                        onclick="VoiceAiChat.send()"
+                        ${sendBusy ? 'disabled' : ''}
+                        style="padding: 10px 18px; min-width: 110px;">
+                        ${sendLabel}
+                    </button>
+                </div>
+
+                ${m.lastError ? `
+                    <div style="margin-bottom: 16px; padding: 8px 12px; border-left: 3px solid var(--status-error, #c00); background: #fff5f5; color: #831818; font-size: 13px;">
+                        ${esc(m.lastError)}
+                    </div>` : ''}
+
+                <div>
+                    ${m.history.length === 0
+                        ? `<p style="color: var(--text-muted); font-size: 13px; text-align: center; padding: 40px 0;">
+                               No turns yet. Type a query above to start. ⌘⏎ to send.
+                           </p>`
+                        : m.history.map(h => this._renderTurn(h)).join('')}
+                </div>
+            </div>
+        `;
+    },
+
+    _renderTurn(h) {
+        const esc = VoiceAiPage._escape.bind(VoiceAiPage);
+        if (h.role === 'user') {
+            return `
+                <div style="margin-bottom: 18px; padding: 10px 12px; background: var(--bg-muted, #f4f4f5); border-radius: 6px; font-size: 13px;">
+                    <div style="font-size: 11px; font-weight: 600; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 4px;">You</div>
+                    ${esc(h.text)}
+                </div>`;
+        }
+        if (h.role === 'pending') {
+            return `
+                <div style="margin-bottom: 18px; padding: 10px 12px; background: var(--bg-card, #fff); border-left: 3px solid var(--accent); font-size: 13px; color: var(--text-muted);">
+                    <em>Thinking…</em>
+                </div>`;
+        }
+        if (h.role === 'ai-error') {
+            return `
+                <div style="margin-bottom: 18px; padding: 10px 12px; background: #fff5f5; border-left: 3px solid var(--status-error, #c00); border-radius: 0 4px 4px 0;">
+                    <div style="font-size: 11px; font-weight: 600; color: var(--status-error, #c00); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 4px;">Error</div>
+                    <div style="font-size: 13px; color: #831818;">${esc(h.error || 'Unknown error')}</div>
+                    ${h.latency_ms ? `<div style="font-size: 11px; color: var(--text-muted); margin-top: 6px;">${h.latency_ms} ms before failure</div>` : ''}
+                </div>`;
+        }
+
+        // ai turn
+        const usage = h.usage || {};
+        const meta = [];
+        if (h.model)    meta.push(esc(h.model));
+        if (h.provider && h.provider !== h.model) meta.push(esc(h.provider));
+        if (h.latency_ms != null) meta.push(`${h.latency_ms} ms`);
+        if (usage.input_tokens || usage.output_tokens) {
+            meta.push(`${usage.input_tokens || 0} in / ${usage.output_tokens || 0} out`);
+        }
+        if (h.total_latency_ms != null && h.total_latency_ms !== h.latency_ms) {
+            meta.push(`+${h.total_latency_ms - (h.latency_ms || 0)} ms overhead`);
+        }
+
+        const parsedWarning = h.parsed_ok === false
+            ? `<div style="font-size: 11px; color: var(--accent); margin-top: 4px;">⚠ Model didn't return valid JSON — showing raw output</div>`
+            : '';
+
+        const action = h.action ? this._renderAction(h) : '';
+
+        return `
+            <div style="margin-bottom: 24px; padding: 12px 14px; background: var(--bg-card, #fff); border: 1px solid var(--border, #e5e7eb); border-radius: 6px;">
+                <div style="font-size: 11px; font-weight: 600; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 8px;">Assistant</div>
+                <div style="font-size: 18px; line-height: 1.4; color: var(--text-primary); white-space: pre-wrap;">${esc(h.voice || '')}</div>
+                ${h.text ? `<div style="margin-top: 8px; font-size: 13px; line-height: 1.5; color: var(--text-secondary); white-space: pre-wrap;">${esc(h.text)}</div>` : ''}
+                ${action}
+                ${parsedWarning}
+                <div style="margin-top: 10px; padding-top: 8px; border-top: 1px dashed var(--border, #e5e7eb); font-size: 11px; color: var(--text-muted); font-family: ui-monospace, SFMono-Regular, Menlo, monospace;">
+                    ${meta.join('  ·  ')}
+                </div>
+            </div>
+        `;
+    },
+
+    _renderAction(h) {
+        const esc = VoiceAiPage._escape.bind(VoiceAiPage);
+        const a = h.action;
+        const r = h.action_result;
+        const lines = [];
+        lines.push(`<div style="font-size: 11px; font-weight: 600; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px; margin-top: 12px;">Action</div>`);
+
+        if (a.command === 'execute_commands') {
+            const cmds = Array.isArray(a.parameters?.commands) ? a.parameters.commands : [];
+            const rows = cmds.map((c, i) => {
+                const result = r?.results?.[i];
+                const status = !r || !r.dispatched ? '·'
+                    : result?.ok ? '✓'
+                    : '✗';
+                const color = result?.ok ? '#10b981' : (result === undefined ? 'var(--text-muted)' : '#c00');
+                const errLine = result?.error
+                    ? `<div style="font-size: 11px; color: #c00; margin-left: 18px;">${esc(result.error)}</div>` : '';
+                return `
+                    <div style="font-size: 12px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; margin-top: 4px;">
+                        <span style="color: ${color}; font-weight: 700; display: inline-block; width: 14px;">${status}</span>
+                        ${esc(`${c.domain || ''}.${c.service || ''}`)}
+                        ${c.data?.entity_id ? `<span style="color: var(--text-muted);"> → ${esc(c.data.entity_id)}</span>` : ''}
+                        ${errLine}
+                    </div>`;
+            }).join('');
+            lines.push(`<div style="margin-top: 4px;">${rows}</div>`);
+        } else if (a.command === 'forward_to_assist') {
+            const speech = r?.response?.response?.speech?.plain?.speech || '';
+            lines.push(`<div style="font-size: 12px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; margin-top: 4px; color: var(--text-secondary);">→ HA Assist: ${esc(a.parameters?.transcript || '')}</div>`);
+            if (speech) lines.push(`<div style="font-size: 12px; margin-top: 4px; color: var(--text-secondary);">↩ ${esc(speech)}</div>`);
+            if (r?.error) lines.push(`<div style="font-size: 11px; color: #c00; margin-top: 4px;">${esc(r.error)}</div>`);
+        } else {
+            lines.push(`<pre style="font-size: 11px; background: var(--bg-muted, #f4f4f5); padding: 8px; border-radius: 4px; overflow-x: auto; margin: 4px 0 0;">${esc(JSON.stringify(a, null, 2))}</pre>`);
+            if (r?.reason) lines.push(`<div style="font-size: 11px; color: var(--text-muted); margin-top: 4px;">${esc(r.reason)}</div>`);
+        }
+
+        return lines.join('');
+    },
+};
+
+window.VoiceAiChat = VoiceAiChat;

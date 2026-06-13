@@ -61,6 +61,11 @@ const VoiceAiPage = {
     ],
 
     render() {
+        // Test Chat subpage takes over the full page when open — it's not
+        // a modal overlay like the personality editor.
+        if (typeof VoiceAiChat !== 'undefined' && VoiceAiChat._open) {
+            return VoiceAiChat.render();
+        }
         const editorHtml = (typeof VoiceAiPersonalityEdit !== 'undefined') ? VoiceAiPersonalityEdit.render() : '';
 
         if (!this._defaults && !this._loading && !this._error) {
@@ -75,6 +80,18 @@ const VoiceAiPage = {
 
     topBarTitle() { return 'Voice & AI'; },
     topBarSubtitle() { return 'Account-wide AI defaults and personalities'; },
+
+    /** Top-bar action button — opens the Test Chat subpage. Hidden while
+     *  the subpage is itself rendered (its own back button is enough). */
+    topBarActions() {
+        if (typeof VoiceAiChat !== 'undefined' && VoiceAiChat._open) return '';
+        return `
+            <button class="btn btn-primary"
+                    onclick="VoiceAiChat.open()"
+                    title="Send test queries to the AI pipeline with a chosen personality and model.">
+                AI Chat Interface
+            </button>`;
+    },
 
     onNavigateTo() { this._fetch(); },
 
