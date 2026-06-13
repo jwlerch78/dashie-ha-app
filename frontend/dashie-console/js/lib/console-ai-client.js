@@ -64,33 +64,12 @@ const ConsoleAiClient = {
         return row;
     },
 
-    /** Per-1M-token pricing for cost estimation. Approximate published rates
-     *  for each provider as of mid-2026 — surface this on the chat footer so
-     *  the user can eyeball cost per turn. The webapp's ai-analytics
-     *  estimateCost() uses a single flat rate; we want per-model resolution
-     *  for the test chat where you're comparing models head-to-head. */
-    PRICING_PER_M_TOKENS: {
-        // [input, output] in USD per 1M tokens
-        'gemini-2.5-flash':       [0.30, 2.50],
-        'gemini-2.5-flash-lite':  [0.10, 0.40],
-        'gemini-2.5-pro':         [1.25, 10.00],
-        'gemini-2.0-flash':       [0.10, 0.40],
-        'claude-sonnet-4-5':         [3.00, 15.00],
-        'claude-sonnet-4-5-20250929':[3.00, 15.00],
-        'claude-sonnet-4-20250514':  [3.00, 15.00],
-        'claude-opus-4-20250514':    [15.00, 75.00],
-        'claude-haiku-4-5':       [1.00, 5.00],
-        'gpt-4o':                 [2.50, 10.00],
-        'gpt-4o-mini':            [0.15, 0.60],
-        'gpt-4-turbo':            [10.00, 30.00],
-        'gpt-3.5-turbo':          [0.50, 1.50],
-        'us.amazon.nova-pro-v1:0':  [0.80, 3.20],
-        'us.amazon.nova-lite-v1:0': [0.06, 0.24],
-        'us.amazon.nova-micro-v1:0':[0.035, 0.14],
-    },
-
+    /** Per-token cost estimation. Pricing sourced from
+     *  window.AiModelCatalog.pricingFor(modelId), which the bundler emits
+     *  from config.js's TOKEN_COSTS. Single source of truth across web,
+     *  Android picker, and this test harness. */
     estimateCost(modelId, inputTokens, outputTokens) {
-        const rates = this.PRICING_PER_M_TOKENS[modelId];
+        const rates = window.AiModelCatalog?.pricingFor?.(modelId);
         if (!rates) return { input: 0, output: 0, total: 0, known: false };
         const input  = (inputTokens  || 0) * rates[0] / 1_000_000;
         const output = (outputTokens || 0) * rates[1] / 1_000_000;
@@ -319,7 +298,7 @@ const ConsoleAiClient = {
     async sendQuery(text, opts = {}) {
         const t0 = performance.now();
         const personalityId = opts.personalityId || null;
-        const modelId = opts.modelId || 'claude-sonnet-4-5';
+        const modelId = opts.modelId || window.AiModelCatalog?.DEFAULT_AI_MODEL || 'gemini-3.1-flash-lite';
         const history = Array.isArray(opts.history) ? opts.history : [];
         const onStage = typeof opts.onStage === 'function' ? opts.onStage : () => {};
 

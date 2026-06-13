@@ -26,34 +26,15 @@ const VoiceAiPage = {
     _savingKey: null,       // dotted key currently saving (for inline "saving…")
     _syncRegistered: false,
 
-    // Account-default AI model catalog, grouped by provider. Mirrors the
-    // tablet's VoiceAiOptions model list, minus "home_assistant" (that's a
-    // per-device control-method choice, not an account AI model).
-    MODEL_GROUPS: [
-        ['Google Gemini', [
-            ['gemini-2.5-flash', 'Gemini 2.5 Flash — best price-performance'],
-            ['gemini-2.5-flash-lite', 'Gemini 2.5 Flash Lite — fastest & cheapest'],
-            ['gemini-2.5-pro', 'Gemini 2.5 Pro — top reasoning'],
-            ['gemini-2.0-flash', 'Gemini 2.0 Flash — 1M context'],
-        ]],
-        ['Claude', [
-            ['claude-sonnet-4-5-20250929', 'Claude Sonnet 4.5 — balanced'],
-            ['claude-sonnet-4-20250514', 'Claude Sonnet 4.0'],
-            ['claude-opus-4-20250514', 'Claude Opus 4.0 — most capable'],
-            ['claude-haiku-4-5', 'Claude Haiku 4.5 — fastest'],
-        ]],
-        ['OpenAI', [
-            ['gpt-4o', 'GPT-4o'],
-            ['gpt-4o-mini', 'GPT-4o Mini'],
-            ['gpt-4-turbo', 'GPT-4 Turbo'],
-            ['gpt-3.5-turbo', 'GPT-3.5 Turbo'],
-        ]],
-        ['Amazon Bedrock', [
-            ['us.amazon.nova-pro-v1:0', 'Amazon Nova Pro'],
-            ['us.amazon.nova-lite-v1:0', 'Amazon Nova Lite'],
-            ['us.amazon.nova-micro-v1:0', 'Amazon Nova Micro'],
-        ]],
-    ],
+    // Account-default AI model catalog, grouped by provider. Single source
+    // of truth: js/ai/ai-models-catalog.js in dashieapp_staging (bundled
+    // into the Console as window.AiModelCatalog at build time). The picker
+    // updates automatically when models are added/removed/renamed there —
+    // no Console-side edits required, no drift possible.
+    get MODEL_GROUPS() {
+        if (typeof window.AiModelCatalog === 'undefined') return [];
+        return window.AiModelCatalog.dropdownGroups();
+    },
 
     MEMORY_OPTIONS: [
         ['5', '5 minutes'], ['30', '30 minutes'], ['60', '1 hour'],

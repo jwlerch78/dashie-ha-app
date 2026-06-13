@@ -34,10 +34,21 @@ const VoiceAiChat = {
         // Personality is per-device on the tablet, not per-account — there's
         // no account default. Fall back to "dashie" (the canonical built-in).
         const personalityId = remembered.personalityId || 'dashie';
-        // Model: account default from ai.model lives on user_settings.
-        const modelId = remembered.modelId
-            || defaults['ai.model']
-            || 'claude-sonnet-4-5-20250929';
+        // Model: prefer remembered, then account default (ai.model on
+        // user_settings), then the catalog's DEFAULT_AI_MODEL. Drop the
+        // remembered value if it's not in the current catalog — happens
+        // when a model gets renamed/removed upstream (e.g. the recent
+        // ai-models-catalog refresh dropped 2.5-flash from the default
+        // tier in favor of 3.1-flash-lite).
+        const catalog = window.AiModelCatalog?.AI_MODEL_CATALOG || [];
+        const known = id => catalog.some(m => m.id === id);
+        const candidates = [
+            remembered.modelId,
+            defaults['ai.model'],
+            window.AiModelCatalog?.DEFAULT_AI_MODEL,
+            'gemini-3.1-flash-lite',
+        ];
+        const modelId = candidates.find(c => c && known(c)) || candidates.find(Boolean) || 'gemini-3.1-flash-lite';
         this._open = {
             personalityId,
             modelId,
