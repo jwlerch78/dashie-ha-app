@@ -185,6 +185,10 @@ const ConsoleAiClient = {
             COMMAND_HINT: retrievedData.command_hint || userRequest,
         };
         let prompt = T.fillTemplate(T.INQUIRY_HOME_ASSISTANT, baseValues);
+        // Webapp parity: prompt-builder.js appends response-format.md after
+        // every inquiry template when retrievedData is present, even when
+        // the inquiry has its own format guidance. Keep the pattern uniform.
+        prompt += '\n\n' + T.fillTemplate(T.RESPONSE_FORMAT_FULL, baseValues);
         if (personalityWrap.responsePrefix) {
             prompt = personalityWrap.responsePrefix + '\n\n' + prompt;
         }
