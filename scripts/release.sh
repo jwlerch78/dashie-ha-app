@@ -39,6 +39,25 @@ if ! git diff-index --quiet HEAD --; then
 fi
 
 echo "==> Syncing console"
+# Before pulling dashie-console, regenerate the AI-prompt bundle from the
+# webapp source-of-truth. Skips silently if dashieapp_staging isn't checked
+# out locally — the bundler is a developer convenience, not a hard dep.
+# Note: if the bundler produces new content, those changes need to be
+# committed + pushed in dashie-console BEFORE sync-console.sh's git pull
+# can include them. The script prints a warning if there's a diff.
+STAGING_ROOT="${DASHIE_STAGING_PATH:-$(cd "$(dirname "$0")/../../dashieapp_staging" 2>/dev/null && pwd || true)}"
+if [[ -n "$STAGING_ROOT" && -f "$STAGING_ROOT/scripts/bundle-ai-prompts.js" ]]; then
+    echo "==> Regenerating AI prompt bundle from $STAGING_ROOT"
+    ( cd "$STAGING_ROOT" && node scripts/bundle-ai-prompts.js ) || echo "  (bundler failed — continuing with existing bundle)"
+    CONSOLE_PATH="${1:-$(cd "$(dirname "$0")/../.." && pwd)/dashie-console}"
+    if [[ -d "$CONSOLE_PATH" ]] && ! git -C "$CONSOLE_PATH" diff --quiet -- js/lib/ai-prompt-templates.js js/lib/personality-prompt-builder.js 2>/dev/null; then
+        echo "  ⚠  dashie-console has uncommitted bundle changes."
+        echo "     Commit + push them before sync-console.sh, or this release"
+        echo "     will ship the previous bundle."
+        echo "     cd $CONSOLE_PATH && git add js/lib/ai-prompt-templates.js js/lib/personality-prompt-builder.js && git commit -m 'Sync AI prompts' && git push origin main"
+    fi
+fi
+
 "$ADDON_ROOT/scripts/sync-console.sh"
 
 echo "==> Bumping version → $NEW_VERSION"
