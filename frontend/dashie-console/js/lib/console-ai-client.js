@@ -233,6 +233,51 @@ const ConsoleAiClient = {
         const history = Array.isArray(opts.history) ? opts.history : [];
         const onStage = typeof opts.onStage === 'function' ? opts.onStage : () => {};
 
+        // ── NLP FAST PATH ──────────────────────────────────────────
+        // Mirror the tablet's IntentClassifier behavior: clear HA
+        // commands skip the AI entirely and forward straight to HA's
+        // Assist pipeline. Same effect, way smaller code surface than
+        // porting the full 4k-line webapp classifier.
+        if (window.ConsoleIntentClassifier) {
+            const cls = window.ConsoleIntentClassifier.classify(text);
+            if (cls.matched && cls.intent?.command === 'forward_to_assist') {
+                onStage('nlp_intercept', { confidence: cls.confidence });
+                const tAct0 = performance.now();
+                const assist = await this._dispatchForwardToAssist(cls.intent.transcript);
+                const actLatency = Math.round(performance.now() - tAct0);
+                const speech = assist?.response?.response?.speech?.plain?.speech || '';
+                const responseType = assist?.response?.response?.response_type || (assist.ok ? 'action_done' : 'error');
+                return {
+                    ok: true,
+                    type: 'action',
+                    voice: speech || (assist.ok ? 'Done.' : "Sorry, that didn't work."),
+                    text: null,
+                    action: {
+                        category: 'homeassistant',
+                        command: 'forward_to_assist',
+                        parameters: { transcript: cls.intent.transcript },
+                    },
+                    action_result: {
+                        dispatched: assist.ok,
+                        kind: 'forward_to_assist',
+                        response: assist.response,
+                        response_type: responseType,
+                        error: assist.error || null,
+                    },
+                    action_latency_ms: actLatency,
+                    parsed_ok: true,
+                    raw_content: null,
+                    usage: { input_tokens: 0, output_tokens: 0, total_tokens: 0 },
+                    model: 'nlp',
+                    provider: 'local',
+                    latency_ms: actLatency,
+                    nlp_confidence: cls.confidence,
+                    stages: [{ name: 'nlp_intercept', latency_ms: actLatency, confidence: cls.confidence }],
+                    total_latency_ms: Math.round(performance.now() - t0),
+                };
+            }
+        }
+
         const provider = this._providerForModel(modelId);
         const personality = await this._getPersonality(personalityId);
         const personalityWrap = (window.PersonalityPromptBuilder

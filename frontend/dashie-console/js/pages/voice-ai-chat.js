@@ -115,17 +115,10 @@ const VoiceAiChat = {
             if (!this._open) return;
             const pending = this._open.history.find(h => h.id === pendingId);
             if (!pending) return;
-            const labels = {
-                pass1_start: 'Calling AI…',
-                pass1_done: detail?.type === 'info_request'
-                    ? 'AI requested HA entities…'
-                    : 'AI replied — wrapping up…',
-                fetch_entities_start: 'Fetching HA entities…',
-                fetch_entities_done: `Got ${detail?.entity_count || 0} entities. Calling AI again…`,
-                pass2_start: 'Calling AI again with entity context…',
-                pass2_done: 'AI replied — dispatching…',
-            };
-            pending.stage = labels[name] || name;
+            // Mirror the tablet's voice-overlay__thinking-text — always
+            // "Thinking…" while we work. We still record the stage names
+            // internally so the final turn can break down the timings.
+            pending.stage = 'Thinking…';
             pending.stages.push({ name, t: Date.now(), detail });
             App.renderPage();
         };
@@ -166,6 +159,12 @@ const VoiceAiChat = {
         if (!confirm('Clear the chat history?')) return;
         this._open.history = [];
         App.renderPage();
+    },
+
+    /** Format a millisecond duration as seconds at hundredths — e.g. 3777 → "3.78 s". */
+    _fmtSeconds(ms) {
+        if (ms == null || !isFinite(ms)) return '—';
+        return (ms / 1000).toFixed(2) + ' s';
     },
 
     // ── Render ───────────────────────────────────────────────
@@ -293,30 +292,37 @@ const VoiceAiChat = {
                 <div style="margin-bottom: 18px; padding: 14px 18px; background: #1a0a0a; border-left: 3px solid #f87171; border-radius: 0 8px 8px 0;">
                     <div style="font-size: 11px; font-weight: 600; color: #f87171; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 6px;">Error</div>
                     <div style="font-size: 14px; color: #fca5a5;">${esc(h.error || 'Unknown error')}</div>
-                    ${h.latency_ms ? `<div style="font-size: 11px; color: rgba(255,255,255,0.5); margin-top: 6px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace;">${h.latency_ms} ms before failure</div>` : ''}
+                    ${h.latency_ms ? `<div style="font-size: 11px; color: rgba(255,255,255,0.5); margin-top: 6px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace;">${this._fmtSeconds(h.latency_ms)} before failure</div>` : ''}
                 </div>`;
         }
 
         // ai turn
         const usage = h.usage || {};
         const meta = [];
-        if (h.model)    meta.push(esc(h.model));
-        if (h.provider && h.provider !== h.model) meta.push(esc(h.provider));
-        if (h.latency_ms != null) meta.push(`${h.latency_ms} ms gateway`);
+        if (h.model === 'nlp') {
+            meta.push('NLP');
+            meta.push(`${h.nlp_confidence ? (h.nlp_confidence * 100).toFixed(0) + '%' : 'matched'}`);
+        } else {
+            if (h.model)    meta.push(esc(h.model));
+            if (h.provider && h.provider !== h.model) meta.push(esc(h.provider));
+        }
+        if (h.latency_ms != null) meta.push(`${this._fmtSeconds(h.latency_ms)} gateway`);
         if (usage.input_tokens || usage.output_tokens) {
             meta.push(`${usage.input_tokens || 0} in / ${usage.output_tokens || 0} out`);
         }
         if (h.total_latency_ms != null && h.total_latency_ms !== h.latency_ms) {
-            meta.push(`${h.total_latency_ms} ms total`);
+            meta.push(`${this._fmtSeconds(h.total_latency_ms)} total`);
         }
 
-        // Per-stage breakdown shown as a second meta line when there's
-        // more than just pass1 (i.e. we did the two-pass HA flow).
+        // Per-stage breakdown shown as a second meta line. Multi-stage
+        // (two-pass HA flow) or single-stage NLP intercept both surface
+        // their timings.
         const stageBits = [];
         for (const s of (h.stages || [])) {
-            if (s.name === 'pass1') stageBits.push(`pass1 ${s.latency_ms}ms`);
-            else if (s.name === 'fetch_entities') stageBits.push(`entities ${s.latency_ms}ms (${s.entity_count})`);
-            else if (s.name === 'pass2') stageBits.push(`pass2 ${s.latency_ms}ms`);
+            if (s.name === 'pass1') stageBits.push(`pass1 ${this._fmtSeconds(s.latency_ms)}`);
+            else if (s.name === 'fetch_entities') stageBits.push(`entities ${this._fmtSeconds(s.latency_ms)} (${s.entity_count})`);
+            else if (s.name === 'pass2') stageBits.push(`pass2 ${this._fmtSeconds(s.latency_ms)}`);
+            else if (s.name === 'nlp_intercept') stageBits.push(`HA Assist ${this._fmtSeconds(s.latency_ms)}`);
         }
         const stagesLine = stageBits.length > 1
             ? `<div style="margin-top: 4px; font-size: 11px; color: rgba(255, 255, 255, 0.4); font-family: ui-monospace, SFMono-Regular, Menlo, monospace;">${stageBits.join('  ·  ')}</div>`
