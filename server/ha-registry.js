@@ -202,13 +202,13 @@ async function _refreshRegistryCache() {
  *  Two-path lookup:
  *    1. By `identifiers` tuple `("dashie", <id>)` — works when the Dashie
  *       integration's DeviceInfo identifier equals the id we're searching by.
- *    2. By the device-id sensor's unique_id (`<id>_device_id`). The integration
- *       sets the device-registry identifier from `stableDeviceID` (preferred)
- *       OR `deviceID` (legacy fallback), but the DashieDeviceIdSensor reports
- *       `deviceID` as its state — so the worker's anchor reads and our /api/ha/adopt
- *       lookups speak `deviceID`, while the registry was indexed under
- *       `stableDeviceID`. Falling through to the entity index resolves the
- *       device on hardware that exposes both fields. */
+ *    2. By the device-id sensor's STATE — the worker reports anchor.state as
+ *       the dashie device_id, but the integration sets the device-registry
+ *       identifier from `stableDeviceID` (preferred) while the sensor still
+ *       returns `deviceID` (legacy). For installs where the two diverge,
+ *       falling through to a state-based lookup keeps adopt working without
+ *       requiring the integration to be patched and existing user_devices
+ *       rows to be re-migrated. */
 async function getDeviceByDashieId(dashieDeviceId, { force = false } = {}) {
     if (!dashieDeviceId) return null;
     if (force || !registryCache) await _refreshRegistryCache();
@@ -220,29 +220,36 @@ async function getDeviceByDashieId(dashieDeviceId, { force = false } = {}) {
     }
     if (entry) return entry;
 
-    // Fallback: locate the DashieDeviceIdSensor whose unique_id is
-    // `<dashieDeviceId>_device_id` and follow its `device_id` to the registry.
-    if (force || !entityRegistryCache) await _refreshEntityRegistryCache();
-    const target = `${dashieDeviceId}_device_id`;
-    let haDeviceId = null;
-    for (const entities of entityRegistryCache.byHaDeviceId.values()) {
-        for (const e of entities) {
-            if (e?.unique_id === target) { haDeviceId = e.device_id; break; }
-        }
-        if (haDeviceId) break;
-    }
-    if (!haDeviceId && !force) {
-        await _refreshEntityRegistryCache();
-        for (const entities of entityRegistryCache.byHaDeviceId.values()) {
-            for (const e of entities) {
-                if (e?.unique_id === target) { haDeviceId = e.device_id; break; }
+    // Fallback: find the device-id sensor whose STATE matches dashieDeviceId,
+    // then follow its `device_id` back to the registry. The sensor entity_id
+    // ends in `_device_id` by convention (DashieDeviceIdSensor sets
+    // _attr_unique_id = f"{device_id}_device_id"). We fetch /api/states once
+    // and walk the small set of `sensor.*_device_id` entries — cheap.
+    try {
+        // Use the WS connection we already have rather than haClient (REST)
+        // to avoid an extra dependency in this module.
+        const states = await _send({ type: 'get_states' });
+        const sensorMatch = (states || []).find(s =>
+            typeof s?.entity_id === 'string'
+            && s.entity_id.startsWith('sensor.')
+            && s.entity_id.endsWith('_device_id')
+            && s.state === dashieDeviceId
+        );
+        if (sensorMatch) {
+            if (force || !entityRegistryCache) await _refreshEntityRegistryCache();
+            // entityRegistryCache is indexed byHaDeviceId; walk it to find
+            // the entity with this entity_id (its `device_id` is the HA id).
+            for (const entities of entityRegistryCache.byHaDeviceId.values()) {
+                for (const e of entities) {
+                    if (e?.entity_id === sensorMatch.entity_id && e?.device_id) {
+                        const reg = registryCache.byHaId.get(e.device_id);
+                        if (reg) return reg;
+                    }
+                }
             }
-            if (haDeviceId) break;
         }
-    }
-    if (haDeviceId) {
-        entry = registryCache.byHaId.get(haDeviceId) || null;
-        if (entry) return entry;
+    } catch (e) {
+        console.warn('[ha-registry] state-fallback lookup failed:', e.message);
     }
     return null;
 }
