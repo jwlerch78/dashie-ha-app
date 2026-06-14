@@ -197,7 +197,18 @@ async function _refreshRegistryCache() {
     return registryCache;
 }
 
-/** Returns the registry entry (with id, name, name_by_user, identifiers, ...) or null. */
+/** Returns the registry entry (with id, name, name_by_user, identifiers, ...) or null.
+ *
+ *  Two-path lookup:
+ *    1. By `identifiers` tuple `("dashie", <id>)` — works when the Dashie
+ *       integration's DeviceInfo identifier equals the id we're searching by.
+ *    2. By the device-id sensor's unique_id (`<id>_device_id`). The integration
+ *       sets the device-registry identifier from `stableDeviceID` (preferred)
+ *       OR `deviceID` (legacy fallback), but the DashieDeviceIdSensor reports
+ *       `deviceID` as its state — so the worker's anchor reads and our /api/ha/adopt
+ *       lookups speak `deviceID`, while the registry was indexed under
+ *       `stableDeviceID`. Falling through to the entity index resolves the
+ *       device on hardware that exposes both fields. */
 async function getDeviceByDashieId(dashieDeviceId, { force = false } = {}) {
     if (!dashieDeviceId) return null;
     if (force || !registryCache) await _refreshRegistryCache();
@@ -207,7 +218,33 @@ async function getDeviceByDashieId(dashieDeviceId, { force = false } = {}) {
         await _refreshRegistryCache();
         entry = registryCache.byDashieId.get(dashieDeviceId);
     }
-    return entry || null;
+    if (entry) return entry;
+
+    // Fallback: locate the DashieDeviceIdSensor whose unique_id is
+    // `<dashieDeviceId>_device_id` and follow its `device_id` to the registry.
+    if (force || !entityRegistryCache) await _refreshEntityRegistryCache();
+    const target = `${dashieDeviceId}_device_id`;
+    let haDeviceId = null;
+    for (const entities of entityRegistryCache.byHaDeviceId.values()) {
+        for (const e of entities) {
+            if (e?.unique_id === target) { haDeviceId = e.device_id; break; }
+        }
+        if (haDeviceId) break;
+    }
+    if (!haDeviceId && !force) {
+        await _refreshEntityRegistryCache();
+        for (const entities of entityRegistryCache.byHaDeviceId.values()) {
+            for (const e of entities) {
+                if (e?.unique_id === target) { haDeviceId = e.device_id; break; }
+            }
+            if (haDeviceId) break;
+        }
+    }
+    if (haDeviceId) {
+        entry = registryCache.byHaId.get(haDeviceId) || null;
+        if (entry) return entry;
+    }
+    return null;
 }
 
 /**
