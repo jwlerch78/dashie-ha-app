@@ -78,23 +78,27 @@ const DevicesDetail = {
         ` : '';
         return `
             <div class="back-link" onclick="DevicesPage.backToList()">← Back to Devices</div>
-            <div style="display: flex; align-items: flex-start; gap: 12px; margin-bottom: 24px;">
-                <div class="device-card-icon" style="width: 48px; height: 48px; font-size: 24px; flex-shrink: 0;">${icon}</div>
-                <div style="flex: 1; min-width: 0;">
-                    ${DevicesRename.renderNameRow(device, conflict, 'detail')}
-                    <div style="font-size: var(--font-size-sm); color: var(--text-secondary); margin-top: 4px;">
-                        ${DevicesPage._escape(DevicesPage._typeLabel(device))} ·
-                        <span class="status-dot ${live ? 'online' : 'offline'}"></span>${live ? 'Live' : 'Offline'}
+            <div style="display: flex; align-items: flex-start; gap: 16px; margin-bottom: 24px; flex-wrap: wrap;">
+                <div style="display: flex; align-items: flex-start; gap: 12px; flex: 1 1 320px; min-width: 0;">
+                    <div class="device-card-icon" style="width: 48px; height: 48px; font-size: 24px; flex-shrink: 0;">${icon}</div>
+                    <div style="flex: 1; min-width: 0;">
+                        ${DevicesRename.renderNameRow(device, conflict, 'detail')}
+                        <div style="font-size: var(--font-size-sm); color: var(--text-secondary); margin-top: 4px;">
+                            ${DevicesPage._escape(DevicesPage._typeLabel(device))} ·
+                            <span class="status-dot ${live ? 'online' : 'offline'}"></span>${live ? 'Live' : 'Offline'}
+                        </div>
+                        <div style="font-size: 11px; color: var(--text-muted); margin-top: 4px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; user-select: all;"
+                             title="Device ID — click to copy. Useful for diagnosing HA worker matching when a device shows Offline despite being reachable.">
+                            ${DevicesPage._escape(device.device_id || '—')}
+                            <button onclick="event.stopPropagation(); navigator.clipboard.writeText('${DevicesPage._escape(device.device_id || '')}').then(() => Toast.success('Device ID copied'))"
+                                style="background: none; border: none; color: var(--text-muted); cursor: pointer; padding: 0 4px; font-size: 11px; line-height: 1;"
+                                title="Copy device_id">📋</button>
+                        </div>
+                        ${conflictBadge}
+                        ${this._renderHeaderChips(device, m)}
                     </div>
-                    <div style="font-size: 11px; color: var(--text-muted); margin-top: 4px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; user-select: all;"
-                         title="Device ID — click to copy. Useful for diagnosing HA worker matching when a device shows Offline despite being reachable.">
-                        ${DevicesPage._escape(device.device_id || '—')}
-                        <button onclick="event.stopPropagation(); navigator.clipboard.writeText('${DevicesPage._escape(device.device_id || '')}').then(() => Toast.success('Device ID copied'))"
-                            style="background: none; border: none; color: var(--text-muted); cursor: pointer; padding: 0 4px; font-size: 11px; line-height: 1;"
-                            title="Copy device_id">📋</button>
-                    </div>
-                    ${conflictBadge}
                 </div>
+                ${this._renderHeaderPreview(device, m, live)}
             </div>
             ${this._renderQuickControls(device, m, live)}
             ${this._renderMetricsPanel(device)}
@@ -114,6 +118,8 @@ const DevicesDetail = {
             ${DevicesCard.renderScreenshotModal()}
             ${DevicesCard.renderHistoryModal()}
             ${DevicesCard.renderCameraModal()}
+            ${DevicesDetailModals.renderSleepModal()}
+            ${DevicesDetailModals.renderDisplayModal()}
         `;
     },
 
@@ -245,7 +251,108 @@ const DevicesDetail = {
     },
 
     // =========================================================
-    //  Live Metrics
+    //  Header — compact metric chips (battery / RAM / wifi / room
+    //  / volume / brightness) styled like the card stats row, plus
+    //  the small screenshot+camera preview panel that slots to the
+    //  right of the title block. Both reuse DashieAuth.isAddonMode
+    //  signals for image URL gating.
+    // =========================================================
+
+    _renderHeaderChips(device, m) {
+        if (!m) return '';
+        const chips = [];
+        if (m.battery?.level != null) {
+            const charge = m.battery.charging ? '⚡' : '🔋';
+            chips.push(`<span class="device-card-detail">${charge} ${m.battery.level}%</span>`);
+        }
+        if (m.system?.ram_used_percent != null) {
+            chips.push(`<span class="device-card-detail">RAM ${m.system.ram_used_percent}%</span>`);
+        }
+        if (m.network?.wifi_signal_percent != null) {
+            chips.push(`<span class="device-card-detail">📶 ${m.network.wifi_signal_percent}%</span>`);
+        }
+        const room = m.ha_area || device.ha_area;
+        if (room) chips.push(`<span class="device-card-detail">🏠 ${DevicesPage._escape(room)}</span>`);
+        if (m.controls?.volume != null) {
+            const muted = m.controls.volume === 0;
+            const scaled = DevicesCard._scaleTo10
+                ? DevicesCard._scaleTo10(m.controls.volume, m.controls.volume_max)
+                : m.controls.volume;
+            chips.push(`<span class="device-card-detail" style="cursor: pointer;" title="Adjust volume"
+                onclick="DevicesCard.openSlider('${DevicesPage._escape(device.device_id)}', 'volume', ${m.controls.volume}, ${m.controls.volume_max ?? 'null'})">
+                <img src="assets/icons/${muted ? 'icon-volume-mute.svg' : 'icon-volume-high.svg'}" alt="" style="width: 11px; height: 11px; vertical-align: -1px;">
+                ${muted ? 'Muted' : scaled}
+            </span>`);
+        }
+        if (m.controls?.brightness != null) {
+            const scaled = DevicesCard._scaleTo10
+                ? DevicesCard._scaleTo10(m.controls.brightness, m.controls.brightness_max)
+                : m.controls.brightness;
+            chips.push(`<span class="device-card-detail" style="cursor: pointer;" title="Adjust brightness"
+                onclick="DevicesCard.openSlider('${DevicesPage._escape(device.device_id)}', 'brightness', ${m.controls.brightness}, ${m.controls.brightness_max ?? 'null'})">
+                <img src="assets/icons/icon-sun.svg" alt="" style="width: 11px; height: 11px; vertical-align: -1px;">
+                ${scaled}
+            </span>`);
+        }
+        if (chips.length === 0) return '';
+        return `<div style="display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px;">${chips.join('')}</div>`;
+    },
+
+    /** Small screenshot + camera preview block for the header. Tap to open
+     *  the full-screen modal that DevicesCard already renders. The image
+     *  URLs match the per-card endpoints — same cache-bust ts so a manual
+     *  refresh on the card list propagates here too. */
+    _renderHeaderPreview(device, m, live) {
+        if (!DashieAuth?.isAddonMode) return '';
+        const idAttr = DevicesPage._escape(device.device_id);
+        const ts = DevicesCard._screenshotTs?.[device.device_id] || DevicesCard._initialTs || Date.now();
+        const imageReady = live;
+        const screenshotSrc = imageReady
+            ? DashieAuth._addonUrl(`/api/ha/image/${encodeURIComponent(device.device_id)}/screenshot?t=${ts}`)
+            : null;
+        const cameraLive = m?.controls?.camera_streaming || m?.controls?.camera_stream_enabled;
+        const cameraSrc = imageReady && cameraLive
+            ? DashieAuth._addonUrl(`/api/ha/image/${encodeURIComponent(device.device_id)}/camera?t=${ts}`)
+            : null;
+        const screenOff = m?.controls?.screen === false && !imageReady;
+        const panelStyle = 'position: relative; width: 144px; height: 88px; background: var(--bg-subtle, #f3f4f6); border-radius: 8px; overflow: hidden;';
+        const imgStyle = 'width: 100%; height: 100%; object-fit: cover; display: block;';
+        const overlay = screenOff
+            ? `<div style="position: absolute; inset: 0; background: rgba(0,0,0,0.55); display: flex; align-items: center; justify-content: center; color: white; font-size: 11px; font-weight: 500; pointer-events: none;">Screen off</div>`
+            : '';
+        const screenshotPanel = !live
+            ? `<div style="${panelStyle} display: flex; align-items: center; justify-content: center; color: var(--text-muted);"><span style="font-size: 11px;">Offline</span></div>`
+            : screenshotSrc
+                ? `<div style="${panelStyle} cursor: zoom-in;" onclick="DevicesCard.openScreenshotModal('${idAttr}')">
+                       <img src="${screenshotSrc}" alt="screenshot" style="${imgStyle}" onerror="this.style.display='none'">
+                       ${overlay}
+                   </div>`
+                : `<div style="${panelStyle} display: flex; align-items: center; justify-content: center; color: var(--text-muted);"><span style="font-size: 11px;">No screenshot</span></div>`;
+        const cameraConfigured = m?.controls?.camera_stream_enabled !== undefined;
+        const cameraPanel = cameraSrc
+            ? `<div style="${panelStyle} cursor: zoom-in;" onclick="DevicesCamera.open('${idAttr}')">
+                   <img src="${cameraSrc}" alt="camera" style="${imgStyle}" onerror="this.style.display='none'">
+               </div>`
+            : cameraConfigured
+                ? `<div style="${panelStyle} display: flex; align-items: center; justify-content: center; flex-direction: column; gap: 4px; color: var(--text-muted);">
+                       <img src="assets/icons/icon-video-camera.svg" alt="" style="width: 20px; height: 20px; opacity: 0.5;">
+                       <span style="font-size: 10px;">Camera off</span>
+                   </div>`
+                : '';
+        return `
+            <div style="display: flex; gap: 8px; flex-shrink: 0;">
+                ${screenshotPanel}
+                ${cameraPanel}
+            </div>
+        `;
+    },
+
+    // =========================================================
+    //  Live Metrics — the long-form details that don't fit in
+    //  the header chips: IP / SSID / storage / app version /
+    //  current page. Anything compact-able (battery / RAM% /
+    //  wifi% / room / volume / brightness) lives in the header
+    //  chip row instead.
     // =========================================================
 
     _renderMetricsPanel(device) {
@@ -253,20 +360,10 @@ const DevicesDetail = {
         if (!m) return '';
         const join = arr => arr.filter(Boolean).join(' · ');
         const rows = [
-            m.battery && ['Battery', join([
-                m.battery.level != null && `${m.battery.level}%`,
-                m.battery.charging && `charging via ${m.battery.plug_source || 'AC'}`,
-            ])],
-            m.system?.ram_used_percent != null && ['RAM', join([
-                `${m.system.ram_used_percent}%`,
-                m.system.ram_total_mb && `${m.system.ram_total_mb} MB total`,
-                m.system.ram_available_mb != null && `${m.system.ram_available_mb} MB free`,
-            ])],
-            m.network?.wifi_signal_percent != null && ['Network', join([
-                `${m.network.wifi_signal_percent}%`,
-                m.network.ip_address,
-                m.network.wifi_ssid && m.network.wifi_ssid !== '<unknown ssid>' && `"${m.network.wifi_ssid}"`,
-            ])],
+            m.network?.ip_address && ['IP address', m.network.ip_address],
+            m.network?.wifi_ssid && m.network.wifi_ssid !== '<unknown ssid>' && ['Wi-Fi SSID', `"${m.network.wifi_ssid}"`],
+            m.system?.ram_total_mb && ['RAM total', `${m.system.ram_total_mb} MB`
+                + (m.system.ram_available_mb != null ? ` · ${m.system.ram_available_mb} MB free` : '')],
             m.storage?.free_gb != null && ['Storage',
                 `${m.storage.free_gb} GB free` + (m.storage.total_gb ? ` of ${m.storage.total_gb} GB` : '')],
             m.app?.app_version && ['App', join([
@@ -275,6 +372,7 @@ const DevicesDetail = {
                 m.app.device_model,
             ])],
             m.app?.current_page && ['Current page', m.app.current_page],
+            m.battery?.charging && m.battery.plug_source && ['Charging via', m.battery.plug_source],
         ].filter(r => r && r[1]);
         if (rows.length === 0) return '';
         return this._section('live-metrics', 'Live Metrics', `
@@ -291,7 +389,7 @@ const DevicesDetail = {
                     Updated ${DevicesPage._formatTime(device.metrics_updated_at)}
                 </div>
             </div></div>
-        `);
+        `, { defaultExpanded: false });
     },
 
     // =========================================================
@@ -299,25 +397,15 @@ const DevicesDetail = {
     // =========================================================
 
     _renderDisplaySection(device, display) {
-        // Only settings with VERIFIED key paths + VERIFIED option lists
-        // (sourced from OptionCatalog). Unverified ones were removed —
-        // they were dropdowns whose option values didn't match what the
-        // dashboard actually accepts. See OptionCatalog header comment.
+        // Summary-row layout mirrors the Kotlin control center's Display
+        // card. The actual editable fields live in DevicesDetailModals.
+        // openDisplay opens a modal that owns the same settingSelect()
+        // grid the section used to inline.
+        const summary = DevicesDetailModals.buildDisplaySummary(display);
         return this._section('display', 'Display & Theme', `
-            <div class="card"><div class="card-body">
-                <div class="form-grid">
-                    ${this.settingSelect(device, 'display', 'themeFamily',
-                        'Theme', display.themeFamily || 'default', OptionCatalog.themeFamilies())}
-                    ${this.settingSelect(device, 'display', 'themeMode',
-                        'Mode', display.themeMode || 'dark', OptionCatalog.themeModes())}
-                    ${this.settingSelect(device, 'display', 'preferences.layoutMode',
-                        'Layout', display['preferences.layoutMode'] || 'widgets', OptionCatalog.layoutModes())}
-                    ${this.settingSelect(device, 'display', 'preferences.animationLevel',
-                        'Animation Level', display['preferences.animationLevel'] || 'high', OptionCatalog.animationLevels())}
-                </div>
-                <div style="margin-top: 12px; font-size: var(--font-size-sm); color: var(--text-muted);">
-                    More display options (font sizes, zoom, weather overlay, etc.) can be set from the dashboard's Settings page on the device.
-                </div>
+            <div class="card"><div class="card-body" style="padding: 0;">
+                ${DevicesDetailModals.renderSummaryRow('Theme', summary,
+                    `DevicesDetailModals.openDisplay('${DevicesPage._escape(device.device_id)}')`)}
             </div></div>
         `);
     },
@@ -327,25 +415,12 @@ const DevicesDetail = {
     // =========================================================
 
     _renderSleepSection(device, sleep) {
+        const display = device.settings?.display || {};
+        const summary = DevicesDetailModals.buildSleepSummary(sleep, display);
         return this._section('sleep', 'Sleep & Screensaver', `
-            <div class="card"><div class="card-body">
-                <div class="form-grid">
-                    ${this.settingSelect(device, 'sleep', 'sleep.enabled',
-                        'Sleep Timer', String(sleep['sleep.enabled'] !== false), OptionCatalog.onOff())}
-                    ${this.settingSelect(device, 'sleep', 'sleep.method',
-                        'Sleep Method', sleep['sleep.method'] || 'schedule', OptionCatalog.sleepMethods())}
-                    ${this.settingSelect(device, 'sleep', 'sleep.timerStart',
-                        'Sleep Time', sleep['sleep.timerStart'] || '22:00', OptionCatalog.sleepTimes())}
-                    ${this.settingSelect(device, 'sleep', 'sleep.timerEnd',
-                        'Wake Time', sleep['sleep.timerEnd'] || '07:00', OptionCatalog.wakeTimes())}
-                    ${this.settingSelect(device, 'sleep', 'sleep.resleepTimeout',
-                        'Re-sleep Delay (min)', String(sleep['sleep.resleepTimeout'] ?? 15), OptionCatalog.resleepDelays())}
-                    ${this.settingSelect(device, 'sleep', 'sleep.inactivityTimeout',
-                        'Inactivity Timeout (sec)', String(sleep['sleep.inactivityTimeout'] ?? 120), OptionCatalog.inactivityTimeouts())}
-                </div>
-                <div style="margin-top: 12px; font-size: var(--font-size-sm); color: var(--text-muted);">
-                    Sleep tuning toggles (wake-on-motion, show clock, reduce brightness) can be set from the dashboard's Settings page on the device.
-                </div>
+            <div class="card"><div class="card-body" style="padding: 0;">
+                ${DevicesDetailModals.renderSummaryRow('Sleep Mode', summary,
+                    `DevicesDetailModals.openSleep('${DevicesPage._escape(device.device_id)}')`)}
             </div></div>
         `);
     },
@@ -622,5 +697,43 @@ const DevicesDetail = {
                 </select>
             </div>
         `;
+    },
+
+    // =========================================================
+    //  Modal helpers — bare picker + toggle that DevicesDetailModals
+    //  uses for its sleep / display modals. Same persistence path
+    //  as settingSelect (DevicesPage._onSettingChange) so writes
+    //  flow through the existing broadcast pipeline.
+    // =========================================================
+
+    /** Bare <select> WITHOUT the form-group wrapper. Used inside the
+     *  sleep modal where the parent already laid out the .form-group. */
+    _settingSelectRaw(device, category, key, currentValue, options, customOnChange) {
+        const onChange = customOnChange
+            || `DevicesPage._onSettingChange('${device.device_id}', '${category}', '${key}', this.value)`;
+        const optionsHtml = options.map(([val, text]) =>
+            `<option value="${val}" ${val === currentValue ? 'selected' : ''}>${text}</option>`
+        ).join('');
+        return `<select class="form-select" onchange="${onChange}">${optionsHtml}</select>`;
+    },
+
+    /** Boolean toggle row — same broadcast path. */
+    _settingToggleRow(device, category, key, label, checked) {
+        return `
+            <div class="setting-row">
+                <span class="setting-row-label">${DevicesPage._escape(label)}</span>
+                <label class="toggle">
+                    <input type="checkbox" ${checked ? 'checked' : ''}
+                        onchange="DevicesPage._onSettingChange('${device.device_id}', '${category}', '${key}', this.checked)">
+                    <span class="toggle-slider"></span>
+                </label>
+            </div>
+        `;
+    },
+
+    /** Direct setting writer — used by composite keys (sleep.sleepMode
+     *  expands into sleep.enabled + sleep.method writes). */
+    _writeSetting(device, category, key, value) {
+        DevicesPage._onSettingChange(device.device_id, category, key, value);
     },
 };

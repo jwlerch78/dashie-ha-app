@@ -26,9 +26,9 @@ const Sidebar = {
             <div class="sidebar-section">
                 <div class="sidebar-section-label">Manage</div>
                 ${this._navItem('devices', 'Dashboards', 'icon-tv', activePage)}
-                ${this._navItem('preferences', 'Preferences', 'icon-settings', activePage)}
                 ${this._gatedNavItem('voice-ai', 'Voice & AI', 'icon-ai-chat', activePage)}
                 ${this._gatedNavItem('video-feeds', 'Video Feeds', 'icon-video-camera', activePage)}
+                ${this._navItem('preferences', 'Preferences', 'icon-sliders', activePage)}
             </div>
 
             <div class="sidebar-divider"></div>
