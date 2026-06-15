@@ -478,6 +478,53 @@ const ConsoleAiClient = {
         }
     },
 
+    /** Parity harness: route the turn to the voice-conversation edge fn (the
+     *  consolidated "brain") instead of this local orchestration. Toggle on with
+     *  ?brain=1 on the console URL, or localStorage['dashie-use-brain']='1'.
+     *  Default off → zero change to normal console behavior. */
+    get _useBrain() {
+        try {
+            const qs = new URLSearchParams(location.search);
+            return qs.get('brain') === '1' || localStorage.getItem('dashie-use-brain') === '1';
+        } catch (_) { return false; }
+    },
+
+    async _sendQueryViaBrain(text, { personalityId, modelId, history } = {}) {
+        const t0 = performance.now();
+        const url = `${DashieAuth.config.url}/functions/v1/voice-conversation`;
+        const body = {
+            text,
+            endpoint_id: 'console',
+            options: {},
+            history: (history || []).map(h => ({
+                role: h.role === 'user' ? 'user' : 'assistant',
+                text: h.content || h.voice || h.text || '',
+            })),
+        };
+        if (personalityId) body.options.personality_id = personalityId;
+        if (modelId) body.options.model = modelId;
+        try {
+            const resp = await fetch(url, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'apikey': DashieAuth.anonKey,
+                    'Authorization': `Bearer ${DashieAuth.jwt || DashieAuth.anonKey}`,
+                },
+                body: JSON.stringify(body),
+            });
+            const turn = await resp.json().catch(() => ({}));
+            if (!resp.ok || turn.ok === false) {
+                return { ok: false, error: turn.error || turn.message || `HTTP ${resp.status}`, latency_ms: Math.round(performance.now() - t0), stages: turn.stages || [] };
+            }
+            turn._via = 'brain';
+            turn.total_latency_ms = turn.total_latency_ms || Math.round(performance.now() - t0);
+            return turn;
+        } catch (e) {
+            return { ok: false, error: `brain: ${e?.message || e}`, latency_ms: Math.round(performance.now() - t0) };
+        }
+    },
+
     /** Main entry point. Returns a structured "turn" object. */
     async sendQuery(text, opts = {}) {
         const t0 = performance.now();
@@ -485,6 +532,12 @@ const ConsoleAiClient = {
         const modelId = opts.modelId || window.AiModelCatalog?.DEFAULT_AI_MODEL || 'gemini-3.1-flash-lite';
         const history = Array.isArray(opts.history) ? opts.history : [];
         const onStage = typeof opts.onStage === 'function' ? opts.onStage : () => {};
+
+        // Parity harness: route to the voice-conversation brain when toggled on (?brain=1).
+        if (this._useBrain) {
+            console.log('[ConsoleAiClient] routing via voice-conversation brain (?brain=1)');
+            return this._sendQueryViaBrain(text, { personalityId, modelId, history });
+        }
 
         // ── NLP FAST PATH ──────────────────────────────────────────
         // Mirror the tablet's IntentClassifier behavior: clear HA

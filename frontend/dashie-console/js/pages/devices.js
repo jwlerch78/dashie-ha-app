@@ -718,13 +718,15 @@ const DevicesPage = {
 
     async _onSettingChange(deviceId, category, key, value) {
         const savingKey = `${deviceId}_${key}`;
+        // Don't re-render on the saving-flag set. Re-rendering the whole
+        // page tears down + rebuilds any open modal, which is what the
+        // user perceives as the "double flash" on every picker change.
+        // The saving indicator is a minor nicety; rebuilding the modal
+        // mid-interaction is not. Final renderPage in the finally fires
+        // after the write either way.
         this._saving[savingKey] = true;
-        App.renderPage();
 
         try {
-            // Handler expects { settings_path, settings_value } (renamed
-            // from category/value in edge-fn commit 1b4294d97). Sending the
-            // old names returned 500 with "Settings path is required".
             await DashieAuth.dbRequest('update_device_settings', {
                 device_id: deviceId,
                 settings_path: category,
