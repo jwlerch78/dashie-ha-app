@@ -88,6 +88,42 @@ const DevicesDetailModals = {
         ['weather', 'Weather & Time'],
     ],
 
+    // Mirror Kotlin WakeWordModel.BUNDLED_MODEL_IDS — keep these ids in
+    // sync with the persisted format the Android side reads/writes.
+    WAKE_WORDS: [
+        ['hey_dashie', 'Hey Dashie'],
+        ['mww_okay_nabu', 'Okay Nabu'],
+        ['mww_hey_jarvis', 'Hey Jarvis'],
+        ['mww_hey_mycroft', 'Hey Mycroft'],
+        ['mww_alexa', 'Alexa'],
+    ],
+
+    // ── Account-settings cache (for ai.wakeWord and other account-wide
+    //    fields we surface read/edit from the device detail page) ─────
+
+    _accountSettings: null,     // populated by ensureAccountSettings()
+    _accountLoading: false,
+
+    /** Lazy-load user_settings the first time something on this page needs
+     *  an account-level field. Re-render when the load resolves so the
+     *  Voice section's Wake Word row swaps from "—" to the real value. */
+    ensureAccountSettings() {
+        if (this._accountSettings || this._accountLoading) return;
+        this._accountLoading = true;
+        DashieAuth.loadUserSettings().then(s => {
+            this._accountSettings = s || {};
+            this._accountLoading = false;
+            App.renderPage();
+        }).catch(() => {
+            this._accountSettings = {};
+            this._accountLoading = false;
+        });
+    },
+
+    getAccountWakeWord() {
+        return this._accountSettings?.ai?.wakeWord || '';
+    },
+
     // ── Section body ──────────────────────────────────────────
 
     renderDisplayBody(device, display, sleep) {
@@ -399,6 +435,79 @@ const DevicesDetailModals = {
             </div>
         `;
         return this._modal('Screensaver', body, 'DevicesDetailModals.closeScreensaver()');
+    },
+
+    // ── Wake Word modal (account-level user_settings.ai.wakeWord) ──
+
+    _wakeWordOpen: false,
+    _wakeWordSaving: false,
+    _wakeWordPending: null,  // value chosen but not yet persisted
+
+    openWakeWord() {
+        this._wakeWordOpen = true;
+        this._wakeWordPending = null;
+        // Make sure cache is hot — needed for the picker's current value.
+        if (!this._accountSettings) this.ensureAccountSettings();
+        App.renderPage();
+    },
+
+    closeWakeWord() {
+        this._wakeWordOpen = false;
+        this._wakeWordPending = null;
+        App.renderPage();
+    },
+
+    _setWakeWordPending(value) { this._wakeWordPending = value; },
+
+    async submitWakeWord() {
+        if (this._wakeWordSaving) return;
+        const value = this._wakeWordPending;
+        if (!value) { this.closeWakeWord(); return; }
+        this._wakeWordSaving = true;
+        App.renderPage();
+        try {
+            // Round-trip the full user_settings JSON (same shape Preferences
+            // page uses). Refetch first to merge a fresh copy so we don't
+            // clobber a category another tab/device wrote between our cache
+            // load and this save.
+            const remote = (await DashieAuth.loadUserSettings()) || {};
+            const merged = { ...remote, ai: { ...(remote.ai || {}), wakeWord: value } };
+            await DashieAuth.saveUserSettings(merged);
+            this._accountSettings = merged;
+            Toast.success('Wake word updated');
+            this.closeWakeWord();
+        } catch (e) {
+            Toast.error(`Save failed: ${e?.message || e}`);
+        } finally {
+            this._wakeWordSaving = false;
+            App.renderPage();
+        }
+    },
+
+    renderWakeWordModal() {
+        if (!this._wakeWordOpen) return '';
+        const current = this._wakeWordPending != null
+            ? this._wakeWordPending
+            : (this.getAccountWakeWord() || 'hey_dashie');
+        const optionsHtml = this.WAKE_WORDS.map(([val, label]) =>
+            `<option value="${this._escape(val)}" ${val === current ? 'selected' : ''}>${this._escape(label)}</option>`
+        ).join('');
+        const body = `
+            <div class="form-group">
+                <label class="form-label">Wake Word</label>
+                <select class="form-select" onchange="DevicesDetailModals._setWakeWordPending(this.value)">
+                    ${optionsHtml}
+                </select>
+            </div>
+            <div style="font-size: var(--font-size-sm); color: var(--text-muted);">
+                Wake word is account-wide — changing it here applies to every device on your account.
+            </div>
+            <div style="display: flex; gap: 8px; justify-content: flex-end; margin-top: 12px;">
+                <button class="btn btn-secondary" onclick="DevicesDetailModals.closeWakeWord()" ${this._wakeWordSaving ? 'disabled' : ''}>Cancel</button>
+                <button class="btn btn-primary" onclick="DevicesDetailModals.submitWakeWord()" ${this._wakeWordSaving ? 'disabled' : ''}>${this._wakeWordSaving ? 'Saving…' : 'Save'}</button>
+            </div>
+        `;
+        return this._modal('Wake Word', body, 'DevicesDetailModals.closeWakeWord()');
     },
 
     // ── Personality picker (device-level aiVoice.personalityId) ───

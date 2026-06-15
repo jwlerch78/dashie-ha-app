@@ -123,6 +123,7 @@ const DevicesDetail = {
             ${DevicesDetailModals.renderPickerModal()}
             ${DevicesDetailModals.renderScreensaverModal()}
             ${DevicesDetailModals.renderVoicePersonalityModal()}
+            ${DevicesDetailModals.renderWakeWordModal()}
             ${DevicesDetailModals.renderPinModal()}
         `;
     },
@@ -567,14 +568,20 @@ const DevicesDetail = {
         const voiceEnabled = voice['voice.enabled'] !== false;
         const personality = aiVoice.personalityId || aiVoice['aiVoice.personality'] || 'dashie';
         const personalityLabel = this._titleCase(personality);
-        // Wake word: account-level read-only summary. The user_settings
-        // payload should carry it under ai.wakeWord; fall back to '—'.
-        const wakeWord = aiVoice.wakeWord || aiVoice['ai.wakeWord'] || '—';
+
+        // Wake word lives in user_settings.ai.wakeWord (account-wide).
+        // Trigger an async load so the row populates from '—' to the real
+        // value without the user having to click into the modal first.
+        DevicesDetailModals.ensureAccountSettings();
+        const wakeWordValue = DevicesDetailModals.getAccountWakeWord();
+        const wakeWordLabel = wakeWordValue
+            ? (DevicesDetailModals.WAKE_WORDS.find(([v]) => v === wakeWordValue)?.[1] || wakeWordValue)
+            : '—';
 
         const rows = [
             DevicesDetailModals._toggleRow(device, 'voice', 'voice.enabled', 'Enable Voice', voiceEnabled),
-            DevicesDetailModals._summaryRow('Wake Word', wakeWord,
-                `App.navigate('preferences')`),
+            DevicesDetailModals._summaryRow('Wake Word', wakeWordLabel,
+                `DevicesDetailModals.openWakeWord()`),
             DevicesDetailModals._summaryRow('Personality', personalityLabel,
                 `DevicesDetailModals.openVoicePersonality('${idAttr}')`),
         ].join('');
@@ -582,7 +589,8 @@ const DevicesDetail = {
         return this._section('voice-ai', 'Voice & AI', `
             <div class="card"><div class="card-body" style="padding: 0;">${rows}</div></div>
             <div style="margin-top: 8px; font-size: var(--font-size-sm); color: var(--text-muted);">
-                Wake Word is account-wide — edit on <a href="#preferences" onclick="event.preventDefault(); App.navigate('preferences')">Preferences</a>. AI model, voice, and pipeline live on the <a href="#voice-ai" onclick="event.preventDefault(); App.navigate('voice-ai')">Voice & AI</a> page.
+                Wake Word is account-wide — applies to all devices on your account.
+                AI model, voice, and pipeline live on the <a href="#voice-ai" onclick="event.preventDefault(); App.navigate('voice-ai')">Voice & AI</a> page.
             </div>
         `);
     },
