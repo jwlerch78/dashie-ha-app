@@ -211,6 +211,8 @@ const ConsoleAiClient = {
                 ? await DashieAuth.loadUserSettings()
                 : {};
             this._cachedLanguage = settings.general?.language || 'system';
+            console.log('[ConsoleAiClient] resolved language:', this._cachedLanguage,
+                'general.language:', settings.general?.language);
         } catch (e) {
             console.warn('[ConsoleAiClient] language resolve failed:', e);
             this._cachedLanguage = 'system';
