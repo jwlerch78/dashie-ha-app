@@ -241,12 +241,11 @@ const DevicesDetailModals = {
         return `${timeStr} (${offLabel})`;
     },
 
-    /** "Default · Dark" — theme family + dark mode. */
+    /** Just the theme family — dark/light is its own toggle inside the
+     *  Theme modal, surfacing it here doubles up the same control. */
     buildThemeSummary(display) {
         const fam = display.themeFamily || 'default';
-        const famLabel = this._labelFor(this.THEME_FAMILIES, fam);
-        const darkMode = display.darkMode === true || display.themeMode === 'dark';
-        return `${famLabel} · ${darkMode ? 'Dark' : 'Light'}`;
+        return this._labelFor(this.THEME_FAMILIES, fam);
     },
 
     /** "Photos, 5 min" / "Off" / "{Mode} ({timeout})"
