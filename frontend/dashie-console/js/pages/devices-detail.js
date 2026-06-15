@@ -82,9 +82,10 @@ const DevicesDetail = {
                 <div style="display: flex; align-items: flex-start; gap: 12px; flex: 1 1 320px; min-width: 0;">
                     <div class="device-card-icon" style="width: 48px; height: 48px; font-size: 24px; flex-shrink: 0;">${icon}</div>
                     <div style="flex: 1; min-width: 0;">
-                        <div style="display: flex; align-items: center; gap: 8px;">
+                        <div style="display: flex; align-items: center; gap: 6px; flex-wrap: wrap;">
                             <div style="flex: 1; min-width: 0;">${DevicesRename.renderNameRow(device, conflict, 'detail')}</div>
                             ${this._renderLockToggle(device, m, live)}
+                            ${this._renderRefreshButton(device, live)}
                         </div>
                         <div style="font-size: var(--font-size-sm); color: var(--text-secondary); margin-top: 4px;">
                             ${DevicesPage._escape(DevicesPage._typeLabel(device))} ·
@@ -156,15 +157,8 @@ const DevicesDetail = {
             </button>
         `);
 
-        // Lock toggle — controls.lock present means HA reports a lock switch
-        if (controls.lock !== undefined) {
-            const locked = !!controls.lock;
-            const busy = !!DevicesCard._busyControl[`${device.device_id}:lock`];
-            buttons.push(this._toggleBtn(idAttr, 'lock', locked, busy,
-                locked ? 'icon-lock.svg' : 'icon-unlock.svg',
-                locked ? 'Locked' : 'Unlocked',
-                locked ? 'Locked — tap to unlock' : 'Unlocked — tap to lock'));
-        }
+        // Lock moved to the header (next to the name + refresh icon),
+        // not duplicated here.
 
         // Screen on/off
         if (controls.screen !== undefined) {
@@ -384,11 +378,27 @@ const DevicesDetail = {
         return `<div style="font-size: 11px; color: var(--text-muted); margin-top: 2px;">${parts.map(p => DevicesPage._escape(p)).join(' · ')}</div>`;
     },
 
-    /** Refresh / Send diagnostics / Send crash buttons above the preview. */
+    /** Small refresh button slotted in the name row, next to lock. */
+    _renderRefreshButton(device, live) {
+        if (!live) return '';
+        const idAttr = DevicesPage._escape(device.device_id);
+        const busy = !!DevicesCard._busyControl?.[`${device.device_id}:refresh`];
+        return `
+            <button title="Refresh images + device data" ${busy ? 'disabled' : ''}
+                onclick="DevicesDetail.refresh('${idAttr}')"
+                style="background: transparent; border: 1px solid var(--border, #e5e7eb); border-radius: 999px; padding: 6px; cursor: ${busy ? 'wait' : 'pointer'}; opacity: ${busy ? 0.5 : 1}; line-height: 0;">
+                <img src="assets/icons/icon-reload.svg" alt="" style="width: 14px; height: 14px;">
+            </button>
+        `;
+    },
+
+    /** Send diagnostics / Send crash buttons above the preview.
+     *  Backend control roles (send_diagnostics / send_crash_report) and HA
+     *  button entities aren't wired yet — clicks toast a "coming soon" so
+     *  the UI doesn't 400 while we plumb the entities + server route. */
     _renderHeaderActions(device, m, live) {
         const idAttr = DevicesPage._escape(device.device_id);
         const hasCrash = !!m?.app?.has_crash_report;
-        const refreshBusy = !!DevicesCard._busyControl?.[`${device.device_id}:refresh`];
         const btn = (label, title, onClick, disabled) => `
             <button title="${title}" ${disabled ? 'disabled' : ''} onclick="${onClick}"
                 style="padding: 5px 10px; border-radius: 6px; border: 1px solid var(--border, #e5e7eb); background: var(--bg-card, #fff); color: var(--text-primary); cursor: ${disabled ? 'not-allowed' : 'pointer'}; opacity: ${disabled ? 0.5 : 1}; font-size: 12px; font-weight: 500; display: inline-flex; align-items: center; gap: 4px;">
@@ -396,10 +406,6 @@ const DevicesDetail = {
             </button>
         `;
         const buttons = [];
-        buttons.push(btn(`<img src="assets/icons/icon-reload.svg" alt="" style="width: 11px; height: 11px;"> Refresh`,
-            'Refresh images + device data',
-            `DevicesDetail.refresh('${idAttr}')`,
-            refreshBusy));
         buttons.push(btn('Send diagnostics',
             'Trigger the device to upload a fresh diagnostic bundle',
             `DevicesDetail.sendDiagnostics('${idAttr}')`,
@@ -415,10 +421,7 @@ const DevicesDetail = {
 
     /** Bump the screenshot cache-bust ts and refetch device data. */
     refresh(deviceId) {
-        // 1. Bump image cache-bust so the new screenshot/camera URLs miss
-        //    any CDN/HA cache and serve fresh frames.
         if (DevicesCard._screenshotTs) DevicesCard._screenshotTs[deviceId] = Date.now();
-        // 2. Mark busy so the button visually disables during the refetch.
         DevicesCard._busyControl[`${deviceId}:refresh`] = true;
         App.renderPage();
         const done = () => {
@@ -428,17 +431,16 @@ const DevicesDetail = {
         if (typeof DevicesPage._refetchDevices === 'function') {
             DevicesPage._refetchDevices().finally(done);
         } else {
-            // Fall back to whatever list refetch the page exposes.
             (DevicesPage.refresh?.() || Promise.resolve()).then?.(done) || done();
         }
     },
 
-    sendDiagnostics(deviceId) {
-        DevicesCard.pressButton(deviceId, 'send_diagnostics');
+    sendDiagnostics(_deviceId) {
+        Toast.info('Send diagnostics: HA button entity not yet exposed — coming soon.');
     },
 
-    sendCrashReport(deviceId) {
-        DevicesCard.pressButton(deviceId, 'send_crash_report');
+    sendCrashReport(_deviceId) {
+        Toast.info('Send crash report: HA button entity not yet exposed — coming soon.');
     },
 
     /** Small screenshot + camera preview block for the header. Tap to open

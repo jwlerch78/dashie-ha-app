@@ -128,6 +128,7 @@ const DevicesDetailModals = {
 
     renderDisplayBody(device, display, sleep) {
         const idAttr = DevicesPage._escape(device.device_id);
+        const screensaver = device.settings?.screensaver || {};
         const sleepSummary = this.buildSleepSummary(sleep, display);
         const themeSummary = this.buildThemeSummary(display);
         const animationsOn = display.animationsEnabled === true || display['display.animationsEnabled'] === true;
@@ -154,7 +155,7 @@ const DevicesDetailModals = {
             ${this._subsectionCard('Screen Management', [
                 this._summaryRow('Sleep Mode', sleepSummary,
                     `DevicesDetailModals.openSleep('${idAttr}')`),
-                this._summaryRow('Screensaver', this.buildScreensaverSummary(display),
+                this._summaryRow('Screensaver', this.buildScreensaverSummary(display, screensaver),
                     `DevicesDetailModals.openScreensaver('${idAttr}')`),
                 this._summaryRow('Wake Mode',
                     this._labelFor(this.WAKE_MODES, display.motionWakeMode || 'disabled'),
@@ -248,11 +249,16 @@ const DevicesDetailModals = {
         return `${famLabel} · ${darkMode ? 'Dark' : 'Light'}`;
     },
 
-    /** "Photos, 5 min" / "Off" / "{Mode} ({timeout})" */
-    buildScreensaverSummary(display) {
-        const timeout = Number(display.screensaverTimeout ?? display['screensaver.timeout'] ?? 0);
+    /** "Photos, 5 min" / "Off" / "{Mode} ({timeout})"
+     *  Reads from user_devices.settings.screensaver.* (the canonical shape
+     *  written by device-registration.js _buildScreensaverSettings), falling
+     *  back to legacy display.screensaverX paths if the device hasn't yet
+     *  written the new category. */
+    buildScreensaverSummary(display, screensaver) {
+        const s = screensaver || {};
+        const timeout = Number(s.timeout ?? display?.screensaverTimeout ?? display?.['screensaver.timeout'] ?? 0);
         if (!timeout) return 'Off';
-        const mode = display.screensaverMode || display['screensaver.mode'] || 'dim';
+        const mode = s.mode || display?.screensaverMode || display?.['screensaver.mode'] || 'dim';
         const modeLabel = this._labelFor(this.SCREENSAVER_MODES, mode);
         return `${modeLabel}, ${this._formatTimeout(timeout)}`;
     },
@@ -409,27 +415,28 @@ const DevicesDetailModals = {
         if (!this._screensaverOpen) return '';
         const device = DevicesPage._findDevice(this._screensaverDeviceId);
         if (!device) return '';
+        const s = device.settings?.screensaver || {};
         const display = device.settings?.display || {};
-        const timeout = String(display.screensaverTimeout ?? '0');
-        const mode = display.screensaverMode || 'dim';
+        const timeout = String(s.timeout ?? display.screensaverTimeout ?? '0');
+        const mode = s.mode || display.screensaverMode || 'dim';
         const D = DevicesDetail;
         const enabled = timeout !== '0';
-        const showClock = display.screensaverShowClock === true;
+        const showClock = s.showClock === true;
         const body = `
             <div style="display: flex; flex-direction: column; gap: 14px;">
                 <div class="form-group">
                     <label class="form-label">Timeout</label>
-                    ${D._settingSelectRaw(device, 'display', 'screensaverTimeout', timeout, this.SCREENSAVER_TIMEOUTS)}
+                    ${D._settingSelectRaw(device, 'screensaver', 'timeout', timeout, this.SCREENSAVER_TIMEOUTS)}
                 </div>
                 ${enabled ? `
                     <div class="form-group">
                         <label class="form-label">Mode</label>
-                        ${D._settingSelectRaw(device, 'display', 'screensaverMode', mode, this.SCREENSAVER_MODES)}
+                        ${D._settingSelectRaw(device, 'screensaver', 'mode', mode, this.SCREENSAVER_MODES)}
                     </div>
                     ${(mode === 'dim' || mode === 'black' || mode === 'photos') ? `
-                        ${D._settingToggleRow(device, 'display', 'screensaverShowClock', 'Show Clock', showClock)}
-                        ${showClock ? D._settingToggleRow(device, 'display', 'screensaverShowDate',
-                            'Show Date', display.screensaverShowDate === true) : ''}
+                        ${D._settingToggleRow(device, 'screensaver', 'showClock', 'Show Clock', showClock)}
+                        ${showClock ? D._settingToggleRow(device, 'screensaver', 'showDate',
+                            'Show Date', s.showDate === true) : ''}
                     ` : ''}
                 ` : ''}
             </div>
