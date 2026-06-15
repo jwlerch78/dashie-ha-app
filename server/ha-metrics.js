@@ -242,12 +242,33 @@ function _buildViaRegistry(states, entityRegistry) {
         // slug variation across rename/re-register.
         const deviceEntities = entitiesByHaDevice.get(haDeviceId) || [];
         const byRole = {};
+        const knownRoles = Object.keys(METRIC_MAP);
         for (const entity of deviceEntities) {
             if (entity.entity_id === anchor.entity_id) continue;
-            const role = _roleFromUniqueId(entity.unique_id, dashieDeviceId)
+            let role = _roleFromUniqueId(entity.unique_id, dashieDeviceId)
                 || (parsed && entity.entity_id.startsWith(parsed.domain + '.' + slug + '_')
                     ? entity.entity_id.slice(parsed.domain.length + slug.length + 2)
                     : null);
+            // Third fallback for partial migrations: if both the unique_id
+            // prefix and the entity_id slug failed (typically because the
+            // integration's async_migrate_to_stable_id only ran for SOME
+            // entities, leaving siblings with a legacy device_id prefix
+            // that doesn't match the anchor's current STATE), match by
+            // known role suffix. The entity's HA device_id already binds
+            // it to this Dashie device, so there's no cross-device leakage
+            // risk — we just need to figure out which METRIC_MAP entry to
+            // dispatch through. We prefer the longest matching role so
+            // `ram_usage` wins over `ram` if both were ever defined.
+            if (!role && entity.entity_id) {
+                const tail = entity.entity_id.split('.').slice(1).join('.');
+                let best = null;
+                for (const r of knownRoles) {
+                    if (tail.endsWith('_' + r) || tail === r) {
+                        if (!best || r.length > best.length) best = r;
+                    }
+                }
+                role = best;
+            }
             if (!role) continue;
             const state = stateById[entity.entity_id];
             if (!state) continue;
