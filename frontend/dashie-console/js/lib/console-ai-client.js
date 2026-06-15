@@ -178,95 +178,46 @@ const ConsoleAiClient = {
 
     /** Format search results as the AI sees them — mirrors the webapp's
      *  webSearchService.formatResultsForAI() output. */
-    _formatSearchResultsForPrompt(searchResponse, maxResults = 5) {
-        const results = (searchResponse?.results || []).slice(0, maxResults);
-        let formatted = `Web Search Results (via ${searchResponse?.provider || 'unknown'}):\n\n`;
-        results.forEach((r, i) => {
-            formatted += `${i + 1}. ${r.title || ''}\n`;
-            formatted += `   URL: ${r.url || ''}\n`;
-            formatted += `   ${r.snippet || ''}\n\n`;
-        });
-        if ((searchResponse?.results || []).length > maxResults) {
-            formatted += `... and ${searchResponse.results.length - maxResults} more results\n`;
-        }
-        return formatted;
-    },
-
-    /** Build the initial prompt — base context filled with date/time/user
-     *  request, prepended with personality prefix, appended with the slim
-     *  response-format-initial spec, then personality suffix. Matches the
-     *  webapp's buildPrompt() with inquiryType=null. */
-    _buildInitialPrompt({ userRequest, personalityWrap, history }) {
-        const T = window.AiPromptTemplates;
-        const baseValues = {
-            DATE_TIME: T.formatDateTime(),
-            USER_REQUEST: userRequest,
-            CHAT_HISTORY: this._formatHistory(history),
-            AVAILABLE_TOOLS_LIST: T.AVAILABLE_TOOLS_LIST,
+    /** Build the context object passed to window.PromptBuilder.buildPrompt.
+     *  Single chokepoint — adding a new prompt field (language, future)
+     *  means one edit here, both Pass 1 and Pass 2 inherit it. */
+    async _buildPromptContext({ personality, history }) {
+        const language = await this._resolveLanguage();
+        return {
+            customPersonalityConfig: personality,
+            chatHistory: this._formatHistory(history || []),
+            language,
         };
-        let prompt = T.fillTemplate(T.BASE_CONTEXT, baseValues);
-        if (personalityWrap.responsePrefix) {
-            prompt = personalityWrap.responsePrefix + '\n\n' + prompt;
+    },
+
+    // Language resolution — cached lazily on first sendQuery. The
+    // Preferences page calls invalidateLanguageCache() after a save so
+    // a change picked there takes effect on the next turn without a
+    // page reload.
+    _cachedLanguage: null,
+    _cachedLanguageAt: 0,
+    _LANGUAGE_TTL_MS: 5 * 60 * 1000,
+
+    async _resolveLanguage() {
+        const now = performance.now();
+        if (this._cachedLanguage !== null && (now - this._cachedLanguageAt) < this._LANGUAGE_TTL_MS) {
+            return this._cachedLanguage;
         }
-        prompt += '\n\n' + T.fillTemplate(T.RESPONSE_FORMAT_INITIAL, baseValues);
-        if (personalityWrap.responseSuffix) {
-            prompt += personalityWrap.responseSuffix;
+        try {
+            const settings = await window.DashieAuth?.loadUserSettings?.() || {};
+            this._cachedLanguage = settings.general?.language || 'system';
+        } catch {
+            this._cachedLanguage = 'system';
         }
-        return prompt;
+        this._cachedLanguageAt = now;
+        return this._cachedLanguage;
     },
 
-    /** Second-pass HA prompt — inquiries/home-assistant.md filled with the
-     *  user's entity list. Matches buildPrompt({inquiryType: 'home-assistant',
-     *  retrievedData: {entities, entities_by_domain, command_hint}}). */
-    _buildHomeAssistantPrompt({ userRequest, personalityWrap, retrievedData, history }) {
-        return this._buildSecondPassPrompt({
-            userRequest, personalityWrap, history,
-            inquiryTemplate: window.AiPromptTemplates.INQUIRY_HOME_ASSISTANT,
-            inquiryValues: {
-                HA_ENTITIES: JSON.stringify(retrievedData.entities || [], null, 2),
-                HA_ENTITIES_BY_DOMAIN: JSON.stringify(retrievedData.entities_by_domain || {}, null, 2),
-                COMMAND_HINT: retrievedData.command_hint || userRequest,
-            },
-        });
-    },
-
-    /** Shared second-pass prompt assembler. Matches webapp prompt-builder.js
-     *  buildPrompt(inquiryType, retrievedData) flow exactly: lead with
-     *  base-context (filled with DATE_TIME + USER_REQUEST + CHAT_HISTORY +
-     *  AVAILABLE_TOOLS_LIST), append the inquiry template, append the FULL
-     *  response-format, with personality prefix/suffix wrapping the whole
-     *  thing.
-     *
-     *  Why this matters: some inquiry templates (web-search.md) don't
-     *  include {{DATE_TIME}} themselves. Without base-context as the
-     *  foundation, the model has no idea what "today" is and renders
-     *  events that ALREADY HAPPENED as "tonight" (June 12 match read
-     *  by the model on June 13 sounded like it was still upcoming). */
-    _buildSecondPassPrompt({ userRequest, personalityWrap, history, inquiryTemplate, inquiryValues = {} }) {
-        const T = window.AiPromptTemplates;
-        const baseValues = {
-            DATE_TIME: T.formatDateTime(),
-            USER_REQUEST: userRequest,
-            CHAT_HISTORY: this._formatHistory(history || []),
-            AVAILABLE_TOOLS_LIST: T.AVAILABLE_TOOLS_LIST,
-            ...inquiryValues,
-        };
-        let prompt = T.fillTemplate(T.BASE_CONTEXT, baseValues);
-        prompt += '\n\n' + T.fillTemplate(inquiryTemplate, baseValues);
-        prompt += '\n\n' + T.fillTemplate(T.RESPONSE_FORMAT_FULL, baseValues);
-        if (personalityWrap.responsePrefix) prompt = personalityWrap.responsePrefix + '\n\n' + prompt;
-        if (personalityWrap.responseSuffix) prompt += personalityWrap.responseSuffix;
-        return prompt;
-    },
-
-    _buildWebSearchPrompt({ userRequest, personalityWrap, retrievedData, history }) {
-        return this._buildSecondPassPrompt({
-            userRequest, personalityWrap, history,
-            inquiryTemplate: window.AiPromptTemplates.INQUIRY_WEB_SEARCH,
-            inquiryValues: {
-                SEARCH_RESULTS: retrievedData.formatted || JSON.stringify(retrievedData, null, 2),
-            },
-        });
+    /** Called by the Preferences page after a successful save so the next
+     *  chat turn picks up the change. */
+    invalidateLanguageCache() {
+        this._cachedLanguage = null;
+        this._cachedLanguageAt = 0;
     },
 
     _formatHistory(history) {
@@ -558,14 +509,17 @@ const ConsoleAiClient = {
 
         const provider = this._providerForModel(modelId);
         const personality = await this._getPersonality(personalityId);
-        const personalityWrap = (window.PersonalityPromptBuilder
-            ? window.PersonalityPromptBuilder.buildPersonalityPrompt(personality)
-            : { responsePrefix: '', responseSuffix: '' });
+        const promptContext = await this._buildPromptContext({ personality, history });
 
         onStage('pass1_start', { provider, modelId });
 
         // ── PASS 1 ─────────────────────────────────────────────────
-        const initialPrompt = this._buildInitialPrompt({ userRequest: text, personalityWrap, history });
+        const initialPrompt = await window.PromptBuilder.buildPrompt({
+            userRequest: text,
+            inquiryType: null,
+            retrievedData: null,
+            context: promptContext,
+        });
         const pass1 = await this._callGateway({ provider, prompt: initialPrompt, modelId });
 
         if (!pass1.ok) {
@@ -627,11 +581,14 @@ const ConsoleAiClient = {
             };
             onStage('fetch_search_done', fetchStage);
 
-            // Pass 2
-            const formatted = this._formatSearchResultsForPrompt(searchResp);
-            const wsPrompt = this._buildWebSearchPrompt({
-                userRequest: text, personalityWrap, history,
-                retrievedData: { formatted },
+            // Pass 2 — hand the raw search response to the unified builder.
+            // The web-search inquiry template JSON-stringifies it into
+            // SEARCH_RESULTS; the AI parses structured JSON just fine.
+            const wsPrompt = await window.PromptBuilder.buildPrompt({
+                userRequest: text,
+                inquiryType: 'web-search',
+                retrievedData: searchResp,
+                context: promptContext,
             });
             onStage('pass2_start', {});
             const pass2 = await this._callGateway({ provider, prompt: wsPrompt, modelId });
@@ -701,9 +658,11 @@ const ConsoleAiClient = {
 
         // ── PASS 2 ─────────────────────────────────────────────────
         const commandHint = pass1Parsed.query?.command_hint || text;
-        const haPrompt = this._buildHomeAssistantPrompt({
-            userRequest: text, personalityWrap, history,
+        const haPrompt = await window.PromptBuilder.buildPrompt({
+            userRequest: text,
+            inquiryType: 'home-assistant',
             retrievedData: { ...retrievedData, command_hint: commandHint },
+            context: promptContext,
         });
         onStage('pass2_start', {});
         const pass2 = await this._callGateway({ provider, prompt: haPrompt, modelId });

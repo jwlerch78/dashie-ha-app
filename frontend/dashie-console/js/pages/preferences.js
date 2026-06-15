@@ -121,6 +121,9 @@ const PreferencesPage = {
             const merged = this._mergeRemoteIntoLocal(remote, this._settings);
             await DashieAuth.saveUserSettings(merged);
             this._settings = merged;
+            // Bust the chat client's cached language so the next turn
+            // sees the new locale without a page reload.
+            window.ConsoleAiClient?.invalidateLanguageCache?.();
         } catch (e) {
             Toast?.error?.(`Save failed: ${e?.message || e}`);
         } finally {
