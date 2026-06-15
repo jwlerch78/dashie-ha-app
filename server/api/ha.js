@@ -24,6 +24,35 @@ router.get('/status', (req, res) => {
     res.json(haWorker.getStatus());
 });
 
+/** GET /api/ha/debug-device-metrics?device_id=<hex>
+ *  Diagnostic endpoint — dumps how the worker's metric-matching saw a
+ *  specific device on the most recent poll. Returns:
+ *    - anchor: the _device_id sensor entity_id + state we keyed on
+ *    - haDeviceId: HA's device_registry device_id (the join key)
+ *    - entities: [{entity_id, unique_id, parsedRole, hasState}, ...]
+ *      — every entity HA's registry says belongs to this device, plus
+ *      whether the worker successfully derived a role for it. A role
+ *      of null means the entity was skipped (unique_id prefix mismatch
+ *      AND entity_id slug mismatch). Common cause: migration to
+ *      stable device id left some entities with the legacy prefix.
+ *    - matchedRoles: roles that resolved to a METRIC_MAP entry
+ *    - skippedRoles: roles the matcher derived but METRIC_MAP doesn't
+ *      handle (informational — these don't end up in metrics either)
+ *  Used to diagnose "device shows X but not Y in the Console card"
+ *  reports — compare matchedRoles against METRIC_MAP keys to find what
+ *  HA isn't exposing. */
+router.get('/debug-device-metrics', requireSignedIn, async (req, res) => {
+    const deviceId = req.query.device_id;
+    if (!deviceId) return res.status(400).json({ error: 'device_id required' });
+    try {
+        const result = await haWorker.debugDeviceMetrics(String(deviceId));
+        if (!result) return res.status(404).json({ error: 'device_not_found_in_ha' });
+        res.json(result);
+    } catch (e) {
+        res.status(500).json({ error: 'debug_failed', message: e.message });
+    }
+});
+
 /** POST /api/ha/refresh — kick an on-demand poll. */
 router.post('/refresh', (req, res) => {
     haWorker.triggerRefresh('http-trigger');

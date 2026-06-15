@@ -249,4 +249,72 @@ function getSlugForDevice(dashieDeviceId) {
     return slugByDashieId[dashieDeviceId] || null;
 }
 
-module.exports = { start, stop, triggerRefresh, getStatus, getSlugForDevice };
+/** Dump what the worker saw for one device on a fresh poll. See
+ *  api/ha.js GET /debug-device-metrics for the response shape. */
+async function debugDeviceMetrics(dashieDeviceId) {
+    const states = await haClient.getStates();
+    let entityRegistry = null;
+    if (haRegistry.isAvailable()) {
+        try { entityRegistry = await haRegistry.getAllEntities(); } catch (e) { /* fall through */ }
+    }
+    if (!entityRegistry || entityRegistry.length === 0) {
+        return { error: 'entity_registry unavailable — cannot debug' };
+    }
+
+    // Find anchor for this dashieDeviceId by walking states for a _device_id
+    // sensor whose STATE equals the requested id (mirrors the worker's lookup).
+    const anchor = states.find(s =>
+        s.entity_id.endsWith('_device_id')
+        && (s.attributes?.friendly_name || '').endsWith(' Device ID')
+        && s.state === dashieDeviceId
+    );
+    if (!anchor) return null;
+
+    const regByEntityId = {};
+    for (const e of entityRegistry) regByEntityId[e.entity_id] = e;
+    const anchorEntry = regByEntityId[anchor.entity_id];
+    if (!anchorEntry?.device_id) return { error: 'anchor entity has no device_id in registry' };
+    const haDeviceId = anchorEntry.device_id;
+
+    const deviceEntities = entityRegistry.filter(e => e.device_id === haDeviceId);
+    const stateById = {};
+    for (const s of states) stateById[s.entity_id] = s;
+    const slug = (anchor.entity_id.split('.')[1] || '').replace(/_device_id$/, '');
+
+    const entities = deviceEntities.map(e => {
+        const prefix = `${dashieDeviceId}_`;
+        const roleByUid = (e.unique_id && e.unique_id.startsWith(prefix))
+            ? e.unique_id.slice(prefix.length) : null;
+        const roleBySlug = (e.entity_id.includes('.' + slug + '_'))
+            ? e.entity_id.split('.' + slug + '_').slice(1).join('.' + slug + '_') : null;
+        return {
+            entity_id: e.entity_id,
+            unique_id: e.unique_id,
+            parsedRole: roleByUid || roleBySlug,
+            roleSource: roleByUid ? 'unique_id' : (roleBySlug ? 'entity_id_slug' : null),
+            hasState: !!stateById[e.entity_id],
+            state: stateById[e.entity_id]?.state ?? null,
+        };
+    });
+
+    const haMetrics = require('./ha-metrics');
+    const metricRoles = Object.keys(haMetrics.METRIC_MAP || {});
+    const allRoles = new Set(entities.map(e => e.parsedRole).filter(Boolean));
+    const matchedRoles = [...allRoles].filter(r => metricRoles.includes(r)).sort();
+    const skippedRoles = [...allRoles].filter(r => !metricRoles.includes(r)).sort();
+    const noRoleEntities = entities.filter(e => !e.parsedRole).map(e => e.entity_id);
+
+    return {
+        dashieDeviceId,
+        haDeviceId,
+        anchor: { entity_id: anchor.entity_id, state: anchor.state },
+        slug,
+        entityCount: entities.length,
+        matchedRoles,           // roles METRIC_MAP knows about → end up in metrics
+        skippedRoles,           // roles parsed but METRIC_MAP doesn't handle
+        noRoleEntities,         // unique_id + entity_id slug both failed to yield a role
+        entities,
+    };
+}
+
+module.exports = { start, stop, triggerRefresh, getStatus, getSlugForDevice, debugDeviceMetrics };

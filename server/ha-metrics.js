@@ -108,6 +108,16 @@ const METRIC_MAP = {
         brightness:     toNum(s.state),
         brightness_max: toNum(s.attributes?.max),
     }}),
+    // The Dashie HA integration registers the brightness number entity with
+    // unique_id "<device_id>_brightness_control" (see custom_components/
+    // dashie/number.py DashieBrightnessNumber._attr_unique_id). Alias the
+    // role so the brightness chip lights up on cards again — without this
+    // the unique_id prefix matched but the role string didn't, so HA was
+    // exposing the entity yet the Console card was empty.
+    'brightness_control': s => ({ controls: {
+        brightness:     toNum(s.state),
+        brightness_max: toNum(s.attributes?.max),
+    }}),
     // media_player.<slug>_speaker — only matches when integration uses a slug-aligned name
     // (Fire TV, Samsung); legacy devices may have orphan media_players that don't match.
     'speaker':            s => ({ media: {
