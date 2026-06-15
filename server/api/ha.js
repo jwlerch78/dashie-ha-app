@@ -41,7 +41,11 @@ router.get('/status', (req, res) => {
  *  Used to diagnose "device shows X but not Y in the Console card"
  *  reports — compare matchedRoles against METRIC_MAP keys to find what
  *  HA isn't exposing. */
-router.get('/debug-device-metrics', requireSignedIn, async (req, res) => {
+// No requireSignedIn — diagnostic endpoint that only exposes entity
+// registry shape (no secrets), and the user hits it from inside Ingress
+// where HA already gatekept access. Keeping it open also avoids the
+// silent-401-blank-page failure mode when the Ingress JWT is stale.
+router.get('/debug-device-metrics', async (req, res) => {
     const deviceId = req.query.device_id;
     if (!deviceId) return res.status(400).json({ error: 'device_id required' });
     try {
