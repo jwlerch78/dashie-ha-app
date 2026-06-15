@@ -169,7 +169,14 @@ const DashieAuth = {
     /** Load account-level user_settings (via jwt-auth edge function) */
     async loadUserSettings() {
         const data = await this._authRequest({ operation: 'load' });
-        return data.settings || {};
+        const settings = data.settings || {};
+        console.log('[DashieAuth] loadUserSettings:',
+            'jwt user:', this.jwtUserEmail, this.jwtUserId?.substring(0, 8),
+            'response keys:', Object.keys(data),
+            'settings type:', typeof data.settings,
+            'settings top-level:', settings && typeof settings === 'object' ? Object.keys(settings).slice(0, 10) : settings,
+            'general.language:', settings?.general?.language);
+        return settings;
     },
 
     /** Save (upsert) the full user_settings object.
