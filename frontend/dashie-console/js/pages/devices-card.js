@@ -641,15 +641,19 @@ const DevicesCard = {
         const key = `${deviceId}:${role}`;
         if (this._busyControl[key]) return;
         this._busyControl[key] = true;
+        // Optimistic: flip the visible state immediately so the icon
+        // turns orange/black on click instead of waiting ~200-500ms for
+        // the round-trip. We revert on error.
+        const device = DevicesPage._findDevice(deviceId);
+        const target = !currentlyOn;
+        if (device) {
+            device.metrics = device.metrics || {};
+            device.metrics.controls = device.metrics.controls || {};
+            device.metrics.controls[role] = target;
+        }
         App.renderPage();
         try {
-            await this.control(deviceId, role, !currentlyOn);
-            const device = DevicesPage._findDevice(deviceId);
-            if (device) {
-                device.metrics = device.metrics || {};
-                device.metrics.controls = device.metrics.controls || {};
-                device.metrics.controls[role] = !currentlyOn;
-            }
+            await this.control(deviceId, role, target);
             // After a screen toggle, the dashboard's content has changed — bump the
             // screenshot cache-bust so we re-fetch a fresh frame. Wait ~2s for the HA
             // integration to capture the new state.
@@ -662,6 +666,12 @@ const DevicesCard = {
         } catch (e) {
             console.error(`[DevicesCard] toggle ${role} failed:`, e);
             Toast.error(Toast.friendly(e, `toggle ${role.replace('_', ' ')}`));
+            // Revert the optimistic flip — the next poll would also fix
+            // it, but reverting now means the user immediately sees that
+            // the action didn't take effect instead of a stale wrong state.
+            if (device?.metrics?.controls) {
+                device.metrics.controls[role] = currentlyOn;
+            }
         } finally {
             delete this._busyControl[key];
             App.renderPage();

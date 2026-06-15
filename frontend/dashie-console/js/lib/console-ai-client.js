@@ -478,20 +478,21 @@ const ConsoleAiClient = {
         }
     },
 
-    /** Parity harness: route the turn to the voice-conversation edge fn (the
-     *  consolidated "brain") instead of this local orchestration. Toggle on with
-     *  ?brain=1 on the console URL, or localStorage['dashie-use-brain']='1'.
-     *  Default off → zero change to normal console behavior. */
+    /** Console is dev-only and migrating to the consolidated voice-conversation
+     *  "brain", so the brain is the DEFAULT here. Opt out (legacy local orchestration,
+     *  kept for comparison) with ?brain=0 or localStorage['dashie-use-brain']='0'. */
     get _useBrain() {
         try {
             const qs = new URLSearchParams(location.search);
-            return qs.get('brain') === '1' || localStorage.getItem('dashie-use-brain') === '1';
-        } catch (_) { return false; }
+            if (qs.get('brain') === '0' || localStorage.getItem('dashie-use-brain') === '0') return false;
+            return true;
+        } catch (_) { return true; }
     },
 
-    async _sendQueryViaBrain(text, { personalityId, modelId, history } = {}) {
+    /** One call to the voice-conversation brain. `providedContext` supplies gathers
+     *  the brain can't self-fulfill (e.g. HA entities). Returns the raw turn. */
+    async _brainCall(text, { personalityId, modelId, history, providedContext } = {}) {
         const t0 = performance.now();
-        const url = `${DashieAuth.config.url}/functions/v1/voice-conversation`;
         const body = {
             text,
             endpoint_id: 'console',
@@ -503,8 +504,9 @@ const ConsoleAiClient = {
         };
         if (personalityId) body.options.personality_id = personalityId;
         if (modelId) body.options.model = modelId;
+        if (providedContext) body.provided_context = providedContext;
         try {
-            const resp = await fetch(url, {
+            const resp = await fetch(`${DashieAuth.config.url}/functions/v1/voice-conversation`, {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
@@ -517,12 +519,39 @@ const ConsoleAiClient = {
             if (!resp.ok || turn.ok === false) {
                 return { ok: false, error: turn.error || turn.message || `HTTP ${resp.status}`, latency_ms: Math.round(performance.now() - t0), stages: turn.stages || [] };
             }
-            turn._via = 'brain';
-            turn.total_latency_ms = turn.total_latency_ms || Math.round(performance.now() - t0);
             return turn;
         } catch (e) {
             return { ok: false, error: `brain: ${e?.message || e}`, latency_ms: Math.round(performance.now() - t0) };
         }
+    },
+
+    /** Full console→brain turn: pre-fetch HA entities (so an HA command resolves in
+     *  one round-trip), call the brain, then dispatch any returned action — the brain
+     *  returns actions but does not execute them; the caller (console) does. */
+    async _sendQueryViaBrain(text, { personalityId, modelId, history } = {}) {
+        const t0 = performance.now();
+        console.log('[ConsoleAiClient] routing via voice-conversation brain');
+
+        // Best-effort HA entities (cached 60s). If HA isn't configured, HA queries
+        // degrade gracefully (the brain returns unsupported_tool).
+        let providedContext;
+        try {
+            const ents = await this._getControllableEntities();
+            if (ents) providedContext = { ha_entities: ents.entities || [] };
+        } catch (_) { /* no HA available */ }
+
+        const turn = await this._brainCall(text, { personalityId, modelId, history, providedContext });
+        if (!turn.ok) return turn;
+
+        // The brain returns actions but does not execute them — the caller dispatches.
+        if (turn.action) {
+            const tAct0 = performance.now();
+            turn.action_result = await this._runAction(turn.action);
+            turn.action_latency_ms = Math.round(performance.now() - tAct0);
+        }
+        turn._via = 'brain';
+        turn.total_latency_ms = Math.round(performance.now() - t0);
+        return turn;
     },
 
     /** Main entry point. Returns a structured "turn" object. */
@@ -533,9 +562,8 @@ const ConsoleAiClient = {
         const history = Array.isArray(opts.history) ? opts.history : [];
         const onStage = typeof opts.onStage === 'function' ? opts.onStage : () => {};
 
-        // Parity harness: route to the voice-conversation brain when toggled on (?brain=1).
+        // Console is dev-only → brain by default (opt out: ?brain=0 / localStorage dashie-use-brain=0).
         if (this._useBrain) {
-            console.log('[ConsoleAiClient] routing via voice-conversation brain (?brain=1)');
             return this._sendQueryViaBrain(text, { personalityId, modelId, history });
         }
 

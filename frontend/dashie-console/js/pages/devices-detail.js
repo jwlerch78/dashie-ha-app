@@ -354,22 +354,24 @@ const DevicesDetail = {
         return `<div style="display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px;">${chips.join('')}</div>`;
     },
 
-    /** Padlock icon next to the name edit. Click toggles device lock if the
-     *  device exposes a lock control; otherwise renders nothing. Mirrors
-     *  the card's lock chip behavior: orange when locked. */
+    /** Padlock icon next to the name edit. Toggles device lock via the
+     *  same toggleSwitch path the card uses. Orange (#f97316) when
+     *  locked to match the card palette. Was wired to pressButton
+     *  previously, which always sent turn_off regardless of current
+     *  state — so trying to LOCK an unlocked device was a silent no-op. */
     _renderLockToggle(device, m, live) {
         if (!live || m?.controls?.lock === undefined) return '';
         const locked = !!m.controls.lock;
         const busy = !!DevicesCard._busyControl?.[`${device.device_id}:lock`];
         const idAttr = DevicesPage._escape(device.device_id);
-        const bg = locked ? '#f59e0b' : 'transparent';
-        const color = locked ? '#fff' : 'var(--text-secondary)';
+        const bg = locked ? '#f97316' : 'transparent';
+        const borderColor = locked ? '#f97316' : 'var(--border, #e5e7eb)';
         return `
             <button title="${locked ? 'Locked — tap to unlock' : 'Unlocked — tap to lock'}"
-                onclick="DevicesCard.pressButton('${idAttr}', 'lock')"
+                onclick="DevicesCard.toggleSwitch('${idAttr}', 'lock', ${locked})"
                 ${busy ? 'disabled' : ''}
-                style="background: ${bg}; border: 1px solid ${locked ? '#f59e0b' : 'var(--border, #e5e7eb)'}; border-radius: 999px; padding: 6px; cursor: ${busy ? 'wait' : 'pointer'}; opacity: ${busy ? 0.5 : 1}; line-height: 0;">
-                <img src="assets/icons/${locked ? 'icon-lock.svg' : 'icon-unlock.svg'}" alt="" style="width: 14px; height: 14px; filter: ${locked ? 'invert(1)' : 'none'};">
+                style="background: ${bg}; border: 1px solid ${borderColor}; border-radius: 999px; padding: 6px; cursor: ${busy ? 'wait' : 'pointer'}; opacity: ${busy ? 0.5 : 1}; line-height: 0;">
+                <img src="assets/icons/${locked ? 'icon-lock.svg' : 'icon-unlock.svg'}" alt="" style="width: 14px; height: 14px; filter: ${locked ? 'brightness(0) invert(1)' : 'none'};">
             </button>
         `;
     },
