@@ -174,7 +174,11 @@ const DevicesDetail = {
             buttons.push(this._toggleBtn(idAttr, 'dark_mode', dark, busy,
                 dark ? 'icon-moon.svg' : 'icon-sun.svg',
                 dark ? 'Dark mode' : 'Light mode',
-                dark ? 'Dark mode — tap for light' : 'Light mode — tap for dark'));
+                dark ? 'Dark mode — tap for light' : 'Light mode — tap for dark',
+                // Visual: light mode → orange (warm/sunny), dark mode →
+                // black. Matches the device card pill palette so the
+                // same action looks the same across both surfaces.
+                dark ? 'off' : 'on'));
         }
 
         // Camera stream toggle — only when the device has actual camera
@@ -244,21 +248,43 @@ const DevicesDetail = {
         `);
     },
 
-    _toggleBtn(idAttr, role, isOn, busy, iconFile, label, title) {
+    /** `visualState` overrides the on/off mapping when the visual color
+     *  should track something other than the raw isOn (e.g., dark_mode:
+     *  the button is "on" when dark mode is enabled, but visually we
+     *  want light-mode = orange and dark-mode = black to match the
+     *  device card palette). Caller passes 'on' or 'off' explicitly;
+     *  omitted = use isOn as-is. */
+    _toggleBtn(idAttr, role, isOn, busy, iconFile, label, title, visualState) {
+        const colorState = visualState || (isOn ? 'on' : 'off');
         return `
             <button title="${DevicesPage._escape(title)}" ${busy ? 'disabled' : ''}
                 onclick="DevicesCard.toggleSwitch('${idAttr}', '${role}', ${isOn})"
-                style="${this._controlBtnStyle(busy, isOn)}">
-                <img src="assets/icons/${iconFile}" alt="" style="width: 16px; height: 16px; ${isOn ? 'filter: brightness(0) invert(1);' : ''}">
+                style="${this._controlBtnStyle(busy, colorState)}">
+                <img src="assets/icons/${iconFile}" alt="" style="width: 16px; height: 16px; filter: brightness(0) invert(1);">
                 <span>${label}</span>
             </button>
         `;
     },
 
-    _controlBtnStyle(busy, isOn = false) {
-        const bg = isOn ? '#10b981' : '#f3f4f6';
-        const color = isOn ? '#fff' : '#1f2937';
-        const border = isOn ? '#10b981' : '#d1d5db';
+    /** Quick-controls pill style. `state` is:
+     *    - 'on'  → orange (#f97316) bg, white text/icon  (matches card)
+     *    - 'off' → black (#1f2937) bg, white text/icon   (matches card)
+     *    - undefined → neutral gray (for action buttons like Reload,
+     *      Brightness slider trigger — they have no on/off concept and
+     *      shouldn't render as if they were off).
+     *  isOn flag is treated as legacy: true → 'on', false → 'off'. */
+    _controlBtnStyle(busy, isOnOrState = undefined) {
+        let bg, color, border;
+        const state = typeof isOnOrState === 'string'
+            ? isOnOrState
+            : (isOnOrState === true ? 'on' : (isOnOrState === false ? undefined : isOnOrState));
+        if (state === 'on') {
+            bg = '#f97316'; color = '#fff'; border = bg;
+        } else if (state === 'off') {
+            bg = '#1f2937'; color = '#fff'; border = bg;
+        } else {
+            bg = '#f3f4f6'; color = '#1f2937'; border = '#d1d5db';
+        }
         return `display: inline-flex; align-items: center; gap: 6px; padding: 8px 14px; border-radius: 999px; border: 1px solid ${border}; background: ${bg}; color: ${color}; cursor: ${busy ? 'wait' : 'pointer'}; opacity: ${busy ? 0.5 : 1}; font-size: 13px; font-weight: 500;`;
     },
 

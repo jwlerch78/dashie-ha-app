@@ -177,13 +177,19 @@ const DevicesCard = {
             idAttr, role: 'screen', currentlyOn: screenOn,
             iconFile: 'icon-tv.svg', busy: screenBusy,
             title: screenOn ? 'Screen on — tap to turn off' : 'Screen off — tap to turn on',
-            palette: { onBg: '#10b981', offBg: '#f3f4f6', onBorder: '#10b981', offBorder: '#d1d5db', onIconInvert: true },
+            // Screen on = orange (#f97316), off = black (#1f2937). White
+            // icon on both sides so it reads against either fill.
+            palette: { onBg: '#f97316', offBg: '#1f2937', onBorder: '#f97316', offBorder: '#1f2937', onIconInvert: true, offIconInvert: true },
         });
         const lightDarkPill = this._renderPill({
             idAttr, role: 'dark_mode', currentlyOn: dark,
             iconFile: dark ? 'icon-moon.svg' : 'icon-sun.svg', busy: darkBusy,
             title: dark ? 'Dark mode — tap for light' : 'Light mode — tap for dark',
-            palette: { onBg: '#1f2937', offBg: '#ffffff', onBorder: '#1f2937', offBorder: '#d1d5db', onIconInvert: true },
+            // Dark mode (currentlyOn=true) = black with white moon icon.
+            // Light mode (off) = orange (#f97316) with white sun icon —
+            // user feedback: the previous white pill blended with the
+            // card background and felt like "no state."
+            palette: { onBg: '#1f2937', offBg: '#f97316', onBorder: '#1f2937', offBorder: '#f97316', onIconInvert: true, offIconInvert: true },
         });
 
         // Volume — small chip showing current value, click opens slider.
@@ -413,7 +419,9 @@ const DevicesCard = {
             iconFile: 'icon-tv.svg',
             busy: screenBusy,
             title: screenOn ? 'Screen on — tap to turn off' : 'Screen off — tap to turn on',
-            palette: { onBg: '#10b981', offBg: '#f3f4f6', onBorder: '#10b981', offBorder: '#d1d5db', onIconInvert: true },
+            // Screen on = orange (#f97316), off = black (#1f2937). White
+            // icon on both sides so it reads against either fill.
+            palette: { onBg: '#f97316', offBg: '#1f2937', onBorder: '#f97316', offBorder: '#1f2937', onIconInvert: true, offIconInvert: true },
         });
 
         const lightDarkPill = this._renderPill({
@@ -422,7 +430,11 @@ const DevicesCard = {
             iconFile: dark ? 'icon-moon.svg' : 'icon-sun.svg',
             busy: darkBusy,
             title: dark ? 'Dark mode — tap for light' : 'Light mode — tap for dark',
-            palette: { onBg: '#1f2937', offBg: '#ffffff', onBorder: '#1f2937', offBorder: '#d1d5db', onIconInvert: true },
+            // Dark mode (currentlyOn=true) = black with white moon icon.
+            // Light mode (off) = orange (#f97316) with white sun icon —
+            // user feedback: the previous white pill blended with the
+            // card background and felt like "no state."
+            palette: { onBg: '#1f2937', offBg: '#f97316', onBorder: '#1f2937', offBorder: '#f97316', onIconInvert: true, offIconInvert: true },
         });
 
         // Camera icon: orange (#f97316) filter when streaming; gray + diagonal slash when off.
@@ -525,7 +537,13 @@ const DevicesCard = {
         const p = palette;
         const bg = currentlyOn ? p.onBg : p.offBg;
         const border = currentlyOn ? p.onBorder : p.offBorder;
-        const invert = currentlyOn && p.onIconInvert;
+        // Two-sided icon invert: previously only the "on" state could
+        // recolor the icon to white. The new screen / light-mode
+        // palettes have a colored background on both sides (orange/black
+        // for screen, orange/black for light/dark) so we want a white
+        // icon in both — opt-in via offIconInvert without touching the
+        // existing callers that only set onIconInvert.
+        const invert = currentlyOn ? !!p.onIconInvert : !!p.offIconInvert;
         return `
             <button title="${DevicesPage._escape(title)}" ${busy ? 'disabled' : ''}
                 onclick="event.stopPropagation(); DevicesCard.toggleSwitch('${idAttr}', '${role}', ${currentlyOn})"
