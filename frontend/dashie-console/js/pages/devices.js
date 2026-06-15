@@ -718,12 +718,6 @@ const DevicesPage = {
 
     async _onSettingChange(deviceId, category, key, value) {
         const savingKey = `${deviceId}_${key}`;
-        // Don't re-render on the saving-flag set. Re-rendering the whole
-        // page tears down + rebuilds any open modal, which is what the
-        // user perceives as the "double flash" on every picker change.
-        // The saving indicator is a minor nicety; rebuilding the modal
-        // mid-interaction is not. Final renderPage in the finally fires
-        // after the write either way.
         this._saving[savingKey] = true;
 
         try {
@@ -743,8 +737,27 @@ const DevicesPage = {
             Toast.error(Toast.friendly(e, 'save this setting'));
         } finally {
             delete this._saving[savingKey];
-            App.renderPage();
+            // Skip the re-render when any DevicesDetailModals modal is open —
+            // App.renderPage replaces the entire #content innerHTML, which
+            // destroys + recreates the open modal mid-interaction and causes
+            // the flash the user reported. The browser already reflects the
+            // picker's new value, and the in-memory device.settings was
+            // updated above. When the modal closes (closeX → renderPage),
+            // the underlying summary row picks up the fresh value.
+            if (!this._isAnyDetailModalOpen()) {
+                App.renderPage();
+            }
         }
+    },
+
+    /** True iff any DevicesDetailModals modal is currently open. Used by
+     *  _onSettingChange to avoid tearing down the modal DOM on save. */
+    _isAnyDetailModalOpen() {
+        const M = typeof DevicesDetailModals !== 'undefined' ? DevicesDetailModals : null;
+        if (!M) return false;
+        return !!(M._sleepOpen || M._displayOpen || M._themeOpen
+            || M._pickerOpen || M._screensaverOpen || M._personalityOpen
+            || M._wakeWordOpen || M._pinOpen);
     },
 
     showDetail(deviceId) {
