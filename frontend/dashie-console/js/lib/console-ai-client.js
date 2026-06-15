@@ -204,12 +204,13 @@ const ConsoleAiClient = {
             return this._cachedLanguage;
         }
         try {
-            const settings = await window.DashieAuth?.loadUserSettings?.() || {};
-            const lang = settings.general?.language || 'system';
-            console.log('[ConsoleAiClient] resolved language:', lang,
-                'from general:', settings.general,
-                'top-level keys:', Object.keys(settings));
-            this._cachedLanguage = lang;
+            // Bare DashieAuth (script-scope const), NOT window.DashieAuth —
+            // console-auth.js never attaches the object to window, so the
+            // optional-chained window.DashieAuth was always undefined.
+            const settings = (typeof DashieAuth !== 'undefined' && DashieAuth.loadUserSettings)
+                ? await DashieAuth.loadUserSettings()
+                : {};
+            this._cachedLanguage = settings.general?.language || 'system';
         } catch (e) {
             console.warn('[ConsoleAiClient] language resolve failed:', e);
             this._cachedLanguage = 'system';
