@@ -268,7 +268,7 @@
      * @param {Object} options.context - Additional context values (including personalityMode)
      * @returns {Promise<string>} Complete prompt
      */
-    export async function buildPrompt({ userRequest, inquiryType, retrievedData, context = {} }) {
+    async function buildPrompt({ userRequest, inquiryType, retrievedData, context = {} }) {
 
       const dateTime = formatDateTime();
 
@@ -364,7 +364,7 @@
     /**
      * Preload all templates (optional, for faster first queries)
      */
-    export async function preloadTemplates() {
+    async function preloadTemplates() {
       const templatePaths = [
         'base-context.md',
         'response-format.md',
