@@ -172,9 +172,50 @@ const DashieAuth = {
         return data.settings || {};
     },
 
-    /** Save (upsert) the full user_settings object */
+    /** Save (upsert) the full user_settings object.
+     *
+     *  Also broadcasts on `user_settings_${userId}` so other devices
+     *  (tablet webapp via SettingsSync) hear the change and refetch
+     *  without waiting for their next boot. Channel naming matches
+     *  js/data/sync/settings-sync.js (underscore, not dash). */
     async saveUserSettings(fullSettings) {
-        return this._authRequest({ operation: 'save', data: fullSettings });
+        const result = await this._authRequest({ operation: 'save', data: fullSettings });
+        this._broadcastSettingsChanged().catch(() => {});
+        return result;
+    },
+
+    /** Fire a broadcast on the user_settings_${userId} channel so other
+     *  devices' SettingsSync wakes up and refetches user_settings.
+     *  Payload shape matches what _handleBroadcast expects:
+     *    { kind, source_client_id }
+     *  - kind: 'account' covers the general/display/etc account-level
+     *    blocks. SettingsSync's registered consumer will refresh.
+     *  - source_client_id: this Console's session ID, so the same
+     *    Console tab that triggered the save doesn't react to its
+     *    own broadcast.
+     *  Uses raw Supabase channel APIs (NOT this.broadcast()) because
+     *  the channel name uses underscores to match the tablet listener,
+     *  while this._getOrCreateChannel adds a dash. */
+    async _broadcastSettingsChanged() {
+        const sb = this._getSupabaseClient();
+        if (!sb || !this.jwtUserId) return;
+        const channelName = `user_settings_${this.jwtUserId}`;
+        const ch = sb.channel(channelName, { config: { broadcast: { self: false, ack: false } } });
+        // Subscribe just long enough to send. Channel cleans up on the
+        // next page navigation; the broadcast itself is async-fire.
+        await new Promise(resolve => {
+            ch.subscribe(status => {
+                if (status === 'SUBSCRIBED') resolve();
+            });
+        });
+        await ch.send({
+            type: 'broadcast',
+            event: 'settings-changed',
+            payload: {
+                kind: 'account',
+                source_client_id: this.getSessionId(),
+            },
+        });
     },
 
     // =========================================================

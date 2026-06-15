@@ -205,8 +205,13 @@ const ConsoleAiClient = {
         }
         try {
             const settings = await window.DashieAuth?.loadUserSettings?.() || {};
-            this._cachedLanguage = settings.general?.language || 'system';
-        } catch {
+            const lang = settings.general?.language || 'system';
+            console.log('[ConsoleAiClient] resolved language:', lang,
+                'from general:', settings.general,
+                'top-level keys:', Object.keys(settings));
+            this._cachedLanguage = lang;
+        } catch (e) {
+            console.warn('[ConsoleAiClient] language resolve failed:', e);
             this._cachedLanguage = 'system';
         }
         this._cachedLanguageAt = now;

@@ -338,11 +338,15 @@
 
         // With retrieved data, use the full response format (includes all display flags)
         const responseFormat = await loadTemplate('response-format.md');
-        prompt += '\n\n' + responseFormat;
+        prompt += '\n\n' + fillTemplate(responseFormat, baseValues);
       } else {
-        // Initial request (no data yet) - use slim format focused on tool selection
+        // Initial request (no data yet) - use slim format focused on tool selection.
+        // fillTemplate is essential here — response-format-initial.md references
+        // {{AVAILABLE_TOOLS_LIST}}, and without substitution the AI sees the raw
+        // placeholder and can't pick a tool. (Bug hidden until LANGUAGE_INSTRUCTION
+        // landed on base-context.md — same surface, easier to spot.)
         const responseFormat = await loadTemplate('response-format-initial.md');
-        prompt += '\n\n' + responseFormat;
+        prompt += '\n\n' + fillTemplate(responseFormat, baseValues);
       }
 
       // Add personality suffix if applicable (append after response format)
