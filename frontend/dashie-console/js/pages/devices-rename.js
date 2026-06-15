@@ -104,8 +104,11 @@ const DevicesRename = {
     },
 
     /** Render a name row (with pencil) for use in the card or detail view.
-     *  `mode` is 'card' or 'detail' to tweak styling. */
-    renderNameRow(device, conflict, mode = 'card') {
+     *  `mode` is 'card' or 'detail' to tweak styling.
+     *  `extras` is HTML appended right after the pencil button — used by
+     *  the detail page to slot the lock + refresh icons inline with the
+     *  edit affordance instead of trailing after the whole row. */
+    renderNameRow(device, conflict, mode = 'card', extras = '') {
         const escape = DevicesPage._escape.bind(DevicesPage);
         const idAttr = escape(device.device_id);
         const isRenaming = this.renamingId === device.device_id;
@@ -132,6 +135,7 @@ const DevicesRename = {
                 ${isSaving ? '<span style="color: var(--text-muted); font-size: 11px; font-weight: 400;">saving…</span>' : ''}
                 <button title="Rename" onclick="${stop} DevicesRename.startInline('${idAttr}')"
                     style="background: none; border: none; cursor: pointer; padding: 2px 4px; opacity: 0.6;">✏️</button>
+                ${extras}
                 ${conflictChip}
             </div>
         `;

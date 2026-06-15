@@ -82,11 +82,8 @@ const DevicesDetail = {
                 <div style="display: flex; align-items: flex-start; gap: 12px; flex: 1 1 320px; min-width: 0;">
                     <div class="device-card-icon" style="width: 48px; height: 48px; font-size: 24px; flex-shrink: 0;">${icon}</div>
                     <div style="flex: 1; min-width: 0;">
-                        <div style="display: flex; align-items: center; gap: 6px; flex-wrap: wrap;">
-                            <div style="flex: 1; min-width: 0;">${DevicesRename.renderNameRow(device, conflict, 'detail')}</div>
-                            ${this._renderLockToggle(device, m, live)}
-                            ${this._renderRefreshButton(device, live)}
-                        </div>
+                        ${DevicesRename.renderNameRow(device, conflict, 'detail',
+                            this._renderLockToggle(device, m, live) + this._renderRefreshButton(device, live))}
                         <div style="font-size: var(--font-size-sm); color: var(--text-secondary); margin-top: 4px;">
                             ${DevicesPage._escape(DevicesPage._typeLabel(device))} ·
                             <span class="status-dot ${live ? 'online' : 'offline'}"></span>${live ? 'Live' : 'Offline'}
