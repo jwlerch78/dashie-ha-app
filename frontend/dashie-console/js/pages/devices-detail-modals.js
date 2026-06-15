@@ -103,17 +103,17 @@ const DevicesDetailModals = {
         return `
             ${this._subsectionCard('Dashboard', [
                 this._summaryRow('Layout', this._labelFor(this.LAYOUT_MODES, layoutMode),
-                    `DevicesDetailModals.openPicker('${idAttr}','display','layoutMode','Layout','LAYOUT_MODES')`),
+                    `DevicesDetailModals.openPicker('${idAttr}','display','layoutMode','Layout','LAYOUT_MODES','widgets')`),
                 showOrientation ? this._summaryRow('Orientation',
                     this._labelFor(this.ORIENTATION_MODES, display.orientationLock || 'auto'),
-                    `DevicesDetailModals.openPicker('${idAttr}','display','orientationLock','Orientation','ORIENTATION_MODES')`) : '',
+                    `DevicesDetailModals.openPicker('${idAttr}','display','orientationLock','Orientation','ORIENTATION_MODES','auto')`) : '',
                 this._summaryRow('Theme', themeSummary,
                     `DevicesDetailModals.openTheme('${idAttr}')`),
                 showAnimationRows ? this._toggleRow(device, 'display', 'animationsEnabled',
                     'Animations', animationsOn) : '',
                 showAnimationRows && animationsOn ? this._summaryRow('Animation Level',
                     this._labelFor(this.ANIMATION_LEVELS, display.animationLevel || display['preferences.animationLevel'] || 'high'),
-                    `DevicesDetailModals.openPicker('${idAttr}','display','animationLevel','Animation Level','ANIMATION_LEVELS')`) : '',
+                    `DevicesDetailModals.openPicker('${idAttr}','display','animationLevel','Animation Level','ANIMATION_LEVELS','high')`) : '',
             ].filter(Boolean).join(''))}
             ${this._subsectionCard('Screen Management', [
                 this._summaryRow('Sleep Mode', sleepSummary,
@@ -122,21 +122,21 @@ const DevicesDetailModals = {
                     `DevicesDetailModals.openScreensaver('${idAttr}')`),
                 this._summaryRow('Wake Mode',
                     this._labelFor(this.WAKE_MODES, display.motionWakeMode || 'disabled'),
-                    `DevicesDetailModals.openPicker('${idAttr}','display','motionWakeMode','Wake Mode','WAKE_MODES')`),
+                    `DevicesDetailModals.openPicker('${idAttr}','display','motionWakeMode','Wake Mode','WAKE_MODES','disabled')`),
             ].join(''))}
             ${this._subsectionCard('Display Preferences', [
                 this._summaryRow('HA Dashboard Zoom',
                     this._labelFor(this.ZOOM_LEVELS, String(display.dashboardZoom ?? '100')) + '',
-                    `DevicesDetailModals.openPicker('${idAttr}','display','dashboardZoom','HA Dashboard Zoom','ZOOM_LEVELS')`),
+                    `DevicesDetailModals.openPicker('${idAttr}','display','dashboardZoom','HA Dashboard Zoom','ZOOM_LEVELS','100')`),
                 this._summaryRow('Widget Zoom',
                     this._labelFor(this.ZOOM_LEVELS, String(display.widgetZoom ?? '100')),
-                    `DevicesDetailModals.openPicker('${idAttr}','display','widgetZoom','Widget Zoom','ZOOM_LEVELS')`),
+                    `DevicesDetailModals.openPicker('${idAttr}','display','widgetZoom','Widget Zoom','ZOOM_LEVELS','100')`),
                 this._summaryRow('Sidebar Icon Size',
                     this._labelFor(this.SIDEBAR_ICON_SIZES, String(display.sidebarIconSize ?? '1')),
-                    `DevicesDetailModals.openPicker('${idAttr}','display','sidebarIconSize','Sidebar Icon Size','SIDEBAR_ICON_SIZES')`),
+                    `DevicesDetailModals.openPicker('${idAttr}','display','sidebarIconSize','Sidebar Icon Size','SIDEBAR_ICON_SIZES','1')`),
                 this._summaryRow('Screen Off Behavior',
                     this._labelFor(this.SCREEN_OFF_BEHAVIORS, display.screenOffBehavior || 'black_overlay'),
-                    `DevicesDetailModals.openPicker('${idAttr}','display','screenOffBehavior','Screen Off Behavior','SCREEN_OFF_BEHAVIORS')`),
+                    `DevicesDetailModals.openPicker('${idAttr}','display','screenOffBehavior','Screen Off Behavior','SCREEN_OFF_BEHAVIORS','black_overlay')`),
                 this._toggleRow(device, 'display', 'autoBrightnessEnabled',
                     'Auto Brightness', display.autoBrightnessEnabled === true),
             ].join(''))}
@@ -331,9 +331,9 @@ const DevicesDetailModals = {
     _pickerOpen: false,
     _pickerCtx: null,  // {deviceId, category, key, label, optionsCatalogKey}
 
-    openPicker(deviceId, category, key, label, optionsCatalogKey) {
+    openPicker(deviceId, category, key, label, optionsCatalogKey, defaultValue) {
         this._pickerOpen = true;
-        this._pickerCtx = { deviceId, category, key, label, optionsCatalogKey };
+        this._pickerCtx = { deviceId, category, key, label, optionsCatalogKey, defaultValue };
         App.renderPage();
     },
     closePicker() { this._pickerOpen = false; this._pickerCtx = null; App.renderPage(); },
@@ -344,7 +344,14 @@ const DevicesDetailModals = {
         const device = DevicesPage._findDevice(ctx.deviceId);
         if (!device) return '';
         const options = this[ctx.optionsCatalogKey] || [];
-        const current = device.settings?.[ctx.category]?.[ctx.key] ?? options[0]?.[0];
+        // Default chain: stored value → caller-supplied default → first
+        // option. Falling all the way through to options[0] is what made
+        // Widget Zoom show "50%" when the device hadn't yet broadcast
+        // a value — callers should pass an explicit defaultValue.
+        const stored = device.settings?.[ctx.category]?.[ctx.key];
+        const current = (stored != null && stored !== '') ? stored
+            : (ctx.defaultValue != null ? ctx.defaultValue
+            : options[0]?.[0]);
         const body = `
             <div class="form-group">
                 <label class="form-label">${this._escape(ctx.label)}</label>
@@ -392,6 +399,155 @@ const DevicesDetailModals = {
             </div>
         `;
         return this._modal('Screensaver', body, 'DevicesDetailModals.closeScreensaver()');
+    },
+
+    // ── Personality picker (device-level aiVoice.personalityId) ───
+
+    _personalityOpen: false,
+    _personalityDeviceId: null,
+    _personalityOptions: null,  // cached after first fetch this session
+
+    async openVoicePersonality(deviceId) {
+        this._personalityOpen = true;
+        this._personalityDeviceId = deviceId;
+        App.renderPage();
+        // Lazy-load the account's personality catalog if Voice & AI Settings
+        // page hasn't been visited this session. Same path that page uses.
+        if (!this._personalityOptions && typeof VoiceAiApi !== 'undefined') {
+            try {
+                const [templates, custom] = await Promise.all([
+                    VoiceAiApi.listTemplates().catch(() => []),
+                    VoiceAiApi.listCustom().catch(() => []),
+                ]);
+                const opts = [];
+                for (const t of templates || []) {
+                    const key = t.key || t.id;
+                    if (key) opts.push([String(key), t.name || DevicesDetail._titleCase(key)]);
+                }
+                for (const c of custom || []) {
+                    if (c.id) opts.push([String(c.id), c.name || 'Custom personality']);
+                }
+                this._personalityOptions = opts;
+                App.renderPage();
+            } catch { this._personalityOptions = []; }
+        }
+    },
+
+    closeVoicePersonality() { this._personalityOpen = false; App.renderPage(); },
+
+    renderVoicePersonalityModal() {
+        if (!this._personalityOpen) return '';
+        const device = DevicesPage._findDevice(this._personalityDeviceId);
+        if (!device) return '';
+        const options = this._personalityOptions || [['dashie', 'Dashie']];
+        const current = device.settings?.aiVoice?.personalityId || 'dashie';
+        const body = `
+            <div class="form-group">
+                <label class="form-label">Personality</label>
+                ${DevicesDetail._settingSelectRaw(device, 'aiVoice', 'personalityId', String(current), options)}
+            </div>
+            <div style="font-size: var(--font-size-sm); color: var(--text-muted);">
+                Manage personalities (create, edit) on the <a href="#voice-ai" onclick="event.preventDefault(); App.navigate('voice-ai')">Voice & AI</a> page.
+            </div>
+        `;
+        return this._modal('Personality', body, 'DevicesDetailModals.closeVoicePersonality()');
+    },
+
+    // ── PIN modal (set / change / clear) ──────────────────────
+
+    _pinOpen: false,
+    _pinDeviceId: null,
+    _pinHadPin: false,
+    _pinForm: { value: '', confirm: '', busy: false, error: null },
+
+    openPinModal(deviceId, hadPin) {
+        this._pinOpen = true;
+        this._pinDeviceId = deviceId;
+        this._pinHadPin = !!hadPin;
+        this._pinForm = { value: '', confirm: '', busy: false, error: null };
+        App.renderPage();
+    },
+
+    closePinModal() {
+        this._pinOpen = false;
+        this._pinDeviceId = null;
+        this._pinForm = { value: '', confirm: '', busy: false, error: null };
+        App.renderPage();
+    },
+
+    _setPinField(field, value) { this._pinForm[field] = value; },
+
+    async submitPin() {
+        const f = this._pinForm;
+        if (f.busy) return;
+        if (!/^\d{4,8}$/.test(f.value)) {
+            f.error = 'PIN must be 4–8 digits.';
+            App.renderPage();
+            return;
+        }
+        if (f.value !== f.confirm) {
+            f.error = 'PINs don\'t match.';
+            App.renderPage();
+            return;
+        }
+        f.busy = true; f.error = null;
+        App.renderPage();
+        try {
+            // No dedicated PIN write path exists yet — route through the
+            // same settings broadcast pipeline; the device-side consumer
+            // can read security.pin from user_devices.settings the same
+            // way it reads sleep/display settings.
+            DevicesPage._onSettingChange(this._pinDeviceId, 'security', 'pin', f.value);
+            DevicesPage._onSettingChange(this._pinDeviceId, 'security', 'pinSet', true);
+            Toast.success('PIN updated');
+            this.closePinModal();
+        } catch (e) {
+            f.error = e?.message || String(e);
+            f.busy = false;
+            App.renderPage();
+        }
+    },
+
+    async clearPin() {
+        if (this._pinForm.busy) return;
+        this._pinForm.busy = true; this._pinForm.error = null;
+        App.renderPage();
+        try {
+            DevicesPage._onSettingChange(this._pinDeviceId, 'security', 'pin', '');
+            DevicesPage._onSettingChange(this._pinDeviceId, 'security', 'pinSet', false);
+            Toast.success('PIN cleared');
+            this.closePinModal();
+        } catch (e) {
+            this._pinForm.error = e?.message || String(e);
+            this._pinForm.busy = false;
+            App.renderPage();
+        }
+    },
+
+    renderPinModal() {
+        if (!this._pinOpen) return '';
+        const f = this._pinForm;
+        const body = `
+            <div style="display: flex; flex-direction: column; gap: 12px;">
+                <div class="form-group">
+                    <label class="form-label">New PIN (4–8 digits)</label>
+                    <input class="form-input" type="password" inputmode="numeric" maxlength="8" value="${this._escape(f.value)}"
+                        oninput="DevicesDetailModals._setPinField('value', this.value)">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Confirm PIN</label>
+                    <input class="form-input" type="password" inputmode="numeric" maxlength="8" value="${this._escape(f.confirm)}"
+                        oninput="DevicesDetailModals._setPinField('confirm', this.value)">
+                </div>
+                ${f.error ? `<div style="color: var(--status-error, #c00); font-size: var(--font-size-sm);">${this._escape(f.error)}</div>` : ''}
+                <div style="display: flex; gap: 8px; justify-content: flex-end; margin-top: 4px;">
+                    ${this._pinHadPin ? `<button class="btn btn-secondary" onclick="DevicesDetailModals.clearPin()" ${f.busy ? 'disabled' : ''}>Clear PIN</button>` : ''}
+                    <button class="btn btn-secondary" onclick="DevicesDetailModals.closePinModal()" ${f.busy ? 'disabled' : ''}>Cancel</button>
+                    <button class="btn btn-primary" onclick="DevicesDetailModals.submitPin()" ${f.busy ? 'disabled' : ''}>${this._pinHadPin ? 'Update PIN' : 'Set PIN'}</button>
+                </div>
+            </div>
+        `;
+        return this._modal(this._pinHadPin ? 'Change PIN' : 'Set PIN', body, 'DevicesDetailModals.closePinModal()');
     },
 
     // ── Modal shell + helpers ─────────────────────────────────

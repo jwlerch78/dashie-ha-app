@@ -82,28 +82,29 @@ const DevicesDetail = {
                 <div style="display: flex; align-items: flex-start; gap: 12px; flex: 1 1 320px; min-width: 0;">
                     <div class="device-card-icon" style="width: 48px; height: 48px; font-size: 24px; flex-shrink: 0;">${icon}</div>
                     <div style="flex: 1; min-width: 0;">
-                        ${DevicesRename.renderNameRow(device, conflict, 'detail')}
+                        <div style="display: flex; align-items: center; gap: 8px;">
+                            <div style="flex: 1; min-width: 0;">${DevicesRename.renderNameRow(device, conflict, 'detail')}</div>
+                            ${this._renderLockToggle(device, m, live)}
+                        </div>
                         <div style="font-size: var(--font-size-sm); color: var(--text-secondary); margin-top: 4px;">
                             ${DevicesPage._escape(DevicesPage._typeLabel(device))} ·
                             <span class="status-dot ${live ? 'online' : 'offline'}"></span>${live ? 'Live' : 'Offline'}
                         </div>
-                        <div style="font-size: 11px; color: var(--text-muted); margin-top: 4px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; user-select: all;"
-                             title="Device ID — click to copy. Useful for diagnosing HA worker matching when a device shows Offline despite being reachable.">
-                            ${DevicesPage._escape(device.device_id || '—')}
-                            <button onclick="event.stopPropagation(); navigator.clipboard.writeText('${DevicesPage._escape(device.device_id || '')}').then(() => Toast.success('Device ID copied'))"
-                                style="background: none; border: none; color: var(--text-muted); cursor: pointer; padding: 0 4px; font-size: 11px; line-height: 1;"
-                                title="Copy device_id">📋</button>
-                        </div>
+                        ${this._renderIdLine(device)}
+                        ${this._renderVersionIpLine(device, m)}
                         ${conflictBadge}
                         ${this._renderHeaderChips(device, m)}
                     </div>
                 </div>
-                ${this._renderHeaderPreview(device, m, live)}
+                <div style="display: flex; flex-direction: column; gap: 8px; flex-shrink: 0;">
+                    ${this._renderHeaderActions(device, m, live)}
+                    ${this._renderHeaderPreview(device, m, live)}
+                </div>
             </div>
             ${this._renderQuickControls(device, m, live)}
-            ${this._renderMetricsPanel(device)}
             ${this._renderDisplaySection(device, display, sleep)}
             ${this._renderVoiceSection(device, aiVoice, voice)}
+            ${this._renderHomeAssistantSection(device)}
             ${this._renderPhotosSection(device, photos)}
             ${this._renderBehaviorSection(device, m)}
             ${this._renderAdminSection(device, m)}
@@ -121,6 +122,8 @@ const DevicesDetail = {
             ${DevicesDetailModals.renderThemeModal()}
             ${DevicesDetailModals.renderPickerModal()}
             ${DevicesDetailModals.renderScreensaverModal()}
+            ${DevicesDetailModals.renderVoicePersonalityModal()}
+            ${DevicesDetailModals.renderPinModal()}
         `;
     },
 
@@ -196,21 +199,10 @@ const DevicesDetail = {
                 on ? 'Camera streaming — tap to stop' : 'Camera off — tap to start'));
         }
 
-        // Volume slider (when volume is present)
-        if (controls.volume != null) {
-            const display = DevicesCard._scaleTo10(controls.volume, controls.volume_max);
-            const muted = controls.volume === 0;
-            buttons.push(`
-                <button title="Adjust speaker volume"
-                    onclick="DevicesCard.openSlider('${idAttr}', 'volume', ${controls.volume}, ${controls.volume_max ?? 'null'})"
-                    style="${this._controlBtnStyle(false)}">
-                    <img src="assets/icons/${muted ? 'icon-volume-mute.svg' : 'icon-volume-high.svg'}" alt="" style="width: 16px; height: 16px;">
-                    <span>${muted ? 'Muted' : `Volume ${display}`}</span>
-                </button>
-            `);
-        }
+        // Volume + brightness moved to the header chip row — same controls,
+        // less duplication.
 
-        // Brightness slider
+        // Brightness slider — kept here for tap-to-adjust convenience.
         if (controls.brightness != null) {
             const display = DevicesCard._scaleTo10(controls.brightness, controls.brightness_max);
             buttons.push(`
@@ -222,6 +214,33 @@ const DevicesDetail = {
                 </button>
             `);
         }
+
+        // Screensaver toggle — controls.screensaver_enabled is the dashboard's
+        // canonical signal for "show screensaver during sleep." Falls back to
+        // device.settings.display.screensaverTimeout != 0 if the control state
+        // isn't broadcast.
+        const settings = device.settings || {};
+        const displayCat = settings.display || {};
+        const screensaverOn = controls.screensaver !== undefined
+            ? !!controls.screensaver
+            : (Number(displayCat.screensaverTimeout ?? 0) > 0);
+        const screensaverBusy = !!DevicesCard._busyControl[`${device.device_id}:screensaver`];
+        buttons.push(this._toggleBtn(idAttr, 'screensaver', screensaverOn, screensaverBusy,
+            'icon-moon.svg',
+            screensaverOn ? 'Screensaver on' : 'Screensaver off',
+            screensaverOn ? 'Screensaver on — tap to disable' : 'Screensaver off — tap to enable'));
+
+        // Change PIN / Set PIN — green when a PIN is set on the device,
+        // gray "Set PIN" when not. Click opens the PIN modal.
+        const pinSet = !!(controls.pin_set || settings.security?.pinSet);
+        buttons.push(`
+            <button title="${pinSet ? 'PIN is set — tap to change' : 'No PIN set — tap to create one'}"
+                onclick="DevicesDetailModals.openPinModal('${idAttr}', ${pinSet})"
+                style="${this._controlBtnStyle(false, pinSet)}">
+                <img src="assets/icons/icon-lock.svg" alt="" style="width: 14px; height: 14px; ${pinSet ? 'filter: brightness(0) invert(1);' : ''}">
+                <span>${pinSet ? 'Change PIN' : 'Set PIN'}</span>
+            </button>
+        `);
 
         if (buttons.length === 0) return '';
         return this._section('quick-controls', 'Quick Controls', `
@@ -262,6 +281,7 @@ const DevicesDetail = {
     _renderHeaderChips(device, m) {
         if (!m) return '';
         const chips = [];
+        const idAttr = DevicesPage._escape(device.device_id);
         if (m.battery?.level != null) {
             const charge = m.battery.charging ? '⚡' : '🔋';
             chips.push(`<span class="device-card-detail">${charge} ${m.battery.level}%</span>`);
@@ -280,7 +300,7 @@ const DevicesDetail = {
                 ? DevicesCard._scaleTo10(m.controls.volume, m.controls.volume_max)
                 : m.controls.volume;
             chips.push(`<span class="device-card-detail" style="cursor: pointer;" title="Adjust volume"
-                onclick="DevicesCard.openSlider('${DevicesPage._escape(device.device_id)}', 'volume', ${m.controls.volume}, ${m.controls.volume_max ?? 'null'})">
+                onclick="DevicesCard.openSlider('${idAttr}', 'volume', ${m.controls.volume}, ${m.controls.volume_max ?? 'null'})">
                 <img src="assets/icons/${muted ? 'icon-volume-mute.svg' : 'icon-volume-high.svg'}" alt="" style="width: 11px; height: 11px; vertical-align: -1px;">
                 ${muted ? 'Muted' : scaled}
             </span>`);
@@ -290,13 +310,134 @@ const DevicesDetail = {
                 ? DevicesCard._scaleTo10(m.controls.brightness, m.controls.brightness_max)
                 : m.controls.brightness;
             chips.push(`<span class="device-card-detail" style="cursor: pointer;" title="Adjust brightness"
-                onclick="DevicesCard.openSlider('${DevicesPage._escape(device.device_id)}', 'brightness', ${m.controls.brightness}, ${m.controls.brightness_max ?? 'null'})">
+                onclick="DevicesCard.openSlider('${idAttr}', 'brightness', ${m.controls.brightness}, ${m.controls.brightness_max ?? 'null'})">
                 <img src="assets/icons/icon-sun.svg" alt="" style="width: 11px; height: 11px; vertical-align: -1px;">
                 ${scaled}
             </span>`);
         }
+        // Motion + face detection — surface only when the sensor is active
+        // on the device (matches the card behavior: don't show a slashed
+        // icon for sensors that aren't running at all).
+        if (m.controls?.motion_detection_active) {
+            const detected = !!m.controls.motion_detected;
+            chips.push(`<span class="device-card-detail" title="Motion detection ${detected ? '— currently detecting motion' : 'on'}">
+                <img src="assets/icons/icon-motion-detection.svg" alt="" style="width: 11px; height: 11px; vertical-align: -1px; opacity: ${detected ? 1 : 0.6};">
+                ${detected ? 'Motion' : 'Motion ✓'}
+            </span>`);
+        }
+        if (m.controls?.face_detection_active) {
+            const detected = !!m.controls.face_detected;
+            chips.push(`<span class="device-card-detail" title="Face detection ${detected ? '— face seen' : 'on'}">
+                <img src="assets/icons/icon-face-detection.svg" alt="" style="width: 11px; height: 11px; vertical-align: -1px; opacity: ${detected ? 1 : 0.6};">
+                ${detected ? 'Face' : 'Face ✓'}
+            </span>`);
+        }
         if (chips.length === 0) return '';
         return `<div style="display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px;">${chips.join('')}</div>`;
+    },
+
+    /** Padlock icon next to the name edit. Click toggles device lock if the
+     *  device exposes a lock control; otherwise renders nothing. Mirrors
+     *  the card's lock chip behavior: orange when locked. */
+    _renderLockToggle(device, m, live) {
+        if (!live || m?.controls?.lock === undefined) return '';
+        const locked = !!m.controls.lock;
+        const busy = !!DevicesCard._busyControl?.[`${device.device_id}:lock`];
+        const idAttr = DevicesPage._escape(device.device_id);
+        const bg = locked ? '#f59e0b' : 'transparent';
+        const color = locked ? '#fff' : 'var(--text-secondary)';
+        return `
+            <button title="${locked ? 'Locked — tap to unlock' : 'Unlocked — tap to lock'}"
+                onclick="DevicesCard.pressButton('${idAttr}', 'lock')"
+                ${busy ? 'disabled' : ''}
+                style="background: ${bg}; border: 1px solid ${locked ? '#f59e0b' : 'var(--border, #e5e7eb)'}; border-radius: 999px; padding: 6px; cursor: ${busy ? 'wait' : 'pointer'}; opacity: ${busy ? 0.5 : 1}; line-height: 0;">
+                <img src="assets/icons/${locked ? 'icon-lock.svg' : 'icon-unlock.svg'}" alt="" style="width: 14px; height: 14px; filter: ${locked ? 'invert(1)' : 'none'};">
+            </button>
+        `;
+    },
+
+    /** "ID: ABCDEF1234 📋" — same 10-char uppercase format as the Kotlin
+     *  control center footer (StableDeviceId.take(10).uppercase()). */
+    _renderIdLine(device) {
+        const raw = device.device_id || '';
+        const short = raw.replace(/[^0-9a-fA-F]/g, '').slice(0, 10).toUpperCase() || raw.slice(0, 10).toUpperCase() || '—';
+        return `
+            <div style="font-size: 11px; color: var(--text-muted); margin-top: 4px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; user-select: all;"
+                 title="Device ID — click to copy. Useful for diagnosing HA worker matching when a device shows Offline despite being reachable.">
+                <span style="text-transform: none; font-family: var(--font-sans, system-ui);">ID:</span> ${DevicesPage._escape(short)}
+                <button onclick="event.stopPropagation(); navigator.clipboard.writeText('${DevicesPage._escape(raw)}').then(() => Toast.success('Device ID copied'))"
+                    style="background: none; border: none; color: var(--text-muted); cursor: pointer; padding: 0 4px; font-size: 11px; line-height: 1;"
+                    title="Copy device_id">📋</button>
+            </div>
+        `;
+    },
+
+    /** App version · IP address — control-center footer style. */
+    _renderVersionIpLine(device, m) {
+        const parts = [];
+        const v = m?.app?.app_version;
+        if (v) parts.push(`v${v}`);
+        const ip = m?.network?.ip_address;
+        if (ip) parts.push(ip);
+        if (parts.length === 0) return '';
+        return `<div style="font-size: 11px; color: var(--text-muted); margin-top: 2px;">${parts.map(p => DevicesPage._escape(p)).join(' · ')}</div>`;
+    },
+
+    /** Refresh / Send diagnostics / Send crash buttons above the preview. */
+    _renderHeaderActions(device, m, live) {
+        const idAttr = DevicesPage._escape(device.device_id);
+        const hasCrash = !!m?.app?.has_crash_report;
+        const refreshBusy = !!DevicesCard._busyControl?.[`${device.device_id}:refresh`];
+        const btn = (label, title, onClick, disabled) => `
+            <button title="${title}" ${disabled ? 'disabled' : ''} onclick="${onClick}"
+                style="padding: 5px 10px; border-radius: 6px; border: 1px solid var(--border, #e5e7eb); background: var(--bg-card, #fff); color: var(--text-primary); cursor: ${disabled ? 'not-allowed' : 'pointer'}; opacity: ${disabled ? 0.5 : 1}; font-size: 12px; font-weight: 500; display: inline-flex; align-items: center; gap: 4px;">
+                ${label}
+            </button>
+        `;
+        const buttons = [];
+        buttons.push(btn(`<img src="assets/icons/icon-reload.svg" alt="" style="width: 11px; height: 11px;"> Refresh`,
+            'Refresh images + device data',
+            `DevicesDetail.refresh('${idAttr}')`,
+            refreshBusy));
+        buttons.push(btn('Send diagnostics',
+            'Trigger the device to upload a fresh diagnostic bundle',
+            `DevicesDetail.sendDiagnostics('${idAttr}')`,
+            !live));
+        if (hasCrash) {
+            buttons.push(btn('Send crash report',
+                'Upload the pending crash report from the device',
+                `DevicesDetail.sendCrashReport('${idAttr}')`,
+                false));
+        }
+        return `<div style="display: flex; gap: 6px; justify-content: flex-end; flex-wrap: wrap;">${buttons.join('')}</div>`;
+    },
+
+    /** Bump the screenshot cache-bust ts and refetch device data. */
+    refresh(deviceId) {
+        // 1. Bump image cache-bust so the new screenshot/camera URLs miss
+        //    any CDN/HA cache and serve fresh frames.
+        if (DevicesCard._screenshotTs) DevicesCard._screenshotTs[deviceId] = Date.now();
+        // 2. Mark busy so the button visually disables during the refetch.
+        DevicesCard._busyControl[`${deviceId}:refresh`] = true;
+        App.renderPage();
+        const done = () => {
+            delete DevicesCard._busyControl[`${deviceId}:refresh`];
+            App.renderPage();
+        };
+        if (typeof DevicesPage._refetchDevices === 'function') {
+            DevicesPage._refetchDevices().finally(done);
+        } else {
+            // Fall back to whatever list refetch the page exposes.
+            (DevicesPage.refresh?.() || Promise.resolve()).then?.(done) || done();
+        }
+    },
+
+    sendDiagnostics(deviceId) {
+        DevicesCard.pressButton(deviceId, 'send_diagnostics');
+    },
+
+    sendCrashReport(deviceId) {
+        DevicesCard.pressButton(deviceId, 'send_crash_report');
     },
 
     /** Small screenshot + camera preview block for the header. Tap to open
@@ -411,35 +552,38 @@ const DevicesDetail = {
     //  Voice & AI
     // =========================================================
 
+    /** Voice section parity with the standalone Voice & AI Settings page:
+     *  Enable Voice, Wake Word, Personality. Wake Word is account-level
+     *  (in device-keys-blocklist as ai.wakeWord) so we surface it as a
+     *  read-only summary with a link to Preferences — editing it here
+     *  would create a per-device override that nothing reads.
+     *
+     *  Device-vs-account split (confirmed via blocklist + writer mapping):
+     *    Device: voice.enabled, aiVoice.personalityId, aiVoice.voiceKey,
+     *            aiVoice.model, voice.controlMethod/STT/TTS/...
+     *    Account: ai.wakeWord (and the rest of the Preferences page) */
     _renderVoiceSection(device, aiVoice, voice) {
-        // Only voice.enabled has a verified storage path + option set
-        // (on/off). Other voice settings (controlMethod, responseHandling,
-        // displayFormat, personality, voice) need a dynamic options catalog
-        // — deferred to add-on plan Phase F (Voice & AI tab buildout).
-        // Show the current personality/voice as read-only chips so they're
-        // visible but not editable from here.
-        const personality = aiVoice['aiVoice.personality'] || '—';
-        const voiceName = aiVoice['aiVoice.voice'] || '—';
+        const idAttr = DevicesPage._escape(device.device_id);
+        const voiceEnabled = voice['voice.enabled'] !== false;
+        const personality = aiVoice.personalityId || aiVoice['aiVoice.personality'] || 'dashie';
+        const personalityLabel = this._titleCase(personality);
+        // Wake word: account-level read-only summary. The user_settings
+        // payload should carry it under ai.wakeWord; fall back to '—'.
+        const wakeWord = aiVoice.wakeWord || aiVoice['ai.wakeWord'] || '—';
+
+        const rows = [
+            DevicesDetailModals._toggleRow(device, 'voice', 'voice.enabled', 'Enable Voice', voiceEnabled),
+            DevicesDetailModals._summaryRow('Wake Word', wakeWord,
+                `App.navigate('preferences')`),
+            DevicesDetailModals._summaryRow('Personality', personalityLabel,
+                `DevicesDetailModals.openVoicePersonality('${idAttr}')`),
+        ].join('');
+
         return this._section('voice-ai', 'Voice & AI', `
-            <div class="card"><div class="card-body">
-                <div class="form-grid">
-                    ${this.settingSelect(device, 'voice', 'voice.enabled',
-                        'Voice Assistant', String(voice['voice.enabled'] !== false), OptionCatalog.onOff())}
-                </div>
-                <div style="margin-top: 16px; padding-top: 16px; border-top: 1px solid var(--border, #e5e7eb); display: grid; grid-template-columns: 1fr 1fr; gap: 12px;">
-                    <div>
-                        <div style="font-size: 11px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px;">AI Personality</div>
-                        <div style="font-weight: 500; margin-top: 2px;">${DevicesPage._escape(personality)}</div>
-                    </div>
-                    <div>
-                        <div style="font-size: 11px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px;">Voice</div>
-                        <div style="font-weight: 500; margin-top: 2px;">${DevicesPage._escape(voiceName)}</div>
-                    </div>
-                </div>
-                <div style="margin-top: 12px; font-size: var(--font-size-sm); color: var(--text-muted);">
-                    Change personality, voice, and other voice settings on the <a href="#voice-ai" onclick="event.preventDefault(); App.navigate('voice-ai')">Voice & AI page</a>.
-                </div>
-            </div></div>
+            <div class="card"><div class="card-body" style="padding: 0;">${rows}</div></div>
+            <div style="margin-top: 8px; font-size: var(--font-size-sm); color: var(--text-muted);">
+                Wake Word is account-wide — edit on <a href="#preferences" onclick="event.preventDefault(); App.navigate('preferences')">Preferences</a>. AI model, voice, and pipeline live on the <a href="#voice-ai" onclick="event.preventDefault(); App.navigate('voice-ai')">Voice & AI</a> page.
+            </div>
         `);
     },
 
@@ -454,6 +598,41 @@ const DevicesDetail = {
      * interval/transition (see add-on plan Phase F).
      */
     _renderPhotosSection() { return ''; },
+
+    // =========================================================
+    //  Home Assistant
+    // =========================================================
+
+    /** HA Dashboard URL row. The text input writes to home_assistant.dashboardPath
+     *  on user_devices.settings; Kotlin's ConnectionPreferences reads it on
+     *  apply. Keep this minimal — the full HA configuration flow lives in
+     *  the dashboard's Settings page on the tablet. */
+    _renderHomeAssistantSection(device) {
+        const ha = device.settings?.home_assistant || {};
+        const url = ha.dashboardPath || ha.dashboardUrl || ha.haUrl || '';
+        const idAttr = DevicesPage._escape(device.device_id);
+        const savingKey = `${device.device_id}_dashboardPath`;
+        const isSaving = DevicesPage._saving[savingKey];
+        return this._section('home-assistant', 'Home Assistant', `
+            <div class="card"><div class="card-body">
+                <div class="form-group">
+                    <label class="form-label">Dashboard URL ${isSaving ? '<span style="color: var(--text-muted); font-weight: 400; text-transform: none; font-size: 10px;">saving…</span>' : ''}</label>
+                    <input class="form-input" type="text" value="${DevicesPage._escape(url)}"
+                        placeholder="https://homeassistant.local:8123/lovelace"
+                        ${isSaving ? 'disabled' : ''}
+                        onchange="DevicesPage._onSettingChange('${idAttr}', 'home_assistant', 'dashboardPath', this.value.trim())">
+                </div>
+                <div style="font-size: var(--font-size-sm); color: var(--text-muted);">
+                    The dashboard the tablet opens when launching Home Assistant. Leave blank to use the default.
+                </div>
+            </div></div>
+        `, { defaultExpanded: false });
+    },
+
+    _titleCase(s) {
+        if (!s) return '—';
+        return String(s).split(/[_-]/).map(p => p.charAt(0).toUpperCase() + p.slice(1)).join(' ');
+    },
 
     // =========================================================
     //  Device Behavior — HA switches not surfaced elsewhere
