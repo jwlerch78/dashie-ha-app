@@ -85,7 +85,27 @@ const ConsoleAiClient = {
             return this._personalityCache.get(personalityId);
         }
 
-        const VAP = (typeof VoiceAiPage !== 'undefined') ? VoiceAiPage : null;
+        let VAP = (typeof VoiceAiPage !== 'undefined') ? VoiceAiPage : null;
+
+        // Lazy-load the personality lists if Voice & AI Settings was never
+        // opened in this session — that's the path that normally populates
+        // VAP._templates / _custom / _overrides. Otherwise we fall through
+        // to the server with the slug ("pirate") which the server treats
+        // as a UUID and 500s.
+        if (VAP && !VAP._templates && typeof VoiceAiApi !== 'undefined') {
+            try {
+                const [templates, custom, overrides] = await Promise.all([
+                    VoiceAiApi.listTemplates().catch(() => []),
+                    VoiceAiApi.listCustom().catch(() => []),
+                    VoiceAiApi.listOverrides().catch(() => []),
+                ]);
+                VAP._templates = templates;
+                VAP._custom = custom;
+                VAP._overrides = {};
+                for (const o of overrides) VAP._overrides[o.template_key] = o;
+            } catch { /* leave VAP._templates null — fall through to server */ }
+        }
+
         let row = null;
 
         // 1. Built-in template by key.
@@ -104,18 +124,14 @@ const ConsoleAiClient = {
             row = VAP._custom.find(c => c.id === personalityId) || null;
         }
 
-        // 3. Server fallback (rare — chat opened before lists loaded).
-        if (!row) {
+        // 3. Server fallback — by id only (UUIDs). Skip when the id looks
+        // like a slug (built-in key) so we don't fire a known-bad request
+        // that the server logs as a 500.
+        if (!row && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(personalityId)) {
             try {
                 const result = await DashieAuth.dbRequest('get_personality', { id: personalityId });
                 row = result?.data || result?.personality || null;
-            } catch (e) { /* try by key */ }
-            if (!row) {
-                try {
-                    const result = await DashieAuth.dbRequest('get_personality', { key: personalityId });
-                    row = result?.data || result?.personality || null;
-                } catch (e) { /* leave null */ }
-            }
+            } catch { /* leave null */ }
         }
 
         this._personalityCache.set(personalityId, row);
