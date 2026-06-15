@@ -102,8 +102,7 @@ const DevicesDetail = {
             </div>
             ${this._renderQuickControls(device, m, live)}
             ${this._renderMetricsPanel(device)}
-            ${this._renderDisplaySection(device, display)}
-            ${this._renderSleepSection(device, sleep)}
+            ${this._renderDisplaySection(device, display, sleep)}
             ${this._renderVoiceSection(device, aiVoice, voice)}
             ${this._renderPhotosSection(device, photos)}
             ${this._renderBehaviorSection(device, m)}
@@ -119,7 +118,9 @@ const DevicesDetail = {
             ${DevicesCard.renderHistoryModal()}
             ${DevicesCard.renderCameraModal()}
             ${DevicesDetailModals.renderSleepModal()}
-            ${DevicesDetailModals.renderDisplayModal()}
+            ${DevicesDetailModals.renderThemeModal()}
+            ${DevicesDetailModals.renderPickerModal()}
+            ${DevicesDetailModals.renderScreensaverModal()}
         `;
     },
 
@@ -396,33 +397,14 @@ const DevicesDetail = {
     //  Display & Theme
     // =========================================================
 
-    _renderDisplaySection(device, display) {
-        // Summary-row layout mirrors the Kotlin control center's Display
-        // card. The actual editable fields live in DevicesDetailModals.
-        // openDisplay opens a modal that owns the same settingSelect()
-        // grid the section used to inline.
-        const summary = DevicesDetailModals.buildDisplaySummary(display);
-        return this._section('display', 'Display & Theme', `
-            <div class="card"><div class="card-body" style="padding: 0;">
-                ${DevicesDetailModals.renderSummaryRow('Theme', summary,
-                    `DevicesDetailModals.openDisplay('${DevicesPage._escape(device.device_id)}')`)}
-            </div></div>
-        `);
-    },
-
-    // =========================================================
-    //  Sleep & Screensaver
-    // =========================================================
-
-    _renderSleepSection(device, sleep) {
-        const display = device.settings?.display || {};
-        const summary = DevicesDetailModals.buildSleepSummary(sleep, display);
-        return this._section('sleep', 'Sleep & Screensaver', `
-            <div class="card"><div class="card-body" style="padding: 0;">
-                ${DevicesDetailModals.renderSummaryRow('Sleep Mode', summary,
-                    `DevicesDetailModals.openSleep('${DevicesPage._escape(device.device_id)}')`)}
-            </div></div>
-        `);
+    /** Consolidated Display section, structured to mirror Kotlin's
+     *  DisplayPageSchema: three sub-section cards (Dashboard / Screen
+     *  Management / Display Preferences). Each row is a summary +
+     *  chevron → opens a modal owned by DevicesDetailModals. Inline
+     *  toggles (Animations, Auto Brightness) skip the modal layer. */
+    _renderDisplaySection(device, display, sleep) {
+        const body = DevicesDetailModals.renderDisplayBody(device, display, sleep);
+        return this._section('display', 'Display', body);
     },
 
     // =========================================================
