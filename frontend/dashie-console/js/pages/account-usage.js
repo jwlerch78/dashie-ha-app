@@ -60,6 +60,10 @@ const AccountUsage = {
             this._balance = bal;
             this._summary = sum;
             this._daily = daily;
+            // Share the freshly-fetched balance with the sidebar so its
+            // bottom-left widget never disagrees with the stat strip on
+            // this page. CreditsService re-renders the sidebar in-place.
+            window.CreditsService?.note(bal);
             this._loading = false;
             App.renderPage();
         } catch (e) {
@@ -115,11 +119,24 @@ const AccountUsage = {
 
     // ── cost helpers ──────────────────────────────────────────
 
-    /** USD cost for a summary row, derived from token counts / call counts
-     *  + the bundled TOKEN_COSTS catalog. Returns 0 when pricing unknown. */
+    /** USD cost for a summary row.
+     *
+     *  Authoritative source: `row.actual_cost_usd` is what the server
+     *  actually debited from user_credits.balance for this group (from
+     *  credit_deductions). Use that when present.
+     *
+     *  Fallback: historical rows from before credit_deductions existed
+     *  have actual_cost_usd === 0 but real token counts in ai_interactions
+     *  / token_usage. For those we compute client-side from the catalog
+     *  so the table doesn't suddenly drop the old spend to zero. TTS/STT
+     *  has no token columns, so the fallback only produces a number for
+     *  ai/web_search. */
     _costForRow(row) {
+        if (!row) return 0;
+        if (Number(row.actual_cost_usd) > 0) return Number(row.actual_cost_usd);
+
         const C = window.AiModelCatalog;
-        if (!C || !row) return 0;
+        if (!C) return 0;
         if (row.service === 'ai') {
             const rates = row.model ? C.pricingFor(row.model) : null;
             if (!rates) return 0;
@@ -128,12 +145,8 @@ const AccountUsage = {
         if (row.service === 'web_search') {
             return C.searchCost({ provider: row.provider, count: row.call_count || 0 });
         }
-        if (row.service === 'stt') {
-            return C.sttCost({ provider: row.provider, seconds: row.total_seconds || 0 });
-        }
-        if (row.service === 'tts') {
-            return C.ttsCost({ provider: row.provider, characters: row.total_chars || 0 });
-        }
+        // tts/stt fallback: no token columns to compute against. Show 0;
+        // future calls land in credit_deductions and show real spend.
         return 0;
     },
 

@@ -30,6 +30,7 @@ You are generating responses for a voice-controlled family assistant. Your outpu
 
 Current date and time: {{DATE_TIME}}
 
+{{LANGUAGE_INSTRUCTION}}
 {{CHAT_HISTORY}}
 
 The user said: "{{USER_REQUEST}}"

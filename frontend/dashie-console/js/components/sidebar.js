@@ -4,7 +4,14 @@
 
 const Sidebar = {
     render(activePage) {
-        const credits = MockData.credits;
+        // Real balance from CreditsService — fetched once at boot and
+        // refreshed after every Token Usage view (and, eventually, after
+        // each call that decrements it). Falls back to '—' before the
+        // first fetch returns so we don't flash a wrong number.
+        const cached = window.CreditsService?.balance();
+        const balanceLabel = (cached && typeof cached.balance === 'number')
+            ? `$${cached.balance.toFixed(2)}`
+            : '$—';
         // Beta visibility — see js/lib/feature-gate.js. HA-only items are
         // hidden when the console is served from the public website; the
         // credits widget is dev-only; locations is hidden everywhere until
@@ -19,6 +26,7 @@ const Sidebar = {
             <div class="sidebar-section">
                 <div class="sidebar-section-label">Manage</div>
                 ${this._navItem('devices', 'Dashboards', 'icon-tv', activePage)}
+                ${this._navItem('preferences', 'Preferences', 'icon-settings', activePage)}
                 ${this._gatedNavItem('voice-ai', 'Voice & AI', 'icon-ai-chat', activePage)}
                 ${this._gatedNavItem('video-feeds', 'Video Feeds', 'icon-video-camera', activePage)}
             </div>
@@ -45,7 +53,7 @@ const Sidebar = {
             <div class="sidebar-footer">
                 ${showCredits ? `
                     <div class="sidebar-credits" onclick="App.navigate('account')">
-                        <span class="sidebar-credits-amount">$${credits.total.toFixed(2)}</span>
+                        <span class="sidebar-credits-amount">${balanceLabel}</span>
                         <span class="sidebar-credits-label">credits</span>
                     </div>
                 ` : ''}

@@ -373,7 +373,7 @@ const ConsoleAiClient = {
     },
 
     /** POST the prompt to ai-gateway and return { ok, raw, latency_ms, error }. */
-    async _callGateway({ provider, prompt, modelId }) {
+    async _callGateway({ provider, prompt, modelId, requestType = 'console_chat', sessionId }) {
         const t0 = performance.now();
         try {
             const resp = await fetch(`${DashieAuth.config.url}/functions/v1/ai-gateway`, {
@@ -399,10 +399,59 @@ const ConsoleAiClient = {
             if (!resp.ok) {
                 return { ok: false, error: body.error || body.message || `HTTP ${resp.status}`, latency_ms };
             }
+            // Fire-and-forget usage log. Console chat lives outside the
+            // webapp's ai-service so it has its own logging path. Same
+            // ai_interactions row shape — server-side deduction picks
+            // this up automatically. Token-aware; zero-token replies
+            // get filtered out of the usage table the same way the
+            // webapp's NLP path does.
+            const usage = body?.usage || {};
+            this._logInteraction({
+                requestType,
+                sessionId,
+                requestLength: prompt.length,
+                model: body?.model || modelId,
+                provider: body?.provider || provider,
+                inputTokens: usage.input_tokens || 0,
+                outputTokens: usage.output_tokens || 0,
+                totalTokens: usage.total_tokens || ((usage.input_tokens || 0) + (usage.output_tokens || 0)),
+                apiLatencyMs: body?.latency || 0,
+                totalLatencyMs: latency_ms,
+                promptText: prompt,
+                responseText: typeof body?.content === 'string' ? body.content : null,
+            });
             return { ok: true, raw: body, latency_ms };
         } catch (e) {
             return { ok: false, error: e?.message || String(e), latency_ms: Math.round(performance.now() - t0) };
         }
+    },
+
+    /** Fire-and-forget log_ai_interaction. Mirrors ai-analytics.js
+     *  logInteraction but stripped to the fields available here. */
+    _logInteraction(d) {
+        if (!window.DashieAuth?.dbRequest) return;
+        const logData = {
+            session_id: d.sessionId || null,
+            request_type: d.requestType || 'console_chat',
+            request_length: d.requestLength || 0,
+            model: d.model || 'unknown',
+            input_tokens: d.inputTokens || 0,
+            output_tokens: d.outputTokens || 0,
+            total_tokens: d.totalTokens || 0,
+            response_type: null,
+            response_length: d.responseText ? d.responseText.length : 0,
+            tool_used: null,
+            action_taken: null,
+            api_latency_ms: d.apiLatencyMs || 0,
+            total_latency_ms: d.totalLatencyMs || 0,
+            success: true,
+            error_type: null,
+            prompt_text: d.promptText || null,
+            response_text: d.responseText || null,
+        };
+        window.DashieAuth.dbRequest('log_ai_interaction', logData)
+            .then(() => window.CreditsService?.fetch({ force: true }))
+            .catch(() => {});
     },
 
     /** Fire an HA service call via the add-on. */

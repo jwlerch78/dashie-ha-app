@@ -8,6 +8,7 @@ const App = {
 
     pages: {
         devices:       { page: DevicesPage },
+        preferences:   { page: PreferencesPage },
         'voice-ai':    { page: VoiceAiPage },
         'video-feeds': { page: VideoFeedsPage },
         family:        { page: FamilyPage },
@@ -321,6 +322,12 @@ const App = {
 
         this.renderPage();
         this._resetContentScroll();
+
+        // Kick off a balance fetch so the sidebar's credits widget shows
+        // the real number on first paint. CreditsService re-renders the
+        // sidebar in place once the result lands; the rest of the page
+        // doesn't need to wait.
+        window.CreditsService?.fetch();
 
         // Listen for hash changes
         window.addEventListener('hashchange', () => {

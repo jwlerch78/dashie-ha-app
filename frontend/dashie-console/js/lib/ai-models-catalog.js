@@ -290,6 +290,14 @@
           freeQueries: 2000         // 2000 free queries per month
         },
     
+        // Tavily Search API — Researcher plan ~$30 / 4,000 queries = $0.0075;
+        // round up for headroom. Free tier is 1000 queries/mo.
+        tavily: {
+          perQuery: 0.008,
+          per1000Queries: 8.00,
+          freeQueries: 1000
+        },
+    
         // Perplexity API (for future)
         perplexity: {
           perQuery: 0.005           // Estimated similar to Brave
