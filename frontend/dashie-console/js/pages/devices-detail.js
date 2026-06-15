@@ -432,12 +432,38 @@ const DevicesDetail = {
         }
     },
 
-    sendDiagnostics(_deviceId) {
-        Toast.info('Send diagnostics: HA button entity not yet exposed — coming soon.');
+    sendDiagnostics(deviceId) {
+        this._publishDeviceCommand(deviceId, 'send_diagnostics', 'Sending diagnostics request…');
     },
 
-    sendCrashReport(_deviceId) {
-        Toast.info('Send crash report: HA button entity not yet exposed — coming soon.');
+    sendCrashReport(deviceId) {
+        this._publishDeviceCommand(deviceId, 'send_crash_report', 'Sending crash report request…');
+    },
+
+    /** Broadcast a command on the per-device realtime channel that the
+     *  webapp subscribes to via js/data/sync/device-commands.js. The
+     *  tablet receives the broadcast, dispatches to the matching
+     *  DashieNative bridge method, and runs the existing upload path —
+     *  same one the sidebar dialog uses. */
+    async _publishDeviceCommand(deviceId, cmd, pendingToast) {
+        const sb = DashieAuth._getSupabaseClient?.();
+        if (!sb) {
+            Toast.error('No realtime client — cannot send command');
+            return;
+        }
+        const channelName = `device_cmd_${deviceId}`;
+        Toast.info(pendingToast);
+        try {
+            const channel = sb.channel(channelName, { config: { broadcast: { self: false, ack: false } } });
+            await new Promise((resolve) => {
+                channel.subscribe((status) => { if (status === 'SUBSCRIBED') resolve(); });
+            });
+            await channel.send({ type: 'broadcast', event: 'command', payload: { cmd } });
+            // Tear down after publish — this is fire-and-forget.
+            setTimeout(() => { try { channel.unsubscribe(); } catch (e) { /* ignore */ } }, 500);
+        } catch (e) {
+            Toast.error(`Failed to send: ${e?.message || e}`);
+        }
     },
 
     /** Small screenshot + camera preview block for the header. Tap to open
