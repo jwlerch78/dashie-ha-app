@@ -284,6 +284,21 @@ function _buildViaRegistry(states, entityRegistry) {
         }
         metrics = sanitizeMetrics(metrics);
 
+        // Real entity_id per role from byRole — what the worker actually
+        // resolved via unique_id / slug / role-suffix matching. Surfaces
+        // the *resolved* entity_id so Console history charts and the
+        // /api/ha/control endpoint can address the entity directly,
+        // instead of reconstructing `<domain>.<anchor_slug>_<role>` (which
+        // breaks for partial-migration devices whose sibling entities
+        // kept their pre-rename entity_id slug). Includes ALL matched
+        // roles, not just ones METRIC_MAP knows about — so control
+        // switches (lock/screen/etc.) and number entities (brightness/
+        // volume) all get an entry too.
+        const entityIdsByRole = {};
+        for (const [role, s] of Object.entries(byRole)) {
+            if (s?.entity_id) entityIdsByRole[role] = s.entity_id;
+        }
+
         const friendlyName = anchor.attributes?.friendly_name || '';
         const deviceName = friendlyName.replace(/ Device ID$/, '').trim() || slug || haDeviceId;
 
@@ -292,6 +307,7 @@ function _buildViaRegistry(states, entityRegistry) {
             slug,
             dashieDeviceId,
             metrics,
+            entityIdsByRole,
             entityCount: deviceEntities.length,
             hasLiveData: hasAnyLiveData(metrics),
         });
@@ -350,6 +366,13 @@ function _buildViaSlug(states) {
         }
         metrics = sanitizeMetrics(metrics);
 
+        // Parallel structure to the entity-registry path's output —
+        // role → resolved entity_id, for control + history-chart use.
+        const entityIdsByRole = {};
+        for (const [role, s] of Object.entries(byRole)) {
+            if (s?.entity_id) entityIdsByRole[role] = s.entity_id;
+        }
+
         const friendlyName = anchor.attributes?.friendly_name || '';
         const deviceName = friendlyName.replace(/ Device ID$/, '').trim() || slug;
         const rawDeviceId = anchor.state;
@@ -362,6 +385,7 @@ function _buildViaSlug(states) {
             slug,
             dashieDeviceId,
             metrics,
+            entityIdsByRole,
             entityCount: siblings.length,
             hasLiveData: hasAnyLiveData(metrics),
         });

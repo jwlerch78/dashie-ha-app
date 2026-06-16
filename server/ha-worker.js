@@ -33,6 +33,14 @@ let lastRun = null;       // { at, devices, ok, error? }
 let started = false;
 let lastSkipReason = null;  // de-dupes noisy skip-log spam
 let slugByDashieId = {};    // dashie_device_id → HA entity slug (e.g. 'fire_tv', 'rk3576_u')
+// dashie_device_id → { role: actual entity_id }. Set on every poll so
+// /api/ha/control and the Console history chart can use the real
+// entity_id instead of reconstructing <domain>.<slug>_<role>, which
+// breaks for partial-migration devices whose sibling entity_ids stuck
+// at the pre-rename slug (e.g. Kitchen 15" / Mio 15", where the worker
+// can still bucket sensors via role-suffix fallback but the
+// reconstructed entity_id 404s in HA).
+let entityIdsByDashieId = {};
 
 function logSkip(reason) {
     if (reason === lastSkipReason) return;
@@ -96,12 +104,20 @@ async function runPoll(reason = 'tick') {
             }
         }
         const devices = haMetrics.buildDeviceMetrics(states, entityRegistry);
-        // Refresh the slug map so /api/ha/control can resolve entity_ids by Dashie device_id.
+        // Refresh slug + entity-id maps so /api/ha/control can resolve
+        // entity_ids by Dashie device_id. entity_ids is the authoritative
+        // source — slug stays around as a fallback for devices the
+        // current poll didn't yet bucket.
         const newSlugMap = {};
+        const newEntityIdMap = {};
         for (const d of devices) {
             if (d.dashieDeviceId && d.slug) newSlugMap[d.dashieDeviceId] = d.slug;
+            if (d.dashieDeviceId && d.entityIdsByRole) {
+                newEntityIdMap[d.dashieDeviceId] = d.entityIdsByRole;
+            }
         }
         slugByDashieId = newSlugMap;
+        entityIdsByDashieId = newEntityIdMap;
 
         if (devices.length === 0) {
             lastRun = {
@@ -123,6 +139,11 @@ async function runPoll(reason = 'tick') {
             device_name: d.deviceName,
             slug: d.slug,
             metrics: d.metrics,
+            // role → resolved entity_id. Console reads from here for
+            // history-chart deep links so partial-migration devices
+            // (whose entity_id slug doesn't match the anchor slug)
+            // still address the right HA entity.
+            entity_ids: d.entityIdsByRole || {},
             has_live_data: d.hasLiveData,
         }));
 
@@ -249,6 +270,15 @@ function getSlugForDevice(dashieDeviceId) {
     return slugByDashieId[dashieDeviceId] || null;
 }
 
+/** Resolved entity_id for a device's role (battery/ram_usage/screen/lock/...).
+ *  Returns null when the worker hasn't seen the device yet OR the device's
+ *  HA entity for that role doesn't exist. Callers should fall back to the
+ *  legacy <domain>.<slug>_<role> reconstruction when null, to stay
+ *  compatible during the period before a poll has populated the map. */
+function getEntityIdForRole(dashieDeviceId, role) {
+    return entityIdsByDashieId[dashieDeviceId]?.[role] || null;
+}
+
 /** Dump what the worker saw for one device on a fresh poll. See
  *  api/ha.js GET /debug-device-metrics for the response shape. */
 async function debugDeviceMetrics(dashieDeviceId) {
@@ -317,4 +347,4 @@ async function debugDeviceMetrics(dashieDeviceId) {
     };
 }
 
-module.exports = { start, stop, triggerRefresh, getStatus, getSlugForDevice, debugDeviceMetrics };
+module.exports = { start, stop, triggerRefresh, getStatus, getSlugForDevice, getEntityIdForRole, debugDeviceMetrics };

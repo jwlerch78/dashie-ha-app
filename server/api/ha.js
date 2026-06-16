@@ -226,7 +226,13 @@ router.post('/control', requireSignedIn, express.json(), async (req, res) => {
 
     const slug = haWorker.getSlugForDevice(device_id);
     if (!slug) return res.status(404).json({ error: 'device_not_found_or_offline' });
-    const entityId = `${map.domain}.${slug}_${map.suffix}`;
+    // Prefer the worker-resolved entity_id (correct even for
+    // partial-migration devices where slug+suffix construction yields
+    // a non-existent entity_id). Fall back to construction for control
+    // roles the metrics matcher didn't bucket — that path keeps working
+    // for the common case where the slug+suffix lines up.
+    const resolvedEntityId = haWorker.getEntityIdForRole(device_id, map.suffix);
+    const entityId = resolvedEntityId || `${map.domain}.${slug}_${map.suffix}`;
 
     try {
         let serviceName, serviceData = {};
