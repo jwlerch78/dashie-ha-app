@@ -77,28 +77,51 @@ function requireSignedIn(req, res, next) {
 
 /**
  * GET /api/ha/history?entity_id=<id>&hours=<n>
- * Returns a single entity's recent history as [{state, last_changed}, ...].
- * Default window is 24h, max 168h (7 days) — anything longer is heavy for
- * chatty sensors and the Console chart isn't designed for it.
+ *   — OR —
+ * GET /api/ha/history?entity_id=<id>&start_iso=<iso>&end_iso=<iso>
  *
- * Also returns the current state object (with attributes) so the chart can
- * derive unit_of_measurement and the "current value" badge in one round-trip
- * instead of two.
+ * Returns a single entity's history as [{state, last_changed}, ...].
+ * Default window is 24h. Capped at MAX_HOURS (~3 months) — anything
+ * longer is heavy and the chart isn't designed for it.
  *
- * Open (no requireSignedIn) — matches /status. Caller is already past Ingress.
+ * Also returns the current state (with attributes) so the chart derives
+ * unit_of_measurement and the current-value badge in one round-trip.
+ *
+ * Open (no requireSignedIn) — matches /status. Caller is past Ingress.
  */
+const HISTORY_MAX_HOURS = 24 * 90; // 90 days
 router.get('/history', async (req, res) => {
     const entityId = req.query.entity_id;
     if (!entityId || typeof entityId !== 'string') {
         return res.status(400).json({ error: 'entity_id required' });
     }
-    const hoursRaw = parseFloat(req.query.hours);
-    const hours = Number.isFinite(hoursRaw) && hoursRaw > 0
-        ? Math.min(hoursRaw, 168)
-        : 24;
+
+    let start, end, hours;
+    const startIso = typeof req.query.start_iso === 'string' ? req.query.start_iso : null;
+    const endIso = typeof req.query.end_iso === 'string' ? req.query.end_iso : null;
+    if (startIso && endIso) {
+        const s = Date.parse(startIso);
+        const e = Date.parse(endIso);
+        if (!Number.isFinite(s) || !Number.isFinite(e) || s >= e) {
+            return res.status(400).json({ error: 'invalid start_iso/end_iso' });
+        }
+        const spanHours = (e - s) / 3600 / 1000;
+        if (spanHours > HISTORY_MAX_HOURS) {
+            return res.status(400).json({ error: 'range_too_large', max_hours: HISTORY_MAX_HOURS });
+        }
+        start = new Date(s);
+        end = new Date(e);
+        hours = spanHours;
+    } else {
+        const hoursRaw = parseFloat(req.query.hours);
+        hours = Number.isFinite(hoursRaw) && hoursRaw > 0
+            ? Math.min(hoursRaw, HISTORY_MAX_HOURS)
+            : 24;
+        end = new Date();
+        start = new Date(end.getTime() - hours * 3600 * 1000);
+    }
+
     try {
-        const end = new Date();
-        const start = new Date(end.getTime() - hours * 3600 * 1000);
         const [samples, current] = await Promise.all([
             haClient.getHistory(entityId, start.toISOString(), end.toISOString()),
             haClient.getState(entityId).catch(() => null),
@@ -106,6 +129,8 @@ router.get('/history', async (req, res) => {
         return res.json({
             entity_id: entityId,
             hours,
+            start_iso: start.toISOString(),
+            end_iso: end.toISOString(),
             unit: current?.attributes?.unit_of_measurement || null,
             friendly_name: current?.attributes?.friendly_name || null,
             current_state: current?.state ?? null,
