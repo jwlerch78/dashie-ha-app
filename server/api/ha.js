@@ -76,6 +76,48 @@ function requireSignedIn(req, res, next) {
 }
 
 /**
+ * GET /api/ha/history?entity_id=<id>&hours=<n>
+ * Returns a single entity's recent history as [{state, last_changed}, ...].
+ * Default window is 24h, max 168h (7 days) — anything longer is heavy for
+ * chatty sensors and the Console chart isn't designed for it.
+ *
+ * Also returns the current state object (with attributes) so the chart can
+ * derive unit_of_measurement and the "current value" badge in one round-trip
+ * instead of two.
+ *
+ * Open (no requireSignedIn) — matches /status. Caller is already past Ingress.
+ */
+router.get('/history', async (req, res) => {
+    const entityId = req.query.entity_id;
+    if (!entityId || typeof entityId !== 'string') {
+        return res.status(400).json({ error: 'entity_id required' });
+    }
+    const hoursRaw = parseFloat(req.query.hours);
+    const hours = Number.isFinite(hoursRaw) && hoursRaw > 0
+        ? Math.min(hoursRaw, 168)
+        : 24;
+    try {
+        const end = new Date();
+        const start = new Date(end.getTime() - hours * 3600 * 1000);
+        const [samples, current] = await Promise.all([
+            haClient.getHistory(entityId, start.toISOString(), end.toISOString()),
+            haClient.getState(entityId).catch(() => null),
+        ]);
+        return res.json({
+            entity_id: entityId,
+            hours,
+            unit: current?.attributes?.unit_of_measurement || null,
+            friendly_name: current?.attributes?.friendly_name || null,
+            current_state: current?.state ?? null,
+            samples,
+        });
+    } catch (e) {
+        console.warn(`[api/ha/history] ${entityId} failed:`, e.message);
+        return res.status(500).json({ error: 'history_failed', message: e.message });
+    }
+});
+
+/**
  * POST /api/ha/rename
  * Body: { device_id: '<dashie hex>', new_name: 'Living Room Tablet' }
  * Renames the device in HA's device_registry (sets `name_by_user`).

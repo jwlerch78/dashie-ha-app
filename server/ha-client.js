@@ -70,10 +70,41 @@ async function getState(entityId) {
     return resp.json();
 }
 
+/**
+ * Get history for a single entity between two ISO timestamps.
+ * Uses `minimal_response` + `no_attributes` so HA only returns
+ * {state, last_changed} per sample — the chart doesn't need the
+ * full attribute payload, and large windows on chatty sensors
+ * (RAM, brightness) can be 10x smaller on the wire.
+ *
+ * HA returns `[[sample, sample, ...]]` — a single-element array
+ * whose only entry is the list of samples for the requested entity.
+ * We flatten that one level for callers.
+ */
+async function getHistory(entityId, startISO, endISO) {
+    const config = getConfig();
+    if (!config) throw new Error('HA client not configured');
+    const qs = new URLSearchParams({
+        filter_entity_id: entityId,
+        end_time: endISO,
+        minimal_response: '',
+        no_attributes: '',
+    });
+    const url = `${config.baseUrl}/api/history/period/${encodeURIComponent(startISO)}?${qs}`;
+    const resp = await fetch(url, {
+        headers: { Authorization: `Bearer ${config.token}` },
+    });
+    if (!resp.ok) throw new Error(`/api/history: HTTP ${resp.status}`);
+    const data = await resp.json();
+    if (!Array.isArray(data) || data.length === 0) return [];
+    return Array.isArray(data[0]) ? data[0] : [];
+}
+
 module.exports = {
     getConfig,
     isAvailable,
     checkConnection,
     getStates,
     getState,
+    getHistory,
 };
