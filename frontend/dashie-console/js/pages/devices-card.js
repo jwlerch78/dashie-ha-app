@@ -732,7 +732,11 @@ const DevicesCard = {
     renderHistoryModal() {
         const h = this._historyOpen;
         if (!h) return '';
-        const url = `/history?entity_id=${encodeURIComponent(h.entityId)}`;
+        // HA's `kiosk` query param hides the sidebar so the iframe is
+        // just the chart + entity controls (the "dedicated view" the
+        // user gets when clicking an entity from the integration UI),
+        // not the full History page with HA's sidebar inline.
+        const url = `/history?entity_id=${encodeURIComponent(h.entityId)}&kiosk`;
         return `
             <div onclick="DevicesCard._maybeCloseHistory(event)" style="position: fixed; inset: 0; background: rgba(0,0,0,0.55); z-index: 1100; display: flex; align-items: center; justify-content: center; padding: 24px;">
                 <div onclick="event.stopPropagation()" class="card" style="width: min(960px, 95vw); max-height: 90vh; display: flex; flex-direction: column;">

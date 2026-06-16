@@ -61,6 +61,18 @@ const DevicesDetailModals = {
         ['175', '175%'], ['200', '200%'],
     ],
 
+    // Mirror Kotlin DisplayPageSchema displaySizeSubScreen — scales
+    // native chrome (sidebar, control center, music/video/voice cards).
+    DISPLAY_SIZES: [
+        ['100', '100%'], ['125', '125%'], ['150', '150%'],
+        ['175', '175%'], ['200', '200%'],
+    ],
+
+    // Mirror Kotlin DisplayPageSchema font_size_picker — scales widget text.
+    FONT_SIZES: [
+        ['75', '75%'], ['100', '100%'], ['125', '125%'], ['150', '150%'],
+    ],
+
     SIDEBAR_ICON_SIZES: [
         ['0.75', 'Very Small'],
         ['0.9', 'Small'],
@@ -160,22 +172,13 @@ const DevicesDetailModals = {
                 this._summaryRow('Wake Mode',
                     this._labelFor(this.WAKE_MODES, display.motionWakeMode || 'disabled'),
                     `DevicesDetailModals.openPicker('${idAttr}','display','motionWakeMode','Wake Mode','WAKE_MODES','disabled')`),
-            ].join(''))}
-            ${this._subsectionCard('Display Preferences', [
-                this._summaryRow('HA Dashboard Zoom',
-                    this._labelFor(this.ZOOM_LEVELS, String(display.dashboardZoom ?? '100')) + '',
-                    `DevicesDetailModals.openPicker('${idAttr}','display','dashboardZoom','HA Dashboard Zoom','ZOOM_LEVELS','100')`),
-                this._summaryRow('Widget Zoom',
-                    this._labelFor(this.ZOOM_LEVELS, String(display.widgetZoom ?? '100')),
-                    `DevicesDetailModals.openPicker('${idAttr}','display','widgetZoom','Widget Zoom','ZOOM_LEVELS','100')`),
-                this._summaryRow('Sidebar Icon Size',
-                    this._labelFor(this.SIDEBAR_ICON_SIZES, String(display.sidebarIconSize ?? '1')),
-                    `DevicesDetailModals.openPicker('${idAttr}','display','sidebarIconSize','Sidebar Icon Size','SIDEBAR_ICON_SIZES','1')`),
-                this._summaryRow('Screen Off Behavior',
-                    this._labelFor(this.SCREEN_OFF_BEHAVIORS, display.screenOffBehavior || 'black_overlay'),
-                    `DevicesDetailModals.openPicker('${idAttr}','display','screenOffBehavior','Screen Off Behavior','SCREEN_OFF_BEHAVIORS','black_overlay')`),
-                this._toggleRow(device, 'display', 'autoBrightnessEnabled',
-                    'Auto Brightness', display.autoBrightnessEnabled === true),
+                // All the granular Display Preferences (zooms, font/display
+                // size, sidebar icon size, screen-off, auto brightness)
+                // collapse into one row → modal. Summary surfaces the
+                // most-glanceable values so the row isn't just "›".
+                this._summaryRow('Advanced Display Options',
+                    this._buildAdvancedDisplaySummary(display),
+                    `DevicesDetailModals.openAdvancedDisplay('${idAttr}')`),
             ].join(''))}
         `;
     },
@@ -441,6 +444,75 @@ const DevicesDetailModals = {
             </div>
         `;
         return this._modal('Screensaver', body, 'DevicesDetailModals.closeScreensaver()');
+    },
+
+    // ── Advanced Display Options modal ────────────────────────
+
+    _advancedDisplayOpen: false,
+    _advancedDisplayDeviceId: null,
+
+    openAdvancedDisplay(deviceId) {
+        this._advancedDisplayOpen = true;
+        this._advancedDisplayDeviceId = deviceId;
+        App.renderPage();
+    },
+    closeAdvancedDisplay() {
+        this._advancedDisplayOpen = false;
+        this._advancedDisplayDeviceId = null;
+        App.renderPage();
+    },
+
+    /** "100% / 100% · Medium" — most-glanceable values for the row. */
+    _buildAdvancedDisplaySummary(display) {
+        const ds = String(display.displaySize ?? '100');
+        const fs = String(display.widgetFontSize ?? '100');
+        const sis = this._labelFor(this.SIDEBAR_ICON_SIZES, String(display.sidebarIconSize ?? '1'));
+        return `${ds}% / ${fs}% · ${sis}`;
+    },
+
+    renderAdvancedDisplayModal() {
+        if (!this._advancedDisplayOpen) return '';
+        const device = DevicesPage._findDevice(this._advancedDisplayDeviceId);
+        if (!device) return '';
+        const display = device.settings?.display || {};
+        const D = DevicesDetail;
+        const body = `
+            <div style="display: flex; flex-direction: column; gap: 14px;">
+                <div class="form-group">
+                    <label class="form-label">Display Size</label>
+                    ${D._settingSelectRaw(device, 'display', 'displaySize',
+                        String(display.displaySize ?? '100'), this.DISPLAY_SIZES)}
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Font Size</label>
+                    ${D._settingSelectRaw(device, 'display', 'widgetFontSize',
+                        String(display.widgetFontSize ?? '100'), this.FONT_SIZES)}
+                </div>
+                <div class="form-group">
+                    <label class="form-label">HA Dashboard Zoom</label>
+                    ${D._settingSelectRaw(device, 'display', 'dashboardZoom',
+                        String(display.dashboardZoom ?? '100'), this.ZOOM_LEVELS)}
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Widget Zoom</label>
+                    ${D._settingSelectRaw(device, 'display', 'widgetZoom',
+                        String(display.widgetZoom ?? '100'), this.ZOOM_LEVELS)}
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Sidebar Icon Size</label>
+                    ${D._settingSelectRaw(device, 'display', 'sidebarIconSize',
+                        String(display.sidebarIconSize ?? '1'), this.SIDEBAR_ICON_SIZES)}
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Screen Off Behavior</label>
+                    ${D._settingSelectRaw(device, 'display', 'screenOffBehavior',
+                        display.screenOffBehavior || 'black_overlay', this.SCREEN_OFF_BEHAVIORS)}
+                </div>
+                ${D._settingToggleRow(device, 'display', 'autoBrightnessEnabled',
+                    'Auto Brightness', display.autoBrightnessEnabled === true)}
+            </div>
+        `;
+        return this._modal('Advanced Display Options', body, 'DevicesDetailModals.closeAdvancedDisplay()');
     },
 
     // ── Wake Word modal (account-level user_settings.ai.wakeWord) ──

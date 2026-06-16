@@ -1,5 +1,5 @@
 name: Dashie Console
-version: "0.1.114"
+version: "0.1.115"
 slug: dashie
 description: Dashie Console — manage your Dashie family dashboards from inside Home Assistant.
 url: https://github.com/jwlerch78/dashie-ha-app

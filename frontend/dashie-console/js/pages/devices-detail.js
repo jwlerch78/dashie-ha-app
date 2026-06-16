@@ -120,6 +120,7 @@ const DevicesDetail = {
             ${DevicesDetailModals.renderThemeModal()}
             ${DevicesDetailModals.renderPickerModal()}
             ${DevicesDetailModals.renderScreensaverModal()}
+            ${DevicesDetailModals.renderAdvancedDisplayModal()}
             ${DevicesDetailModals.renderVoicePersonalityModal()}
             ${DevicesDetailModals.renderWakeWordModal()}
             ${DevicesDetailModals.renderPinModal()}
@@ -300,15 +301,25 @@ const DevicesDetail = {
         if (!m) return '';
         const chips = [];
         const idAttr = DevicesPage._escape(device.device_id);
+        // Stat chips on the device page header now use the same
+        // historyLink the card stats row uses — same HA more-info-style
+        // iframe modal, just opened from inside the device page instead
+        // of the device list. Without this the chips were inert in the
+        // header even though their card equivalents opened history.
+        const slug = DevicesPage._haSlugForDevice(device.device_id);
+        const deviceLabel = device.device_name || 'Device';
+        const historyLink = (entitySuffix, label) => slug
+            ? `style="cursor: pointer;" title="${label} — open history" onclick="DevicesCard.openHistory('${slug}', '${entitySuffix}', '${DevicesPage._escape(deviceLabel + ' · ' + label)}')"`
+            : '';
         if (m.battery?.level != null) {
             const charge = m.battery.charging ? '⚡' : '🔋';
-            chips.push(`<span class="device-card-detail">${charge} ${m.battery.level}%</span>`);
+            chips.push(`<span class="device-card-detail" ${historyLink('battery', 'Battery')}>${charge} ${m.battery.level}%</span>`);
         }
         if (m.system?.ram_used_percent != null) {
-            chips.push(`<span class="device-card-detail">RAM ${m.system.ram_used_percent}%</span>`);
+            chips.push(`<span class="device-card-detail" ${historyLink('ram_usage', 'RAM')}>RAM ${m.system.ram_used_percent}%</span>`);
         }
         if (m.network?.wifi_signal_percent != null) {
-            chips.push(`<span class="device-card-detail">📶 ${m.network.wifi_signal_percent}%</span>`);
+            chips.push(`<span class="device-card-detail" ${historyLink('wifi_signal', 'Wi-Fi')}>📶 ${m.network.wifi_signal_percent}%</span>`);
         }
         const room = m.ha_area || device.ha_area;
         if (room) chips.push(`<span class="device-card-detail">🏠 ${DevicesPage._escape(room)}</span>`);

@@ -756,7 +756,7 @@ const DevicesPage = {
         const M = typeof DevicesDetailModals !== 'undefined' ? DevicesDetailModals : null;
         if (!M) return false;
         return !!(M._sleepOpen || M._displayOpen || M._themeOpen
-            || M._pickerOpen || M._screensaverOpen || M._personalityOpen
+            || M._pickerOpen || M._screensaverOpen || M._advancedDisplayOpen || M._personalityOpen
             || M._wakeWordOpen || M._pinOpen);
     },
 
