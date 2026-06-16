@@ -9,18 +9,35 @@
    Usage:
        HistoryChart.render(hostEl, {
            entityId: 'sensor.lerch_32_ram_usage',
-           label: 'Lerch 32 · RAM',
-           hours: 24,         // optional, default 24
+           hours: 24,         // optional preset, default 24
            color: '#2563eb',  // optional, default Console blue
        });
        // later:
        HistoryChart.dispose(hostEl);
 
-   State is held on hostEl._chart so the v1.1 range picker can
-   call render() again with a different `hours` without re-mounting.
+   The chart owns its own range picker (1h/3h/6h/12h/24h/3d/1w/2w/1m/custom)
+   in the toolbar — caller just opens the modal. State is held on
+   hostEl._chart so range changes only re-fetch + re-render the body,
+   not the whole shell (avoids button-flash on every change).
    ============================================================ */
 
 const HistoryChart = {
+    // --------------------------------------------------------
+    // Range presets
+    // --------------------------------------------------------
+
+    PRESETS: [
+        { hours: 1, label: '1h' },
+        { hours: 3, label: '3h' },
+        { hours: 6, label: '6h' },
+        { hours: 12, label: '12h' },
+        { hours: 24, label: '24h' },
+        { hours: 72, label: '3d' },
+        { hours: 168, label: '1w' },
+        { hours: 336, label: '2w' },
+        { hours: 720, label: '1m' },
+    ],
+
     // --------------------------------------------------------
     // Public API
     // --------------------------------------------------------
@@ -29,7 +46,6 @@ const HistoryChart = {
         if (!host) return;
         const {
             entityId,
-            label = entityId || 'History',
             hours = 24,
             color = '#2563eb',
         } = opts || {};
@@ -38,29 +54,22 @@ const HistoryChart = {
             return;
         }
 
-        // Abort any in-flight fetch from a previous render() on this host
-        // (range picker will exercise this path repeatedly).
-        if (host._chart?.abortController) {
-            host._chart.abortController.abort();
-        }
-        const abortController = new AbortController();
-        host._chart = { entityId, hours, label, color, abortController, data: null };
+        // Dispose any prior chart on this host (entityId switch).
+        if (host._chart?.abortController) host._chart.abortController.abort();
+        host._chart = {
+            entityId,
+            color,
+            mode: 'preset',
+            hours,
+            customStart: null,
+            customEnd: null,
+            abortController: null,
+            data: null,
+        };
 
-        host.innerHTML = this._shellMarkup(label);
-        const body = host.querySelector('[data-history-body]');
-        body.innerHTML = this._loadingMarkup();
-
-        try {
-            const payload = await this._fetchHistory(entityId, hours, abortController.signal);
-            // Bail if a newer render() superseded us.
-            if (host._chart?.abortController !== abortController) return;
-            host._chart.data = payload;
-            body.innerHTML = this._chartMarkup(payload, { color, hours });
-        } catch (e) {
-            if (e.name === 'AbortError') return;
-            console.warn('[HistoryChart] fetch failed:', e);
-            body.innerHTML = this._errorMarkup(e.message || 'Failed to load history');
-        }
+        host.innerHTML = this._shellMarkup();
+        this._updateActiveButton(host);
+        return this._doFetch(host);
     },
 
     dispose(host) {
@@ -71,11 +80,92 @@ const HistoryChart = {
     },
 
     // --------------------------------------------------------
-    // Fetch
+    // Range picker actions (called from button onclicks)
     // --------------------------------------------------------
 
-    async _fetchHistory(entityId, hours, signal) {
-        const qs = new URLSearchParams({ entity_id: entityId, hours: String(hours) });
+    setRange(host, hours) {
+        if (!host?._chart) return;
+        host._chart.mode = 'preset';
+        host._chart.hours = hours;
+        const customRow = host.querySelector('[data-history-custom]');
+        if (customRow) customRow.style.display = 'none';
+        this._updateActiveButton(host);
+        this._doFetch(host);
+    },
+
+    showCustom(host) {
+        if (!host?._chart) return;
+        host._chart.mode = 'custom';
+        const customRow = host.querySelector('[data-history-custom]');
+        if (!customRow) return;
+        // Pre-populate inputs if empty: default 24h ending now in local time.
+        const startInput = customRow.querySelector('[data-custom-start]');
+        const endInput = customRow.querySelector('[data-custom-end]');
+        if (startInput && !startInput.value) {
+            const end = new Date();
+            const start = new Date(end.getTime() - 24 * 3600 * 1000);
+            startInput.value = this._toLocalInputValue(start);
+            endInput.value = this._toLocalInputValue(end);
+        }
+        customRow.style.display = '';
+        this._updateActiveButton(host);
+    },
+
+    applyCustom(host) {
+        if (!host?._chart) return;
+        const customRow = host.querySelector('[data-history-custom]');
+        if (!customRow) return;
+        const startVal = customRow.querySelector('[data-custom-start]')?.value;
+        const endVal = customRow.querySelector('[data-custom-end]')?.value;
+        if (!startVal || !endVal) {
+            this._setBodyMarkup(host, this._errorMarkup('Pick a start and end time'));
+            return;
+        }
+        const start = new Date(startVal);
+        const end = new Date(endVal);
+        if (!Number.isFinite(start.getTime()) || !Number.isFinite(end.getTime()) || start >= end) {
+            this._setBodyMarkup(host, this._errorMarkup('Start must be before end'));
+            return;
+        }
+        host._chart.mode = 'custom';
+        host._chart.customStart = start.toISOString();
+        host._chart.customEnd = end.toISOString();
+        this._updateActiveButton(host);
+        this._doFetch(host);
+    },
+
+    // --------------------------------------------------------
+    // Fetch + body render
+    // --------------------------------------------------------
+
+    async _doFetch(host) {
+        const c = host._chart;
+        if (!c) return;
+        if (c.abortController) c.abortController.abort();
+        const abortController = new AbortController();
+        c.abortController = abortController;
+
+        this._setBodyMarkup(host, this._loadingMarkup());
+        try {
+            const payload = await this._fetchHistory(c, abortController.signal);
+            if (host._chart?.abortController !== abortController) return; // superseded
+            c.data = payload;
+            this._setBodyMarkup(host, this._chartMarkup(payload, c));
+        } catch (e) {
+            if (e.name === 'AbortError') return;
+            console.warn('[HistoryChart] fetch failed:', e);
+            this._setBodyMarkup(host, this._errorMarkup(e.message || 'Failed to load history'));
+        }
+    },
+
+    async _fetchHistory(c, signal) {
+        const qs = new URLSearchParams({ entity_id: c.entityId });
+        if (c.mode === 'custom' && c.customStart && c.customEnd) {
+            qs.set('start_iso', c.customStart);
+            qs.set('end_iso', c.customEnd);
+        } else {
+            qs.set('hours', String(c.hours));
+        }
         const resp = await fetch(DashieAuth._addonUrl(`/api/ha/history?${qs}`), { signal });
         const body = await resp.json().catch(() => null);
         if (!resp.ok) {
@@ -84,16 +174,47 @@ const HistoryChart = {
         return body;
     },
 
+    _setBodyMarkup(host, markup) {
+        const body = host.querySelector('[data-history-body]');
+        if (body) body.innerHTML = markup;
+    },
+
+    // --------------------------------------------------------
+    // Active-button styling
+    // --------------------------------------------------------
+
+    _updateActiveButton(host) {
+        const c = host._chart;
+        if (!c) return;
+        const buttons = host.querySelectorAll('[data-range]');
+        const activeKey = c.mode === 'custom' ? 'custom' : String(c.hours);
+        buttons.forEach(btn => {
+            const isActive = btn.dataset.range === activeKey;
+            btn.classList.toggle('history-chart__range-btn--active', isActive);
+        });
+    },
+
     // --------------------------------------------------------
     // Markup
     // --------------------------------------------------------
 
-    _shellMarkup(label) {
+    _shellMarkup() {
+        const presetButtons = this.PRESETS.map(p =>
+            `<button type="button" class="history-chart__range-btn" data-range="${p.hours}" onclick="HistoryChart.setRange(this.closest('[data-history-root]'), ${p.hours})">${p.label}</button>`
+        ).join('');
         return `
-            <div class="history-chart">
+            <div class="history-chart" data-history-root>
                 <div class="history-chart__toolbar">
-                    <strong class="history-chart__label">${this._escape(label)}</strong>
-                    <span data-history-toolbar-slot></span>
+                    <div class="history-chart__ranges">
+                        ${presetButtons}
+                        <button type="button" class="history-chart__range-btn" data-range="custom" onclick="HistoryChart.showCustom(this.closest('[data-history-root]'))">Custom</button>
+                    </div>
+                </div>
+                <div class="history-chart__custom" data-history-custom style="display: none;">
+                    <input type="datetime-local" data-custom-start class="history-chart__custom-input"/>
+                    <span style="color: #6b7280; font-size: 12px;">to</span>
+                    <input type="datetime-local" data-custom-end class="history-chart__custom-input"/>
+                    <button type="button" class="history-chart__apply-btn" onclick="HistoryChart.applyCustom(this.closest('[data-history-root]'))">Apply</button>
                 </div>
                 <div data-history-body class="history-chart__body"></div>
             </div>
@@ -108,7 +229,7 @@ const HistoryChart = {
         return `<div class="history-chart__center" style="color: #b91c1c;">${this._escape(msg)}</div>`;
     },
 
-    _chartMarkup(payload, { color, hours }) {
+    _chartMarkup(payload, chartState) {
         const samples = Array.isArray(payload?.samples) ? payload.samples : [];
         const points = this._normalizeSamples(samples);
         if (points.length === 0) {
@@ -116,7 +237,12 @@ const HistoryChart = {
         }
         const unit = payload?.unit || '';
         const currentStr = this._formatCurrent(payload?.current_state, unit);
-        const svg = this._renderSvg(points, { color, hours, unit });
+        // For SVG x-tick formatting we need to know the window in hours,
+        // which differs in custom vs preset mode.
+        const xSpanHours = chartState.mode === 'custom'
+            ? (Date.parse(payload.end_iso) - Date.parse(payload.start_iso)) / 3600 / 1000
+            : chartState.hours;
+        const svg = this._renderSvg(points, { color: chartState.color, hours: xSpanHours, unit });
         return `
             <div class="history-chart__current">${this._escape(currentStr)}</div>
             ${svg}
@@ -147,6 +273,12 @@ const HistoryChart = {
             return unit ? `${rounded}${unit === '%' ? '' : ' '}${unit}` : String(rounded);
         }
         return String(state);
+    },
+
+    _toLocalInputValue(d) {
+        // <input type="datetime-local"> wants "YYYY-MM-DDTHH:MM" in LOCAL time.
+        const pad = n => String(n).padStart(2, '0');
+        return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
     },
 
     // --------------------------------------------------------
@@ -226,7 +358,7 @@ const HistoryChart = {
 
     _formatTick(v, unit) {
         const rounded = Math.abs(v) >= 100 ? Math.round(v) : Math.round(v * 10) / 10;
-        return unit === '%' ? `${rounded}` : (unit ? `${rounded}` : `${rounded}`);
+        return `${rounded}`;
     },
 
     _xTickLabels(xMin, xMax, hours) {
@@ -241,13 +373,14 @@ const HistoryChart = {
 
     _formatXLabel(ts, hours) {
         const d = new Date(ts);
-        // Short windows: HH:MM. Longer windows: include day.
         const hh = String(d.getHours()).padStart(2, '0');
         const mm = String(d.getMinutes()).padStart(2, '0');
         if (hours <= 48) return `${hh}:${mm}`;
         const m = d.toLocaleString(undefined, { month: 'short' });
         const dd = d.getDate();
-        return `${m} ${dd} ${hh}:${mm}`;
+        if (hours <= 24 * 14) return `${m} ${dd} ${hh}:${mm}`;
+        // 2w+ ranges: drop time-of-day, it just adds noise at the daily tick scale.
+        return `${m} ${dd}`;
     },
 
     _hexToRgba(hex, alpha) {
@@ -279,8 +412,35 @@ const HistoryChart = {
     style.id = 'history-chart-styles';
     style.textContent = `
         .history-chart { display: flex; flex-direction: column; height: 100%; min-height: 320px; }
-        .history-chart__toolbar { display: flex; align-items: center; justify-content: space-between; padding: 4px 0 12px; gap: 12px; }
-        .history-chart__label { font-size: 15px; }
+        .history-chart__toolbar { display: flex; align-items: center; justify-content: flex-start; padding: 0 0 8px; gap: 12px; }
+        .history-chart__ranges { display: flex; gap: 4px; flex-wrap: wrap; }
+        .history-chart__range-btn {
+            font-size: 12px; padding: 4px 10px;
+            border: 1px solid #d1d5db; border-radius: 4px;
+            background: #fff; color: #374151; cursor: pointer;
+            font-family: inherit; line-height: 1.2;
+        }
+        .history-chart__range-btn:hover { background: #f3f4f6; }
+        .history-chart__range-btn--active {
+            background: #2563eb; border-color: #2563eb; color: #fff;
+        }
+        .history-chart__range-btn--active:hover { background: #1d4ed8; }
+        .history-chart__custom {
+            display: flex; align-items: center; gap: 8px;
+            padding: 4px 0 12px;
+        }
+        .history-chart__custom-input {
+            font-size: 12px; padding: 4px 6px;
+            border: 1px solid #d1d5db; border-radius: 4px;
+            font-family: inherit;
+        }
+        .history-chart__apply-btn {
+            font-size: 12px; padding: 4px 12px;
+            border: 1px solid #2563eb; border-radius: 4px;
+            background: #2563eb; color: #fff; cursor: pointer;
+            font-family: inherit;
+        }
+        .history-chart__apply-btn:hover { background: #1d4ed8; }
         .history-chart__body { flex: 1; display: flex; flex-direction: column; gap: 8px; min-height: 0; }
         .history-chart__center { flex: 1; display: flex; align-items: center; justify-content: center; color: #6b7280; font-size: 13px; padding: 32px 16px; }
         .history-chart__current { font-size: 28px; font-weight: 600; color: #111827; padding: 4px 0 8px; }

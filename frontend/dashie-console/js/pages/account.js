@@ -6,6 +6,7 @@ const AccountPage = {
     _data: null,
     _loading: false,
     _error: null,
+    _sharing: null,          // { householdSharing } — add-on mode only
     _activeTab: 'account',   // 'account' | 'usage'
 
     setTab(tab) {
@@ -92,6 +93,16 @@ const AccountPage = {
                 auth_user_id: DashieAuth.jwtUserId,
             });
             this._data = response;
+            // Household-sharing opt-in lives in the add-on only; fetch it so the
+            // toggle reflects the persisted state. Best-effort (non-fatal).
+            if (DashieAuth.isAddonMode) {
+                try {
+                    const s = await fetch(DashieAuth._addonUrl('/api/settings')).then(r => r.ok ? r.json() : null);
+                    this._sharing = s || { householdSharing: false };
+                } catch (e) {
+                    this._sharing = { householdSharing: false };
+                }
+            }
             this._loading = false;
             App.renderPage();
         } catch (e) {
@@ -131,6 +142,50 @@ const AccountPage = {
         this._error = null;
         this._data = null;
         App.renderPage();
+    },
+
+    /** Household Dashie Cloud sharing toggle — add-on mode only. Controls whether
+     *  un-logged-in tablets / voice satellites on this network may use this
+     *  account's cloud voice (billed to its credits). See add-on settings-store. */
+    _renderHouseholdSharing() {
+        if (!DashieAuth.isAddonMode) return '';
+        const enabled = this._sharing?.householdSharing === true;
+        return `
+            <div class="section-header" style="margin-top: 32px;">Household Dashie Cloud Sharing</div>
+            <div class="card">
+                <div class="card-body">
+                    <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:16px; flex-wrap:wrap;">
+                        <div style="flex:1; min-width:240px;">
+                            <div style="font-weight:500; margin-bottom:6px;">Let kiosk tablets &amp; voice satellites use this account</div>
+                            <div style="color: var(--text-secondary); font-size: var(--font-size-sm); line-height:1.5;">
+                                When on, un-logged-in Dashie tablets and Home Assistant voice satellites on this network can use this account's Dashie Cloud voice — premium AI answers and personality voices. Usage draws on <strong>your</strong> credits. You can turn this off any time.
+                            </div>
+                        </div>
+                        <button class="btn ${enabled ? 'btn-primary' : 'btn-secondary'}" id="household-sharing-btn"
+                            onclick="AccountPage.toggleHouseholdSharing(${!enabled})" style="flex-shrink:0;">
+                            ${enabled ? 'Sharing On' : 'Sharing Off'}
+                        </button>
+                    </div>
+                </div>
+            </div>
+        `;
+    },
+
+    async toggleHouseholdSharing(enabled) {
+        try {
+            const resp = await fetch(DashieAuth._addonUrl('/api/settings/household-sharing'), {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ enabled }),
+            });
+            if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+            const data = await resp.json();
+            this._sharing = { householdSharing: data.householdSharing };
+            App.renderPage();
+        } catch (e) {
+            console.error('[AccountPage] Toggle household sharing failed:', e);
+            alert('Could not update sharing setting: ' + e.message);
+        }
     },
 
     _renderLoaded() {
@@ -222,6 +277,8 @@ const AccountPage = {
                     </div>
                 </div>
             ` : ''}
+
+            ${this._renderHouseholdSharing()}
 
             <div class="section-header" style="color: var(--status-error, #c00); margin-top: 32px;">Danger Zone</div>
             <div class="card" style="border-color: var(--status-error, #c00);">

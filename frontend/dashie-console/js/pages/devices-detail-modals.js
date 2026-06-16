@@ -4,7 +4,7 @@
    Mirrors the Kotlin DisplayPageSchema: three sub-section cards
    (Dashboard / Screen Management / Display Preferences) each
    containing summary-rows. Click → modal in this file. Inline
-   toggles (Animations, Auto Brightness) skip the modal layer.
+   toggles (Animations) skip the modal layer.
 
    Modal taxonomy:
      - Sleep modal: composite (mode + schedule + inactivity + options)

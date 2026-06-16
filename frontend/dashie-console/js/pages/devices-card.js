@@ -278,19 +278,23 @@ const DevicesCard = {
     _renderStatsRow(device, idAttr, m) {
         const chips = [];
         const slug = DevicesPage._haSlugForDevice(device.device_id);
+        const entityIds = DevicesPage._haEntityIdsForDevice(device.device_id);
         const deviceLabel = device.device_name || 'Device';
-        // Battery / RAM / Wi-Fi chips are clickable when we know the slug — opens
-        // a Console-native history chart in a modal (data fetched from HA via the
-        // add-on's /api/ha/history proxy, no iframe / HA sidebar).
-        // When the slug isn't known, stopPropagation so clicking the chip
-        // doesn't bubble up to the card's showDetail handler (user expects
-        // "click metric → see history or nothing," not a page switch).
-        // TODO: once the integration thread surfaces per-metric entity_ids
-        // on freshDevices, drop slug-based construction and pass the real
-        // entity_id directly so partial-migration devices also work.
-        const historyLink = (entitySuffix, label) => slug
-            ? `style="cursor: pointer;" title="${label} — open history" onclick="event.stopPropagation(); DevicesCard.openHistory('sensor.${slug}_${entitySuffix}', '${DevicesPage._escape(deviceLabel + ' · ' + label)}')"`
-            : `onclick="event.stopPropagation()"`;
+        // Battery / RAM / Wi-Fi chips: open a Console-native history chart
+        // (data via /api/ha/history). Use the worker-resolved entity_id when
+        // available (correct even for partial-migration devices like Mio 15"
+        // whose entity_id slug doesn't match the anchor slug). Fall back to
+        // sensor.<slug>_<suffix> reconstruction for the boot-time window
+        // before the worker has populated entity_ids.
+        // When neither path produces a usable entity_id, stopPropagation
+        // so clicking the chip doesn't bubble up to the card's showDetail
+        // handler (user expects "click metric → see history or nothing,"
+        // not a page switch).
+        const historyLink = (role, label) => {
+            const entityId = entityIds[role] || (slug ? `sensor.${slug}_${role}` : null);
+            if (!entityId) return `onclick="event.stopPropagation()"`;
+            return `style="cursor: pointer;" title="${label} — open history" onclick="event.stopPropagation(); DevicesCard.openHistory('${entityId}', '${DevicesPage._escape(deviceLabel + ' · ' + label)}')"`;
+        };
         if (m.battery?.level != null) {
             const charge = m.battery.charging ? '⚡' : '🔋';
             chips.push(`<span class="device-card-detail" ${historyLink('battery', 'Battery')}>${charge} ${m.battery.level}%</span>`);

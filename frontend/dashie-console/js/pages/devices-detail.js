@@ -304,11 +304,18 @@ const DevicesDetail = {
         // Stat chips on the device page header use the same historyLink
         // the card stats row uses — opens the Console-native history chart
         // modal (HistoryChart + /api/ha/history), no iframe / HA sidebar.
+        // Prefer worker-resolved entity_id; fall back to slug + suffix
+        // reconstruction during the boot window before the worker has
+        // populated entity_ids.
         const slug = DevicesPage._haSlugForDevice(device.device_id);
+        const entityIds = DevicesPage._haEntityIdsForDevice(device.device_id);
         const deviceLabel = device.device_name || 'Device';
-        const historyLink = (entitySuffix, label) => slug
-            ? `style="cursor: pointer;" title="${label} — open history" onclick="DevicesCard.openHistory('sensor.${slug}_${entitySuffix}', '${DevicesPage._escape(deviceLabel + ' · ' + label)}')"`
-            : '';
+        const historyLink = (role, label) => {
+            const entityId = entityIds[role] || (slug ? `sensor.${slug}_${role}` : null);
+            return entityId
+                ? `style="cursor: pointer;" title="${label} — open history" onclick="DevicesCard.openHistory('${entityId}', '${DevicesPage._escape(deviceLabel + ' · ' + label)}')"`
+                : '';
+        };
         if (m.battery?.level != null) {
             const charge = m.battery.charging ? '⚡' : '🔋';
             chips.push(`<span class="device-card-detail" ${historyLink('battery', 'Battery')}>${charge} ${m.battery.level}%</span>`);
@@ -605,7 +612,7 @@ const DevicesDetail = {
      *  DisplayPageSchema: three sub-section cards (Dashboard / Screen
      *  Management / Display Preferences). Each row is a summary +
      *  chevron → opens a modal owned by DevicesDetailModals. Inline
-     *  toggles (Animations, Auto Brightness) skip the modal layer. */
+     *  toggles (Animations) skip the modal layer. */
     _renderDisplaySection(device, display, sleep) {
         const body = DevicesDetailModals.renderDisplayBody(device, display, sleep);
         return this._section('display', 'Display', body);
@@ -714,7 +721,10 @@ const DevicesDetail = {
         const switches = [
             { role: 'screensaver',            label: 'Screensaver',              description: 'Show photo slideshow during sleep' },
             { role: 'keep_screen_on',         label: 'Keep Screen On',           description: 'Prevent sleep while in use' },
-            { role: 'auto_brightness',        label: 'Auto Brightness',          description: 'Adjust brightness based on ambient light' },
+            // Auto Brightness lives in Advanced Display Options modal — no
+            // need to duplicate it here. (Was alongside Hide Sidebar / Hide
+            // Tabs / Start on Boot in the behavior list before the Advanced
+            // Display Options modal existed.)
             { role: 'hide_sidebar',           label: 'Hide Sidebar',             description: 'Maximize widget area' },
             { role: 'hide_tabs',              label: 'Hide Tabs',                description: 'Remove dashboard tabs' },
             { role: 'start_on_boot',          label: 'Start on Boot',            description: 'Launch Dashie when the device powers on' },

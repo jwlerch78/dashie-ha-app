@@ -407,6 +407,17 @@ const DevicesPage = {
         return entry?.ha_slug || null;
     },
 
+    /** Map of role → resolved entity_id for a device, sourced from the
+     *  worker's freshDevices entry. Lets history-chart deep links use
+     *  the *actual* entity_id HA holds (which may not match the anchor's
+     *  slug + role suffix on partial-migration devices). Returns {} when
+     *  the worker hasn't seen the device yet — caller should fall back
+     *  to slug+suffix construction in that case. */
+    _haEntityIdsForDevice(deviceId) {
+        const fresh = this._freshDeviceFor(deviceId);
+        return fresh?.entity_ids || {};
+    },
+
     /** The worker's freshly-extracted per-device record (every 5s), with any
      *  live SSE overrides merged in. The merge maps state_changed events to
      *  the relevant slots in metrics.controls / metrics.presence. */
