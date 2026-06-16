@@ -807,6 +807,17 @@ const DevicesPage = {
 
     _escape(str) {
         if (!str) return '';
-        return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+        // Escape both quote characters too — values get inlined into HTML
+        // attribute contexts (onclick="…", title="…"), and an unescaped
+        // " or ' closes the attribute mid-string. Device names like
+        // "Lerch Kitchen 15\"" with the literal inch mark were breaking
+        // the chip onclick handler — the openHistory call got truncated
+        // and clicking the chip silently did nothing.
+        return String(str)
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#39;');
     },
 };
