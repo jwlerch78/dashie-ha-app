@@ -301,15 +301,13 @@ const DevicesDetail = {
         if (!m) return '';
         const chips = [];
         const idAttr = DevicesPage._escape(device.device_id);
-        // Stat chips on the device page header now use the same
-        // historyLink the card stats row uses — same HA more-info-style
-        // iframe modal, just opened from inside the device page instead
-        // of the device list. Without this the chips were inert in the
-        // header even though their card equivalents opened history.
+        // Stat chips on the device page header use the same historyLink
+        // the card stats row uses — opens the Console-native history chart
+        // modal (HistoryChart + /api/ha/history), no iframe / HA sidebar.
         const slug = DevicesPage._haSlugForDevice(device.device_id);
         const deviceLabel = device.device_name || 'Device';
         const historyLink = (entitySuffix, label) => slug
-            ? `style="cursor: pointer;" title="${label} — open history" onclick="DevicesCard.openHistory('${slug}', '${entitySuffix}', '${DevicesPage._escape(deviceLabel + ' · ' + label)}')"`
+            ? `style="cursor: pointer;" title="${label} — open history" onclick="DevicesCard.openHistory('sensor.${slug}_${entitySuffix}', '${DevicesPage._escape(deviceLabel + ' · ' + label)}')"`
             : '';
         if (m.battery?.level != null) {
             const charge = m.battery.charging ? '⚡' : '🔋';

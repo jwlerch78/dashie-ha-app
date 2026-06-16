@@ -279,15 +279,17 @@ const DevicesCard = {
         const chips = [];
         const slug = DevicesPage._haSlugForDevice(device.device_id);
         const deviceLabel = device.device_name || 'Device';
-        // Battery / RAM / Wi-Fi chips are clickable when we know the slug → opens
-        // HA's history view in a Console modal (iframe), same origin as HA via Ingress.
-        // Even when the slug isn't known (worker hasn't synced this
-        // device's HA entities yet), stopPropagation so clicking the
-        // chip doesn't bubble up to the card's showDetail handler —
-        // user expects "click the metric → see history or nothing,"
-        // not "click the metric → end up on a different page."
+        // Battery / RAM / Wi-Fi chips are clickable when we know the slug — opens
+        // a Console-native history chart in a modal (data fetched from HA via the
+        // add-on's /api/ha/history proxy, no iframe / HA sidebar).
+        // When the slug isn't known, stopPropagation so clicking the chip
+        // doesn't bubble up to the card's showDetail handler (user expects
+        // "click metric → see history or nothing," not a page switch).
+        // TODO: once the integration thread surfaces per-metric entity_ids
+        // on freshDevices, drop slug-based construction and pass the real
+        // entity_id directly so partial-migration devices also work.
         const historyLink = (entitySuffix, label) => slug
-            ? `style="cursor: pointer;" title="${label} — open history" onclick="event.stopPropagation(); DevicesCard.openHistory('${slug}', '${entitySuffix}', '${DevicesPage._escape(deviceLabel + ' · ' + label)}')"`
+            ? `style="cursor: pointer;" title="${label} — open history" onclick="event.stopPropagation(); DevicesCard.openHistory('sensor.${slug}_${entitySuffix}', '${DevicesPage._escape(deviceLabel + ' · ' + label)}')"`
             : `onclick="event.stopPropagation()"`;
         if (m.battery?.level != null) {
             const charge = m.battery.charging ? '⚡' : '🔋';
@@ -725,23 +727,30 @@ const DevicesCard = {
         `;
     },
 
-    // History modal: HA's /history view in an iframe (same origin via Ingress).
-    openHistory(slug, entitySuffix, label) {
-        const entityId = `sensor.${slug}_${entitySuffix}`;
-        this._historyOpen = { entityId, label: label || entityId };
+    // History modal: Console-native SVG chart rendered by HistoryChart,
+    // data fetched from HA via the add-on's /api/ha/history proxy. No
+    // iframe / sidebar / HACS dependency. The chart host is mounted
+    // declaratively by renderHistoryModal(); _mountHistoryChart() runs
+    // post-render to call HistoryChart.render() on the live DOM node.
+    openHistory(entityId, label) {
+        this._historyOpen = { entityId, label: label || entityId, hours: 24 };
         App.renderPage();
+        // App.renderPage is synchronous — DOM is in place by the time the
+        // microtask flush happens. Defer to next tick so we run AFTER any
+        // page-render side effects have settled.
+        queueMicrotask(() => this._mountHistoryChart());
     },
 
-    closeHistory() { this._historyOpen = null; App.renderPage(); },
+    closeHistory() {
+        const host = document.getElementById('history-chart-host');
+        if (host && typeof HistoryChart !== 'undefined') HistoryChart.dispose(host);
+        this._historyOpen = null;
+        App.renderPage();
+    },
 
     renderHistoryModal() {
         const h = this._historyOpen;
         if (!h) return '';
-        // HA's `kiosk` query param hides the sidebar so the iframe is
-        // just the chart + entity controls (the "dedicated view" the
-        // user gets when clicking an entity from the integration UI),
-        // not the full History page with HA's sidebar inline.
-        const url = `/history?entity_id=${encodeURIComponent(h.entityId)}&kiosk`;
         return `
             <div onclick="DevicesCard._maybeCloseHistory(event)" style="position: fixed; inset: 0; background: rgba(0,0,0,0.55); z-index: 1100; display: flex; align-items: center; justify-content: center; padding: 24px;">
                 <div onclick="event.stopPropagation()" class="card" style="width: min(960px, 95vw); max-height: 90vh; display: flex; flex-direction: column;">
@@ -749,10 +758,22 @@ const DevicesCard = {
                         <strong>${DevicesPage._escape(h.label)}</strong>
                         <button onclick="DevicesCard.closeHistory()" style="background: none; border: 1px solid var(--border, #d1d5db); border-radius: 4px; padding: 4px 12px; cursor: pointer;">Close</button>
                     </div>
-                    <iframe src="${url}" style="flex: 1; min-height: 70vh; border: 0; border-radius: 0 0 6px 6px;"></iframe>
+                    <div id="history-chart-host" style="flex: 1; min-height: 60vh; padding: 16px; overflow: auto;"></div>
                 </div>
             </div>
         `;
+    },
+
+    _mountHistoryChart() {
+        const h = this._historyOpen;
+        if (!h) return;
+        const host = document.getElementById('history-chart-host');
+        if (!host || typeof HistoryChart === 'undefined') return;
+        HistoryChart.render(host, {
+            entityId: h.entityId,
+            label: h.label,
+            hours: h.hours || 24,
+        });
     },
 
     _maybeCloseHistory(e) { if (e.target === e.currentTarget) this.closeHistory(); },
