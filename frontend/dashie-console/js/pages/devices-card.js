@@ -281,9 +281,14 @@ const DevicesCard = {
         const deviceLabel = device.device_name || 'Device';
         // Battery / RAM / Wi-Fi chips are clickable when we know the slug → opens
         // HA's history view in a Console modal (iframe), same origin as HA via Ingress.
+        // Even when the slug isn't known (worker hasn't synced this
+        // device's HA entities yet), stopPropagation so clicking the
+        // chip doesn't bubble up to the card's showDetail handler —
+        // user expects "click the metric → see history or nothing,"
+        // not "click the metric → end up on a different page."
         const historyLink = (entitySuffix, label) => slug
             ? `style="cursor: pointer;" title="${label} — open history" onclick="event.stopPropagation(); DevicesCard.openHistory('${slug}', '${entitySuffix}', '${DevicesPage._escape(deviceLabel + ' · ' + label)}')"`
-            : '';
+            : `onclick="event.stopPropagation()"`;
         if (m.battery?.level != null) {
             const charge = m.battery.charging ? '⚡' : '🔋';
             chips.push(`<span class="device-card-detail" ${historyLink('battery', 'Battery')}>${charge} ${m.battery.level}%</span>`);

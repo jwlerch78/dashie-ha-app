@@ -172,12 +172,12 @@ const DevicesDetailModals = {
                 this._summaryRow('Wake Mode',
                     this._labelFor(this.WAKE_MODES, display.motionWakeMode || 'disabled'),
                     `DevicesDetailModals.openPicker('${idAttr}','display','motionWakeMode','Wake Mode','WAKE_MODES','disabled')`),
-                // All the granular Display Preferences (zooms, font/display
-                // size, sidebar icon size, screen-off, auto brightness)
-                // collapse into one row → modal. Summary surfaces the
-                // most-glanceable values so the row isn't just "›".
-                this._summaryRow('Advanced Display Options',
-                    this._buildAdvancedDisplaySummary(display),
+                // Granular Display Preferences (zooms, display/font size,
+                // sidebar icon size, screen-off, auto brightness) collapse
+                // into one row → modal. Summary text intentionally blank
+                // — the modal has six+ values and surfacing any subset on
+                // the row was just noise the user has to parse.
+                this._summaryRow('Advanced Display Options', '',
                     `DevicesDetailModals.openAdvancedDisplay('${idAttr}')`),
             ].join(''))}
         `;
