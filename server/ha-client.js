@@ -100,6 +100,33 @@ async function getHistory(entityId, startISO, endISO) {
     return Array.isArray(data[0]) ? data[0] : [];
 }
 
+/** GET the HA-local voice transcripts the Dashie integration stores
+ *  (.storage/dashie.voice_transcripts). Used by the Console to show kiosk
+ *  voice history. Returns the parsed { transcripts: [...] } body. */
+async function getTranscripts(limit = 100) {
+    const config = getConfig();
+    if (!config) throw new Error('HA client not configured');
+    const url = `${config.baseUrl}/api/dashie/voice/transcripts?limit=${encodeURIComponent(limit)}`;
+    const resp = await fetch(url, {
+        headers: { Authorization: `Bearer ${config.token}` },
+    });
+    if (!resp.ok) throw new Error(`/api/dashie/voice/transcripts: HTTP ${resp.status}`);
+    return resp.json();
+}
+
+/** DELETE all HA-local voice transcripts. Returns { cleared: <count> }. */
+async function clearTranscripts() {
+    const config = getConfig();
+    if (!config) throw new Error('HA client not configured');
+    const url = `${config.baseUrl}/api/dashie/voice/transcripts`;
+    const resp = await fetch(url, {
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${config.token}` },
+    });
+    if (!resp.ok) throw new Error(`/api/dashie/voice/transcripts DELETE: HTTP ${resp.status}`);
+    return resp.json();
+}
+
 module.exports = {
     getConfig,
     isAvailable,
@@ -107,4 +134,6 @@ module.exports = {
     getStates,
     getState,
     getHistory,
+    getTranscripts,
+    clearTranscripts,
 };
