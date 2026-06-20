@@ -67,6 +67,13 @@ const HistoryChart = {
             data: null,
         };
 
+        // Mark the host itself with data-history-root so buttons inside
+        // the shell can find it via this.closest('[data-history-root]').
+        // The _chart state lives on the host, not on the inner shell div
+        // — without this attribute the buttons would walk up only as far
+        // as the (state-less) shell div and setRange/showCustom would
+        // bail at the !host?._chart guard.
+        host.setAttribute('data-history-root', '');
         host.innerHTML = this._shellMarkup();
         this._updateActiveButton(host);
         return this._doFetch(host);
@@ -202,8 +209,10 @@ const HistoryChart = {
         const presetButtons = this.PRESETS.map(p =>
             `<button type="button" class="history-chart__range-btn" data-range="${p.hours}" onclick="HistoryChart.setRange(this.closest('[data-history-root]'), ${p.hours})">${p.label}</button>`
         ).join('');
+        // NB: data-history-root is set on the OUTER host by render(),
+        // not on this inner div — see comment in render() for why.
         return `
-            <div class="history-chart" data-history-root>
+            <div class="history-chart">
                 <div class="history-chart__toolbar">
                     <div class="history-chart__ranges">
                         ${presetButtons}

@@ -37,6 +37,8 @@ The user said: "{{USER_REQUEST}}"
 
 Note: Speech-to-text may not be entirely accurate.
 
+If the request is empty, garbled, or has no clear intent, it is likely background noise or a wake-word misfire — reply only with "Sorry, I didn't catch that." Do NOT ask a clarifying question and do NOT guess what was meant (asking a question on noise creates a loop).
+
 Write your response as if speaking directly to the user. Use "you" to address them, not "the user".
 `;
 
@@ -373,13 +375,33 @@ This appears to be a request that requires information from the web.
 3. If results are insufficient or unclear, acknowledge limitations
 4. Always provide family-friendly content
 
+## Response Guidelines
+
+- **Lead with the direct answer** in one or two sentences — answer only what was asked.
+- **Synthesize, don't recite** — never read out source names, URLs, or "according to…" preambles.
+- **Spoken-friendly** — conversational plain sentences; no lists, headings, or bullets.
+- **No commentary or sign-off** — skip "Hope that helps!", opinions, and filler.
+- **Add at most one sentence of detail** only if it materially helps; otherwise stop.
+- **If the results don't answer it**, say so briefly rather than guessing.
+
+## Example Questions and Responses
+
+**"Who won the game last night?"**
+- Voice: "The Eagles beat the Cowboys, 24 to 17."
+
+**"How tall is the Eiffel Tower?"**
+- Voice: "About 330 meters — just over a thousand feet."
+
+**"Fun fact about otters?"**
+- Voice: "Otters hold hands while they sleep so they don't drift apart."
+
 ## Search Results
 
 \`\`\`json
 {{SEARCH_RESULTS}}
 \`\`\`
 
-Please provide a helpful response based on these search results.
+Provide a helpful, spoken-friendly response based on these search results. Lead with the direct answer; do not mention sources or URLs.
 `;
 
     const INQUIRY_CALENDAR_EVENTS = `# Inquiry Context: Calendar Events

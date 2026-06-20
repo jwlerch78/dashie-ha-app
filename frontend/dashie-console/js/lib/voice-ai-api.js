@@ -25,6 +25,7 @@ const VoiceAiApi = {
         ['ai', 'retrievePicturesEnabled'],
         ['ai', 'conversationContextEnabled'],
         ['ai', 'conversationTimeout'],
+        ['ai', 'retainTranscripts'],
         ['voice', 'alwaysUseAI'],
     ],
 
@@ -34,6 +35,7 @@ const VoiceAiApi = {
         'ai.retrievePicturesEnabled': false,
         'ai.conversationContextEnabled': false,
         'ai.conversationTimeout': 30,
+        'ai.retainTranscripts': false,
         'voice.alwaysUseAI': false,
     },
 

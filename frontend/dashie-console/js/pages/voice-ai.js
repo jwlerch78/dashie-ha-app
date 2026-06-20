@@ -25,10 +25,10 @@ const VoiceAiPage = {
     _error: null,
     _savingKey: null,       // dotted key currently saving (for inline "saving…")
     _syncRegistered: false,
-    _activeTab: 'settings', // 'settings' | 'chat'
+    _activeTab: 'settings', // 'settings' | 'chat' | 'analysis'
 
     setTab(tab) {
-        if (tab !== 'settings' && tab !== 'chat') return;
+        if (tab !== 'settings' && tab !== 'chat' && tab !== 'analysis') return;
         this._activeTab = tab;
         if (tab === 'chat' && typeof VoiceAiChat !== 'undefined' && !VoiceAiChat._open) {
             VoiceAiChat.open();
@@ -63,6 +63,13 @@ const VoiceAiPage = {
             return `${tabBar}${chatHtml}${editorHtml}`;
         }
 
+        if (this._activeTab === 'analysis') {
+            const html = (typeof VoiceAiAnalysis !== 'undefined')
+                ? VoiceAiAnalysis.render()
+                : `<div style="color: var(--text-muted); padding: 40px 0; text-align: center;">Analysis unavailable.</div>`;
+            return `${tabBar}${html}${editorHtml}`;
+        }
+
         if (!this._defaults && !this._loading && !this._error) {
             this._fetch();
             return `${tabBar}${this._renderLoading()}${editorHtml}`;
@@ -91,6 +98,7 @@ const VoiceAiPage = {
             <div style="display: flex; gap: 24px; border-bottom: 1px solid var(--border, #d1d5db); margin-bottom: 20px; max-width: 760px;">
                 ${tab('settings', 'Voice & AI Settings')}
                 ${tab('chat', 'AI Chat Interface')}
+                ${tab('analysis', 'Dashie Intelligence Analysis')}
             </div>`;
     },
 

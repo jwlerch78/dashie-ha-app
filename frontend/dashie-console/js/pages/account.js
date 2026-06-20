@@ -52,7 +52,7 @@ const AccountPage = {
         return `
             <div style="display: flex; gap: 24px; border-bottom: 1px solid var(--border, #d1d5db); margin-bottom: 20px; max-width: 800px;">
                 ${tab('account', 'Account')}
-                ${tab('usage', 'Token Usage')}
+                ${tab('usage', 'Credit Usage')}
             </div>`;
     },
 

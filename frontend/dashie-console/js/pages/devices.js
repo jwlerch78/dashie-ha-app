@@ -189,6 +189,11 @@ const DevicesPage = {
             this._startAutoRefresh();
             DevicesEvents.start();
             App.renderPage();
+            // If the add-on just restarted (e.g. after a version bump) the
+            // worker hasn't completed its first poll yet — freshDevices is
+            // empty and chips would be inert until the 30s auto-refresh.
+            // Fast-retry until we see live data.
+            this._pollUntilFreshDevices();
         } catch (e) {
             console.error('[DevicesPage] Fetch failed:', e);
             this._error = e.message;
@@ -315,6 +320,29 @@ const DevicesPage = {
         const age = Date.now() - this._haStatusFetchedAt;
         if (age < this.HA_STATUS_MAX_AGE_MS) return;
         this._fetchAddonStatus().then(() => App.renderPage());
+    },
+
+    /** Fast retry of /api/ha/status during the boot window before the worker
+     *  has done its first poll (3s startup delay + ~1s poll latency on the
+     *  add-on side). Without this, freshDevices stays empty for up to
+     *  AUTO_REFRESH_MS (30s) on a fresh add-on restart, which makes the
+     *  metric chips look broken (entity_ids empty → click no-ops). Runs
+     *  at most a handful of times then yields to the normal auto-refresh. */
+    _pollUntilFreshDevices(attempt = 0) {
+        const MAX_ATTEMPTS = 6;     // ~12s total
+        const DELAY_MS = 2000;
+        const fresh = this._haStatus?.lastRun?.freshDevices;
+        if (Array.isArray(fresh) && fresh.length > 0) return;
+        if (attempt >= MAX_ATTEMPTS) return;
+        setTimeout(() => {
+            // Bypass HA_STATUS_MAX_AGE_MS — we want a fresh fetch, not
+            // the cached "fetched <15s ago" result.
+            this._haStatusFetchedAt = 0;
+            this._fetchAddonStatus().then(() => {
+                App.renderPage();
+                this._pollUntilFreshDevices(attempt + 1);
+            });
+        }, DELAY_MS);
     },
 
     _findDevice(deviceId) {
