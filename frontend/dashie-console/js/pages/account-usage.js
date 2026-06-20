@@ -29,22 +29,50 @@
 const AccountUsage = {
     _balance: null,            // {balance, lifetime_granted, is_admin}
     _summary: null,            // {range_start, range_end, by_service: [...]}
-    _daily: null,              // {days: [{date, by_service: [...]}]}
+    _daily: null,              // {days: [...]} for the SELECTED range (breakdown card)
+    _monthDaily: null,         // {days: [...]} always current month — powers the range-independent stat cards
+    _rates: null,              // {rates: [...]} margined customer rate card for the pricing table
+    _expiry: null,             // {next_expiry:{amount,expires_at}, lots:[...]} — get_credit_expiry
+    _autorefill: null,         // {enabled, threshold_usd, topup_usd, has_card, last_error} — get_autorefill
+    _busy: false,              // a buy / auto-replenish action is in flight
+    _autorefillError: null,    // last set_autorefill error (e.g. "buy a pack first")
+    _flash: null,              // transient banner (e.g. after returning from Stripe)
     _activeRange: '30d',       // 'today' | '7d' | '30d' | 'month' | 'custom'
     _customStart: null,
     _customEnd: null,
     _loading: false,
     _error: null,
 
-    /** Inline-expanded daily rows: Map<dateString, {loading, calls?, error?}> */
+    /** Inline-expanded daily rows: Map<dateString, {loading, interactions?, error?}> */
     _expandedDays: new Map(),
+    /** Inline-expanded voice-interaction rows, by interaction key. */
+    _expandedInteractions: new Set(),
+    /** Expanded service groups in the summary card (collapsed by default). */
+    _expandedServices: new Set(),
 
     /** Admin form state. */
     _adminForm: { open: false, email: '', amount: '', note: '', busy: false, error: null },
 
     // ── lifecycle ─────────────────────────────────────────────
 
-    onNavigateTo() { this._fetchAll(); },
+    onNavigateTo() { this._checkReturn(); this._fetchAll(); },
+
+    /** After returning from Stripe Checkout (?credits=success), show a banner and
+     *  strip the param. The grant lands via webhook (async), so the balance may
+     *  take a moment — _fetchAll re-reads it. */
+    _checkReturn() {
+        try {
+            const params = new URLSearchParams(window.location.search);
+            const c = params.get('credits');
+            if (c === 'success') this._flash = 'Payment received — your credits will appear in a moment.';
+            else if (c === 'cancel') this._flash = 'Checkout canceled — no charge.';
+            if (c) {
+                params.delete('credits');
+                const clean = window.location.pathname + (params.toString() ? '?' + params.toString() : '');
+                window.history.replaceState({}, '', clean);
+            }
+        } catch { /* ignore */ }
+    },
 
     async _fetchAll() {
         this._loading = true;
@@ -52,14 +80,28 @@ const AccountUsage = {
         App.renderPage();
         try {
             const { start, end } = this._rangeBounds();
-            const [bal, sum, daily] = await Promise.all([
+            const tz = this._tz();
+            // Stat cards (Today / This month) must be range-INDEPENDENT, so fetch
+            // the current month's daily separately from the selected-range data.
+            const now = new Date();
+            const monthStart = new Date(now.getFullYear(), now.getMonth(), 1).toISOString();
+            const nowIso = now.toISOString();
+            const [bal, sum, daily, monthDaily, rates, expiry, autorefill] = await Promise.all([
                 DashieAuth.dbRequest('get_credit_balance', {}),
-                DashieAuth.dbRequest('get_usage_summary', { range_start: start, range_end: end }),
-                DashieAuth.dbRequest('get_usage_daily',   { range_start: start, range_end: end }),
+                DashieAuth.dbRequest('get_usage_summary', { range_start: start, range_end: end, tz }),
+                DashieAuth.dbRequest('get_usage_daily',   { range_start: start, range_end: end, tz }),
+                DashieAuth.dbRequest('get_usage_daily',   { range_start: monthStart, range_end: nowIso, tz }),
+                DashieAuth.dbRequest('get_credit_rates',  {}).catch(() => null),
+                DashieAuth.dbRequest('get_credit_expiry', {}).catch(() => null),
+                DashieAuth.dbRequest('get_autorefill',    {}).catch(() => null),
             ]);
             this._balance = bal;
             this._summary = sum;
             this._daily = daily;
+            this._monthDaily = monthDaily;
+            this._rates = rates;
+            this._expiry = expiry;
+            this._autorefill = autorefill;
             // Share the freshly-fetched balance with the sidebar so its
             // bottom-left widget never disagrees with the stat strip on
             // this page. CreditsService re-renders the sidebar in-place.
@@ -100,11 +142,11 @@ const AccountUsage = {
         let start;
         switch (this._activeRange) {
             case 'today': {
-                const s = new Date(now); s.setUTCHours(0, 0, 0, 0); start = s.toISOString(); break;
+                const s = new Date(now); s.setHours(0, 0, 0, 0); start = s.toISOString(); break;  // local midnight
             }
             case '7d':    start = new Date(now.getTime() - 7 * 86400_000).toISOString(); break;
             case 'month': {
-                const s = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
+                const s = new Date(now.getFullYear(), now.getMonth(), 1);  // local month start
                 start = s.toISOString(); break;
             }
             case 'custom':
@@ -132,22 +174,11 @@ const AccountUsage = {
      *  has no token columns, so the fallback only produces a number for
      *  ai/web_search. */
     _costForRow(row) {
-        if (!row) return 0;
-        if (Number(row.actual_cost_usd) > 0) return Number(row.actual_cost_usd);
-
-        const C = window.AiModelCatalog;
-        if (!C) return 0;
-        if (row.service === 'ai') {
-            const rates = row.model ? C.pricingFor(row.model) : null;
-            if (!rates) return 0;
-            return ((row.input_tokens || 0) * rates[0] + (row.output_tokens || 0) * rates[1]) / 1_000_000;
-        }
-        if (row.service === 'web_search') {
-            return C.searchCost({ provider: row.provider, count: row.call_count || 0 });
-        }
-        // tts/stt fallback: no token columns to compute against. Show 0;
-        // future calls land in credit_deductions and show real spend.
-        return 0;
+        // Cost = the ACTUAL margined charge (sum of credit_deductions.amount).
+        // No token-compute fallback — mixing computed (pre-margin) with actual is
+        // exactly what made the summary, daily, and stat-card totals disagree.
+        // Now every total == the sum of credit_deductions for the range.
+        return row ? (Number(row.actual_cost_usd) || 0) : 0;
     },
 
     _fmtCost(amount) {
@@ -171,7 +202,17 @@ const AccountUsage = {
 
     /** "ai" → "AI Models", etc. */
     _serviceLabel(svc) {
-        return { ai: 'AI Models', tts: 'Speech (TTS)', stt: 'Speech (STT)', web_search: 'Web Search' }[svc] || svc;
+        return { ai: 'AI Models', tts: 'Speech (TTS)', stt: 'Speech (STT)', web_search: 'Tools' }[svc] || svc;
+    },
+
+    /** Display name for a summary line. Web-search rows read as the tool name —
+     *  "Tavily (web search)" — so the Tools group is human-readable as we add more. */
+    _summaryItemName(r) {
+        if (r.service === 'web_search') {
+            const p = r.provider ? r.provider.charAt(0).toUpperCase() + r.provider.slice(1) : 'Web';
+            return `${p} (web search)`;
+        }
+        return r.model || r.provider || '—';
     },
 
     // ── admin form ────────────────────────────────────────────
@@ -219,11 +260,53 @@ const AccountUsage = {
         this._expandedDays.set(date, { loading: true });
         App.renderPage();
         try {
-            const result = await DashieAuth.dbRequest('get_usage_calls', { date });
-            this._expandedDays.set(date, { loading: false, calls: result.calls || [] });
+            const result = await DashieAuth.dbRequest('get_usage_calls', { date, tz: this._tz() });
+            const interactions = result.interactions || [];
+            await this._mergeLocalTranscripts(interactions);
+            this._expandedDays.set(date, { loading: false, interactions });
         } catch (e) {
             this._expandedDays.set(date, { loading: false, error: e?.message || String(e) });
         }
+        App.renderPage();
+    },
+
+    /** In add-on mode, overlay HA-local transcript text onto interactions by
+     *  session_id. Kiosk turns keep transcripts on the user's HA box (not
+     *  Supabase), so the Supabase usage rows carry cost but no text — we fetch
+     *  the text from the add-on and join it here. Best-effort. Build plan §17. */
+    async _mergeLocalTranscripts(interactions) {
+        if (typeof DashieAuth === 'undefined' || !DashieAuth.isAddonMode) return;
+        if (!interactions.length) return;
+        // Cloud-account rows already carry their text from Supabase — nothing to join.
+        if (interactions.every(i => i.prompt || i.response)) return;
+        try {
+            const data = await fetch(DashieAuth._addonUrl('/api/transcripts?limit=500'))
+                .then(r => r.ok ? r.json() : null);
+            const rows = data?.transcripts || [];
+            if (!rows.length) return;
+            const bySession = new Map();
+            for (const t of rows) if (t.session_id) bySession.set(t.session_id, t);
+            for (const intr of interactions) {
+                if (intr.prompt || intr.response) continue;
+                const t = intr.session_id && bySession.get(intr.session_id);
+                if (t) { intr.prompt = t.text || null; intr.response = t.voice || null; }
+            }
+        } catch (e) {
+            // Transcripts just won't show; never block the usage view.
+        }
+    },
+
+    /** Expand/collapse a single voice interaction (its passes/items). */
+    toggleInteraction(key) {
+        if (this._expandedInteractions.has(key)) this._expandedInteractions.delete(key);
+        else this._expandedInteractions.add(key);
+        App.renderPage();
+    },
+
+    /** Expand/collapse a service group (AI / Speech / Tools) in the summary. */
+    toggleService(svc) {
+        if (this._expandedServices.has(svc)) this._expandedServices.delete(svc);
+        else this._expandedServices.add(svc);
         App.renderPage();
     },
 
@@ -246,12 +329,197 @@ const AccountUsage = {
 
         return `
             <div style="max-width: 800px;">
+                ${this._renderFlash()}
                 ${this._renderStatStrip()}
+                ${this._renderExpiryNotice()}
+                ${this._renderBuyCreditsCard()}
                 ${this._renderAdminSection()}
                 ${this._renderRangeBar()}
                 ${this._renderSummaryCard()}
                 ${this._renderDailyCard()}
+                ${this._renderPricingCard()}
             </div>`;
+    },
+
+    _renderFlash() {
+        if (!this._flash) return '';
+        return `
+            <div class="card" style="margin-bottom: 12px; border-color: var(--status-success, #16a34a);">
+                <div class="card-body" style="padding: 12px 16px; font-size: 13px; display:flex; justify-content:space-between; align-items:center; gap:12px;">
+                    <span>${this._escape(this._flash)}</span>
+                    <button class="btn btn-secondary btn-sm" onclick="AccountUsage.dismissFlash()">Dismiss</button>
+                </div></div>`;
+    },
+    dismissFlash() { this._flash = null; App.renderPage(); },
+
+    // ── credit packs (env-specific Stripe price ids) ───────────
+    /** Staging uses the test-mode prices; prod uses the live-mode copies. */
+    _creditPacks() {
+        const url = (window.DashieAuth?.config?.url) || '';
+        const isProd = url.includes('cseaywxcvnxcsypaqaid');
+        return isProd ? [
+            { usd: 5,  price_id: 'price_1Tk6cxDeFmFAr8Ip6Y1EtdbQ' },
+            { usd: 10, price_id: 'price_1Tk6cxDeFmFAr8IpJAXuCuNS' },
+            { usd: 25, price_id: 'price_1Tk6cxDeFmFAr8IpgMVJ5dkw' },
+        ] : [
+            { usd: 5,  price_id: 'price_1Tk6bID1HbVkqny7hS1Ey7sW' },
+            { usd: 10, price_id: 'price_1Tk6bID1HbVkqny7LS4LB1tX' },
+            { usd: 25, price_id: 'price_1Tk6bID1HbVkqny7tCp3ozbP' },
+        ];
+    },
+
+    /** Upcoming credit expiry banner (with 30/7-day warning styling). */
+    _renderExpiryNotice() {
+        const next = this._expiry?.next_expiry;
+        const amt = Number(next?.amount || 0);
+        if (!next?.expires_at || amt <= 0) return '';
+        const exp = new Date(next.expires_at);
+        const days = Math.ceil((exp.getTime() - Date.now()) / 86400_000);
+        const dateStr = exp.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
+        let color = 'var(--text-muted)';
+        if (days <= 7) color = 'var(--status-error, #c00)';
+        else if (days <= 30) color = 'var(--status-warning, #b45309)';
+        const within = days <= 30;
+        return `
+            <div class="card" style="margin-top: 12px; ${within ? `border-color: ${color};` : ''}">
+                <div class="card-body" style="padding: 12px 16px; font-size: 13px; color: ${color};">
+                    ${within ? '⚠️ ' : ''}<strong>$${amt.toFixed(2)}</strong> in credits expire on <strong>${dateStr}</strong>${days >= 0 ? ` (${days} day${days === 1 ? '' : 's'})` : ''}.
+                </div></div>`;
+    },
+
+    /** Buy Credits packs + the auto-replenish settings. */
+    _renderBuyCreditsCard() {
+        const packs = this._creditPacks();
+        const ar = this._autorefill || {};
+        const busy = this._busy;
+        const buttons = packs.map(p => `
+            <button class="btn btn-secondary" ${busy ? 'disabled' : ''} onclick="AccountUsage.buyCredits('${p.price_id}')" style="flex:1; min-width:80px; font-weight:600;">
+                Buy $${p.usd}
+            </button>`).join('');
+
+        const amtOptions = [5, 10, 25].map(a => `<option value="${a}" ${Number(ar.topup_usd) === a ? 'selected' : ''}>$${a}</option>`).join('');
+        const enableDisabled = (!ar.has_card && !ar.enabled);
+        const arError = this._autorefillError
+            ? `<div style="color: var(--status-error,#c00); font-size:12px; margin-top:6px;">${this._escape(this._autorefillError)}</div>` : '';
+        const lastErr = (ar.enabled && ar.last_error)
+            ? `<div style="color: var(--status-error,#c00); font-size:12px; margin-top:6px;">Last auto-charge failed: ${this._escape(ar.last_error)}</div>` : '';
+
+        const autorefill = `
+            <div style="padding: 14px 16px; border-top: 1px solid var(--border, #e5e7eb);">
+                <div style="display:flex; justify-content:space-between; align-items:center; gap:12px;">
+                    <div>
+                        <div style="font-weight:600; font-size:14px;">Auto-replenish</div>
+                        <div style="color: var(--text-muted); font-size:12px; margin-top:2px;">
+                            ${ar.has_card ? 'Automatically top up when your balance runs low.' : 'Buy a pack once to save a card, then enable.'}
+                        </div>
+                    </div>
+                    <label class="switch" style="cursor:${enableDisabled ? 'not-allowed' : 'pointer'};">
+                        <input type="checkbox" ${ar.enabled ? 'checked' : ''} ${(busy || enableDisabled) ? 'disabled' : ''} onchange="AccountUsage.toggleAutorefill()" />
+                    </label>
+                </div>
+                ${ar.enabled ? `
+                <div style="display:flex; gap:18px; align-items:center; margin-top:10px; font-size:13px; flex-wrap:wrap;">
+                    <label style="display:inline-flex; align-items:center; gap:6px;">When below
+                        $<input type="number" min="0" max="50" step="1" value="${Number(ar.threshold_usd ?? 1)}" ${busy ? 'disabled' : ''}
+                            onchange="AccountUsage.setAutorefillThreshold(this.value)" style="width:54px;" /></label>
+                    <label style="display:inline-flex; align-items:center; gap:6px;">add
+                        <select ${busy ? 'disabled' : ''} onchange="AccountUsage.setAutorefillAmount(this.value)">${amtOptions}</select>
+                    </label>
+                </div>` : ''}
+                ${lastErr}${arError}
+            </div>`;
+
+        return `
+            <div class="card" style="margin-top: 20px;"><div class="card-body" style="padding: 0;">
+                <div style="padding: 12px 16px; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; color: var(--text-muted);">
+                    Buy Credits
+                </div>
+                <div style="padding: 4px 16px 16px;">
+                    <div style="display:flex; gap:10px;">${buttons}</div>
+                    <div style="color: var(--text-muted); font-size:11px; margin-top:8px;">1 credit = $1 USD · credits expire 1 year after purchase.</div>
+                </div>
+                ${autorefill}
+            </div></div>`;
+    },
+
+    // ── billing actions ────────────────────────────────────────
+
+    async buyCredits(priceId) {
+        if (this._busy) return;
+        this._busy = true; this._error = null; App.renderPage();
+        try {
+            const ret = window.location.origin + window.location.pathname;
+            const res = await DashieAuth.edgeFunctionRequest('create-credit-checkout', {
+                auth_user_id: DashieAuth.jwtUserId,
+                email: DashieAuth.jwtUserEmail,
+                price_id: priceId,
+                success_url: ret + '?credits=success',
+                cancel_url: ret + '?credits=cancel',
+            });
+            if (res?.checkout_url) { window.location = res.checkout_url; return; }
+            throw new Error(res?.error || 'No checkout URL returned');
+        } catch (e) {
+            this._busy = false;
+            this._error = 'Checkout failed: ' + (e?.message || e);
+            App.renderPage();
+        }
+    },
+
+    async _saveAutorefill(patch) {
+        if (this._busy) return;
+        this._busy = true; this._autorefillError = null; App.renderPage();
+        try {
+            const res = await DashieAuth.dbRequest('set_autorefill', patch);
+            this._autorefill = res;   // handler returns the updated settings
+        } catch (e) {
+            this._autorefillError = (e?.message || String(e)).replace(/^DB operation error:\s*/, '');
+        }
+        this._busy = false; App.renderPage();
+    },
+    toggleAutorefill() { this._saveAutorefill({ enabled: !(this._autorefill?.enabled) }); },
+    setAutorefillAmount(v) { this._saveAutorefill({ topup_usd: Number(v) }); },
+    setAutorefillThreshold(v) { const n = Number(v); if (isFinite(n)) this._saveAutorefill({ threshold_usd: n }); },
+
+    /** Credit Pricing table — customer-facing (already margined) rate per tool
+     *  with a short description. Source: get_credit_rates. Build plan §11. */
+    _renderPricingCard() {
+        const rates = this._rates?.rates || [];
+        if (!rates.length) return '';
+        const fmtRate = (r) => r.included
+            ? `<span style="color: var(--status-success, #16a34a); font-weight: 600;">Included</span>`
+            : (r.rates || []).map(x =>
+                `<span style="white-space: nowrap;">${x.label ? this._escape(x.label) + ' ' : ''}<span style="font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-weight: 600;">${this._fmtRateAmount(x.amount)}</span> <span style="color: var(--text-muted);">${this._escape(x.unit)}</span></span>`
+            ).join('<span style="color: var(--text-muted); margin: 0 8px;">·</span>');
+        const rows = rates.map(r => `
+            <div style="padding: 14px 16px; border-top: 1px solid var(--border, #e5e7eb);">
+                <div style="display: flex; justify-content: space-between; align-items: baseline; gap: 12px; flex-wrap: wrap;">
+                    <div style="font-weight: 600; font-size: 14px;">${this._escape(r.title)}
+                        ${r.subtitle ? `<span style="color: var(--text-muted); font-weight: 400; font-size: 12px;"> · ${this._escape(r.subtitle)}</span>` : ''}
+                    </div>
+                    <div style="font-size: 13px; text-align: right;">${fmtRate(r)}</div>
+                </div>
+                ${r.description ? `<div style="color: var(--text-muted); font-size: 12px; line-height: 1.5; margin-top: 4px;">${this._escape(r.description)}</div>` : ''}
+            </div>`).join('');
+        return `
+            <div class="card" style="margin-top: 20px;"><div class="card-body" style="padding: 0;">
+                <div style="padding: 12px 16px; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; color: var(--text-muted);">
+                    Credit Pricing
+                </div>
+                ${rows}
+                <div style="padding: 12px 16px; border-top: 1px solid var(--border, #e5e7eb); color: var(--text-muted); font-size: 11px; line-height: 1.5;">
+                    Rates are what you pay in credits (1 credit = $1 USD). Most interactions cost well under a cent.
+                </div>
+            </div></div>`;
+    },
+
+    /** Format a small per-unit rate — more precision than _fmtCost since rates
+     *  like $0.0096/search would otherwise round to $0.01. */
+    _fmtRateAmount(amount) {
+        const n = Number(amount) || 0;
+        if (n === 0) return '$0';
+        if (n < 0.01) return `$${n.toFixed(4)}`;
+        if (n < 1) return `$${n.toFixed(3)}`;
+        return `$${n.toFixed(2)}`;
     },
 
     _renderStatStrip() {
@@ -357,9 +625,13 @@ const AccountUsage = {
         const sections = order.filter(s => groups.has(s)).map(svc => {
             const items = groups.get(svc);
             const total = items.reduce((sum, r) => sum + this._costForRow(r), 0);
-            const itemRows = items.map(r => this._summaryItemRow(r)).join('');
+            const open = this._expandedServices.has(svc);
+            const caret = open ? '▾' : '▸';
+            const itemRows = open ? items.map(r => this._summaryItemRow(r)).join('') : '';
             return `
-                <tr><td colspan="4" style="padding: 14px 12px 6px; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; color: var(--text-muted);">
+                <tr><td colspan="4" onclick="AccountUsage.toggleService('${svc}')"
+                    style="padding: 14px 12px 6px; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; color: var(--text-muted); cursor: pointer;">
+                    <span style="display: inline-block; width: 12px; color: var(--text-muted);">${caret}</span>
                     ${this._escape(this._serviceLabel(svc))}
                     <span style="float: right; color: var(--text-primary); font-weight: 600;">${this._fmtCost(total)}</span>
                 </td></tr>
@@ -391,7 +663,7 @@ const AccountUsage = {
                 : `${this._fmtCount(r.call_count)} calls`;
         return `
             <tr style="border-top: 1px solid var(--border, #e5e7eb);">
-                <td style="padding: 8px 12px; font-size: 13px; width: 35%;">${this._escape(r.model || r.provider || '—')}</td>
+                <td style="padding: 8px 12px 8px 36px; font-size: 13px; width: 35%;">${this._escape(this._summaryItemName(r))}</td>
                 <td style="padding: 8px 12px; font-size: 12px; color: var(--text-muted);">${this._escape(r.provider || '')}</td>
                 <td style="padding: 8px 12px; font-size: 12px; color: var(--text-muted); text-align: right;">${this._fmtCount(r.call_count)} · ${this._escape(subtitle)}</td>
                 <td style="padding: 8px 12px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; text-align: right;">${this._fmtCost(cost)}</td>
@@ -423,18 +695,13 @@ const AccountUsage = {
             } else if (expanded.error) {
                 detail = `<div style="padding: 12px 32px; color: var(--status-error, #c00); font-size: 13px;">Error: ${this._escape(expanded.error)}</div>`;
             } else {
-                const calls = expanded.calls || [];
-                if (calls.length === 0) {
+                const interactions = expanded.interactions || [];
+                if (interactions.length === 0) {
                     detail = `<div style="padding: 12px 32px; color: var(--text-muted); font-size: 13px;">No calls recorded.</div>`;
                 } else {
-                    detail = `
-                        <div style="padding: 4px 32px 12px;">
-                            <table style="width: 100%; border-collapse: collapse; font-size: 12px;">
-                                <tbody>
-                                    ${calls.map(c => this._renderCallRow(c)).join('')}
-                                </tbody>
-                            </table>
-                        </div>`;
+                    detail = `<div style="padding: 2px 16px 10px 40px;">
+                        ${interactions.map(i => this._renderInteractionRow(i)).join('')}
+                    </div>`;
                 }
             }
         }
@@ -465,21 +732,80 @@ const AccountUsage = {
             .join(' · ');
     },
 
-    _renderCallRow(c) {
-        const cost = this._costForRow({
-            service: c.service,
-            provider: c.provider,
-            model: c.model,
-            input_tokens: c.input_tokens,
-            output_tokens: c.output_tokens,
-            call_count: c.service === 'web_search' ? 1 : 0,
-            total_seconds: c.duration_seconds || 0,
-            total_chars: c.char_count || 0,
-        });
+    /** USD cost of a single drill-down item, computed from the catalog. This is
+     *  illustrative detail (pre-margin) showing a turn's makeup; the authoritative
+     *  spend is the day/summary totals (actual margined charges). */
+    _itemCost(c) {
+        const C = window.AiModelCatalog;
+        if (!C) return 0;
+        if (c.service === 'ai') {
+            const rates = c.model ? C.pricingFor(c.model) : null;
+            if (!rates) return 0;
+            return ((c.input_tokens || 0) * rates[0] + (c.output_tokens || 0) * rates[1]) / 1_000_000;
+        }
+        if (c.service === 'web_search') {
+            return C.searchCost({ provider: c.provider, count: 1 });
+        }
+        return 0;
+    },
+
+    /** One voice interaction (a turn): summary row, expandable to its items. */
+    _renderInteractionRow(intr) {
+        const items = intr.items || [];
+        const total = items.reduce((s, c) => s + this._itemCost(c), 0);
+        const open = this._expandedInteractions.has(intr.key);
+        const caret = open ? '▾' : '▸';
         const time = (() => {
-            try { return new Date(c.ts).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }); }
-            catch { return c.ts; }
+            try { return new Date(intr.ts).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }); }
+            catch { return intr.ts; }
         })();
+        const counts = {};
+        for (const it of items) counts[it.service] = (counts[it.service] || 0) + 1;
+        const labels = { ai: 'AI', tts: 'TTS', stt: 'STT', web_search: 'Search' };
+        const mix = Object.entries(counts)
+            .map(([s, n]) => `${labels[s] || s}${n > 1 ? ' ×' + n : ''}`)
+            .join(' · ');
+        const body = open
+            ? `<div style="padding-left: 24px;">
+                 ${this._renderTranscript(intr)}
+                 <table style="width: 100%; border-collapse: collapse; font-size: 12px; margin: 0 0 6px;"><tbody>
+                    ${items.map(c => this._renderCallRow(c)).join('')}
+                 </tbody></table>
+               </div>`
+            : '';
+        return `
+            <div style="border-bottom: 1px solid var(--border, #f0f0f0);">
+                <div onclick="event.stopPropagation(); AccountUsage.toggleInteraction('${this._escape(intr.key)}')"
+                    style="display: flex; align-items: center; gap: 10px; padding: 7px 0; cursor: pointer;">
+                    <span style="color: var(--text-muted); width: 12px; font-size: 11px;">${caret}</span>
+                    <span style="color: var(--text-muted); width: 76px; font-size: 12px;">${this._escape(time)}</span>
+                    <span style="flex: 1; font-size: 12px;">${this._escape(mix)} · ${items.length} call${items.length === 1 ? '' : 's'}</span>
+                    <span style="font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; font-weight: 600;">${this._fmtCost(total)}</span>
+                </div>
+                ${body}
+            </div>`;
+    },
+
+    /** Retained transcript for one interaction (only present when the account
+     *  opted into "Keep transcripts"). Build plan §17. */
+    _renderTranscript(intr) {
+        if (!intr || (!intr.prompt && !intr.response)) return '';
+        const line = (label, val) => `
+            <div style="margin: 0 0 4px;">
+                <span style="color: var(--text-muted); font-size: 10px; text-transform: uppercase; letter-spacing: 0.5px;">${label}</span>
+                <div style="font-size: 12px; line-height: 1.4;">${this._escape(val)}</div>
+            </div>`;
+        return `
+            <div style="background: var(--surface-muted, #f7f7f8); border-radius: 8px; padding: 8px 10px; margin: 0 0 8px;">
+                ${intr.prompt ? line('You said', intr.prompt) : ''}
+                ${intr.response ? line('Dashie replied', intr.response) : ''}
+            </div>`;
+    },
+
+    _renderCallRow(c) {
+        const cost = this._itemCost(c);
+        // Per-call time is redundant — the interaction header already shows it
+        // (every pass of one turn lands within the same minute).
         const desc = c.service === 'ai'
             ? `${this._escape(c.model || '—')} (${this._fmtCount(c.input_tokens)} in / ${this._fmtCount(c.output_tokens)} out)`
             : c.service === 'web_search'
@@ -487,7 +813,6 @@ const AccountUsage = {
                 : `${this._escape(c.provider || '')} ${c.service}`;
         return `
             <tr>
-                <td style="padding: 4px 0; color: var(--text-muted); width: 80px;">${this._escape(time)}</td>
                 <td style="padding: 4px 0; color: var(--text-muted); width: 60px; text-transform: uppercase; font-size: 10px; letter-spacing: 0.5px;">${this._escape(c.service)}</td>
                 <td style="padding: 4px 8px;">${desc}</td>
                 <td style="padding: 4px 0; text-align: right; font-family: ui-monospace, SFMono-Regular, Menlo, monospace;">${this._fmtCost(cost)}</td>
@@ -496,23 +821,30 @@ const AccountUsage = {
 
     // ── helpers used by stat strip ───────────────────────────
 
+    /** The browser's IANA timezone, sent to the server for local-day bucketing. */
+    _tz() {
+        try { return Intl.DateTimeFormat().resolvedOptions().timeZone || null; }
+        catch { return null; }
+    },
+
     _todayDate() {
-        const now = new Date();
-        return `${now.getUTCFullYear()}-${String(now.getUTCMonth() + 1).padStart(2, '0')}-${String(now.getUTCDate()).padStart(2, '0')}`;
+        // Local calendar day ('YYYY-MM-DD'), matching the server's local bucketing.
+        return new Date().toLocaleDateString('en-CA');
     },
 
     _totalCostForDay(dateStr) {
-        if (!this._daily?.days) return null;
-        const row = this._daily.days.find(d => d.date === dateStr);
+        // Range-independent: always read the current-month fetch, not the selected range.
+        if (!this._monthDaily?.days) return null;
+        const row = this._monthDaily.days.find(d => d.date === dateStr);
         if (!row) return 0;
         return (row.by_service || []).reduce((sum, r) => sum + this._costForRow(r), 0);
     },
 
     _totalCostForMonth() {
-        if (!this._daily?.days) return null;
-        const now = new Date();
-        const prefix = `${now.getUTCFullYear()}-${String(now.getUTCMonth() + 1).padStart(2, '0')}-`;
-        return this._daily.days
+        // Range-independent: always read the current-month fetch.
+        if (!this._monthDaily?.days) return null;
+        const prefix = new Date().toLocaleDateString('en-CA').slice(0, 7) + '-';  // local 'YYYY-MM-'
+        return this._monthDaily.days
             .filter(d => d.date.startsWith(prefix))
             .reduce((sum, d) => sum + (d.by_service || []).reduce((s, r) => s + this._costForRow(r), 0), 0);
     },
