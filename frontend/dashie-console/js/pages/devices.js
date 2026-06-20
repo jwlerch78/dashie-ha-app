@@ -178,6 +178,7 @@ const DevicesPage = {
     async _fetchDevices() {
         this._loading = true;
         this._error = null;
+        this._pollersStopped = false;  // re-arm pollers on a fresh (re-)load
         try {
             const [devicesResult] = await Promise.all([
                 DashieAuth.dbRequest('list_devices', { tv_only: false, include_inactive: true }),
@@ -209,6 +210,15 @@ const DevicesPage = {
             if (document.visibilityState === 'hidden') return;
             this._refreshSilent();
         }, this.AUTO_REFRESH_MS);
+    },
+
+    /** Stop every background poller this page started. Called on sign-out
+     *  (App._showLogin) so timers don't keep hitting unauthenticated
+     *  endpoints — or, before the renderPage() auth guard, repaint the
+     *  dashboard over the login screen. */
+    _stopPollers() {
+        if (this._pollTimer) { clearInterval(this._pollTimer); this._pollTimer = null; }
+        this._pollersStopped = true;  // halts the recursive _pollUntilFreshDevices chain
     },
 
     async _refreshSilent() {
@@ -331,10 +341,12 @@ const DevicesPage = {
     _pollUntilFreshDevices(attempt = 0) {
         const MAX_ATTEMPTS = 6;     // ~12s total
         const DELAY_MS = 2000;
+        if (this._pollersStopped) return;  // signed out mid-poll
         const fresh = this._haStatus?.lastRun?.freshDevices;
         if (Array.isArray(fresh) && fresh.length > 0) return;
         if (attempt >= MAX_ATTEMPTS) return;
         setTimeout(() => {
+            if (this._pollersStopped) return;
             // Bypass HA_STATUS_MAX_AGE_MS — we want a fresh fetch, not
             // the cached "fetched <15s ago" result.
             this._haStatusFetchedAt = 0;

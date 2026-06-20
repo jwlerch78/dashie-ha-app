@@ -137,6 +137,14 @@ const App = {
     },
 
     _showLogin() {
+        // Tear down any background pollers left running from a previously
+        // authed session (devices auto-refresh interval, fresh-device poll,
+        // SSE event stream). Otherwise they keep hitting now-unauthenticated
+        // endpoints and — before the renderPage() auth guard — would repaint
+        // the dashboard over this login screen.
+        try { if (typeof DevicesPage !== 'undefined') DevicesPage._stopPollers?.(); } catch (_) {}
+        try { if (typeof DevicesEvents !== 'undefined') DevicesEvents.stop?.(); } catch (_) {}
+
         document.getElementById('sidebar').innerHTML = '';
         document.getElementById('top-bar').innerHTML = '';
         const addonMode = DashieAuth.isAddonMode;
@@ -391,6 +399,16 @@ const App = {
     },
 
     renderPage() {
+        // Auth guard (the "auto logs back in after sign-out" fix): background
+        // tasks call renderPage() asynchronously — the devices page's
+        // _pollUntilFreshDevices / auto-refresh timers, SSE events, the credits
+        // fetch, the option catalog, FeatureGate. If the user signed out while
+        // one was in flight, it would otherwise repaint an authed page straight
+        // over the login screen ~1s later, looking exactly like an auto-login.
+        // renderPage only ever renders authed pages; the login UI is drawn by
+        // _showLogin(), so bailing here when signed out is always correct.
+        if (!DashieAuth.isAuthenticated) return;
+
         const entry = this.pages[this._currentPage];
         if (!entry) return;
 

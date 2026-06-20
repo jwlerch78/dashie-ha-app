@@ -9,9 +9,12 @@ const Sidebar = {
         // each call that decrements it). Falls back to '—' before the
         // first fetch returns so we don't flash a wrong number.
         const cached = window.CreditsService?.balance();
-        const balanceLabel = (cached && typeof cached.balance === 'number')
-            ? `$${cached.balance.toFixed(2)}`
-            : '$—';
+        const bal = (cached && typeof cached.balance === 'number') ? cached.balance : null;
+        const balanceLabel = bal !== null ? `$${bal.toFixed(2)}` : '$—';
+        // Low-balance deep-link: when the balance runs low, the credits widget
+        // turns into a "Buy credits" prompt (still navigates to the Account page
+        // where the Buy Credits packs live). $1 matches the auto-replenish default.
+        const lowBalance = bal !== null && bal < 1.00;
         // Beta visibility — see js/lib/feature-gate.js. HA-only items are
         // hidden when the console is served from the public website; the
         // credits widget is dev-only; locations is hidden everywhere until
@@ -52,9 +55,9 @@ const Sidebar = {
 
             <div class="sidebar-footer">
                 ${showCredits ? `
-                    <div class="sidebar-credits" onclick="App.navigate('account')">
+                    <div class="sidebar-credits" onclick="App.navigate('account')"${lowBalance ? ' style="color: var(--status-error, #c00);" title="Low balance — buy credits"' : ''}>
                         <span class="sidebar-credits-amount">${balanceLabel}</span>
-                        <span class="sidebar-credits-label">credits</span>
+                        <span class="sidebar-credits-label">${lowBalance ? 'Buy credits →' : 'credits'}</span>
                     </div>
                 ` : ''}
                 <div class="sidebar-version">v1.0.0</div>

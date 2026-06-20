@@ -3,10 +3,14 @@
    ============================================================ */
 
 const MockData = {
+    // Identity is populated from real auth in app.js (_showApp). Defaults are
+    // BLANK on purpose — a placeholder like "john@example.com" here would render
+    // as a convincing fake identity if the app ever shows before/without real
+    // auth (the half-auth bug, now also guarded by _handleAuthFailure).
     user: {
-        email: 'john@example.com',
-        name: 'John Lerch',
-        initials: 'JL',
+        email: '',
+        name: '',
+        initials: '',
         picture: '',   // Google avatar URL when signed in (see app.js init)
         provider: 'Google',
     },

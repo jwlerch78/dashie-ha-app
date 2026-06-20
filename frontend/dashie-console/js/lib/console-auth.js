@@ -515,6 +515,24 @@ const DashieAuth = {
         if (this.onAuthStateChange) this.onAuthStateChange(false, null);
     },
 
+    /** First-load race bridge: a page can render + fire a data fetch before
+     *  init() has finished loading the JWT from storage. Resolve as soon as a
+     *  JWT appears (typically <100ms) or after timeoutMs. NEVER clears state —
+     *  if no JWT ever arrives we just fall through to the normal "Not
+     *  authenticated" throw, so a genuinely signed-out user isn't kept waiting
+     *  long, and an authenticated user no longer gets a spurious failure. */
+    _awaitJWT(timeoutMs = 1500) {
+        if (this.jwt) return Promise.resolve();
+        return new Promise((resolve) => {
+            const start = Date.now();
+            const tick = () => {
+                if (this.jwt || Date.now() - start >= timeoutMs) return resolve();
+                setTimeout(tick, 50);
+            };
+            tick();
+        });
+    },
+
     _loadJWTFromStorage() {
         try {
             const stored = localStorage.getItem(this._JWT_STORAGE_KEY);
@@ -568,6 +586,10 @@ const DashieAuth = {
         if (!this.jwt) return;
         try {
             const data = await this._authRequest({ operation: 'refresh_jwt' });
+            // Re-check: if the user signed out while this refresh was in flight,
+            // clearJWT() nulled the token — do NOT re-establish the session
+            // (that's the intermittent "signed back in after logout" bug).
+            if (!this.jwt) { console.log('[DashieAuth] refresh completed after sign-out — discarding'); return; }
             if (data.jwtToken) {
                 this.setJWT(data.jwtToken);
                 console.log('[DashieAuth] JWT refreshed');
@@ -602,7 +624,11 @@ const DashieAuth = {
             // consent screen show "see/edit/delete ALL" access.
             scope: 'profile email https://www.googleapis.com/auth/calendar.readonly https://www.googleapis.com/auth/calendar.events https://www.googleapis.com/auth/drive.file',
             access_type: 'offline',
-            prompt: 'consent',
+            // 'select_account' → after signing out of Dashie, the Google account
+            // chooser appears so the user can switch accounts (Google session in
+            // the browser is untouched). 'consent' is kept so access_type=offline
+            // still returns a refresh token each time.
+            prompt: 'select_account consent',
             state: Date.now().toString(),
             // false: the Console requests a fixed scope set, so incremental
             // authorization isn't needed. With 'true', Google re-merged every
@@ -867,6 +893,9 @@ const DashieAuth = {
                 }
             } catch (e) { /* fall through to throw below */ }
         }
+        // Browser-mode first-load race: wait briefly for init() to load the JWT
+        // (the add-on path above handles its own equivalent race).
+        if (!this.jwt && !this._addonMode) await this._awaitJWT();
         if (!this.jwt) throw new Error('Not authenticated');
 
         // source_client_id tags every settings write with this Console
@@ -913,6 +942,7 @@ const DashieAuth = {
      * Call any edge function by name with auth
      */
     async edgeFunctionRequest(functionName, body = {}) {
+        if (!this.jwt && !this._addonMode) await this._awaitJWT();
         if (!this.jwt) throw new Error('Not authenticated');
 
         const url = this.config.url + '/functions/v1/' + functionName;

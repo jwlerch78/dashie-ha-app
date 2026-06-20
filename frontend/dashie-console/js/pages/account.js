@@ -387,7 +387,7 @@ const AccountPage = {
             cancelLabel: 'Cancel',
         });
         if (!confirmed) return;
-        DashieAuth.signOut();
+        await DashieAuth.signOut();
         this._data = null;
         App._showLogin();
     },
