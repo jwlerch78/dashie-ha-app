@@ -239,8 +239,9 @@ const App = {
             <img src="assets/dashie-logo-orange.png" alt="Dashie" class="dashie-login-logo">
             <div class="dashie-login-title">Sign in with your Dashie account</div>
             <div class="dashie-login-subtitle">
+                Dashie needs to authenticate outside of your Home Assistant instance.
                 Tap the button below to open the sign-in page in a new tab.
-                This screen will update once you've finished.
+                This screen will update once you've logged in there.
             </div>
 
             <div class="dashie-login-buttons">
