@@ -114,8 +114,17 @@ const CreditsControls = {
         this._busy = false; App.renderPage();
     },
     toggleAutorefill() { this._saveAutorefill({ enabled: !(this._autorefill?.enabled) }); },
-    setAutorefillAmount(v) { this._saveAutorefill({ topup_usd: Number(v) }); },
-    setAutorefillThreshold(v) { const n = Number(v); if (isFinite(n)) this._saveAutorefill({ threshold_usd: n }); },
+
+    /** Open the modal to edit the threshold + top-up amount. */
+    openAutorefillModal() {
+        if (typeof AutorefillModal === 'undefined') return;
+        const ar = this._autorefill || {};
+        AutorefillModal.open({
+            threshold: Number(ar.threshold_usd ?? 1),
+            topup: Number(ar.topup_usd ?? 10),
+            onSave: (threshold, topup) => this._saveAutorefill({ threshold_usd: threshold, topup_usd: topup }),
+        });
+    },
 
     // ── render pieces ─────────────────────────────────────────
 
@@ -125,20 +134,31 @@ const CreditsControls = {
             onclick="CreditsControls.openBuyModal()" style="font-weight:600; flex-shrink:0;">Buy more</button>`;
     },
 
-    /** Auto-replenish checkbox + inline threshold/amount (revealed when on) +
-     *  hint/error lines. Disabled until a card is saved (first purchase). */
+    /** Auto-replenish checkbox + a subtext summary of the rule. The rule itself
+     *  (threshold + amount) is edited in AutorefillModal, not inline. Disabled
+     *  until a card is saved (first purchase). */
     _autorefillBlock() {
         const ar = this._autorefill || {};
         const busy = this._busy;
         const enableDisabled = (!ar.has_card && !ar.enabled);
-        const amtOptions = [5, 10, 25].map(a =>
-            `<option value="${a}" ${Number(ar.topup_usd) === a ? 'selected' : ''}>$${a}</option>`).join('');
+        const threshold = Number(ar.threshold_usd ?? 1);
+        const topup = Number(ar.topup_usd ?? 10);
         const arError = this._autorefillError
             ? `<div style="color: var(--status-error,#c00); font-size:12px; margin-top:6px;">${this._escape(this._autorefillError)}</div>` : '';
         const lastErr = (ar.enabled && ar.last_error)
             ? `<div style="color: var(--status-error,#c00); font-size:12px; margin-top:6px;">Last auto-charge failed: ${this._escape(ar.last_error)}</div>` : '';
-        const hint = (enableDisabled)
-            ? `<div style="color: var(--text-muted); font-size:11px; margin-top:4px;">Buy a pack once to save a card, then enable.</div>` : '';
+
+        // Subtext under the checkbox: the rule (with an Edit link) when on, or
+        // the save-a-card prompt when it can't be enabled yet.
+        let subtext = '';
+        if (enableDisabled) {
+            subtext = `<div style="color: var(--text-muted); font-size:11px; margin-top:4px;">Buy a pack once to save a card, then enable.</div>`;
+        } else if (ar.enabled) {
+            subtext = `<div style="color: var(--text-muted); font-size:12px; margin-top:4px;">
+                When below $${threshold.toFixed(2)}, add $${topup}
+                <a href="#" onclick="event.preventDefault(); CreditsControls.openAutorefillModal()" style="color: var(--accent); margin-left:4px;">Edit</a>
+            </div>`;
+        }
 
         return `
             <div style="margin-top:12px;">
@@ -148,16 +168,7 @@ const CreditsControls = {
                         onchange="CreditsControls.toggleAutorefill()" />
                     Auto-replenish
                 </label>
-                ${ar.enabled ? `
-                <div style="display:flex; gap:14px; align-items:center; margin-top:8px; font-size:13px; flex-wrap:wrap;">
-                    <label style="display:inline-flex; align-items:center; gap:6px;">when below
-                        $<input type="number" min="0" max="50" step="1" value="${Number(ar.threshold_usd ?? 1)}" ${busy ? 'disabled' : ''}
-                            onchange="CreditsControls.setAutorefillThreshold(this.value)" style="width:52px;" /></label>
-                    <label style="display:inline-flex; align-items:center; gap:6px;">add
-                        <select ${busy ? 'disabled' : ''} onchange="CreditsControls.setAutorefillAmount(this.value)">${amtOptions}</select>
-                    </label>
-                </div>` : ''}
-                ${hint}${lastErr}${arError}
+                ${subtext}${lastErr}${arError}
             </div>`;
     },
 

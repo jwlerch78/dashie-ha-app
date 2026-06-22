@@ -201,7 +201,6 @@ const AccountPage = {
 
         // Subscription display
         const statusDisplay = this._formatStatus(d.subscription_status, d.tier_expires_at);
-        const planLabel = this._formatPlan(d.subscription_plan);
 
         // Credits: the same rich box used on the Credit Usage tab (balance +
         // Buy more + auto-replenish), reading from the shared CreditsService.
@@ -239,41 +238,6 @@ const AccountPage = {
                 ${showCredits ? CreditsControls.renderBalanceCard(CreditsService.balance()) : ''}
             </div>
             ${showCredits ? CreditsControls.renderExpiryNotice(this._expiry) : ''}
-
-            <div class="section-header">Subscription Status</div>
-            <div class="card">
-                <div class="card-body">
-                    <div style="display: flex; justify-content: space-between; margin-bottom: 8px;">
-                        <span style="color: var(--text-secondary);">Status</span>
-                        <span style="font-weight: 600;">${statusDisplay.label}</span>
-                    </div>
-                    ${d.tier_expires_at ? `
-                        <div style="display: flex; justify-content: space-between; margin-bottom: 8px;">
-                            <span style="color: var(--text-secondary);">${d.subscription_status === 'trialing' ? 'Trial ends' : 'Renews / expires'}</span>
-                            <span style="font-weight: 500;">${this._formatDate(d.tier_expires_at)}</span>
-                        </div>
-                    ` : ''}
-                    ${d.trial_reason ? `
-                        <div style="display: flex; justify-content: space-between; margin-bottom: 8px;">
-                            <span style="color: var(--text-secondary);">Trial reason</span>
-                            <span style="font-weight: 500;">${this._formatTrialReason(d.trial_reason)}</span>
-                        </div>
-                    ` : ''}
-                    ${planLabel ? `
-                        <div style="display: flex; justify-content: space-between;">
-                            <span style="color: var(--text-secondary);">Plan</span>
-                            <span style="font-weight: 500;">${planLabel}</span>
-                        </div>
-                    ` : ''}
-                    ${expired ? `
-                        <div style="margin-top: 16px; padding-top: 16px; border-top: 1px solid var(--border, #e5e7eb);">
-                            <button class="btn btn-primary" onclick="AccountPage.subscribe()">
-                                Subscribe to Dashie
-                            </button>
-                        </div>
-                    ` : ''}
-                </div>
-            </div>
 
             ${this._renderHouseholdSharing()}
 

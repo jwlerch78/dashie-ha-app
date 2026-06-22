@@ -227,10 +227,17 @@ const VoiceAiAnalysis = {
     },
 
     _renderStep(s) {
-        const desc = s.kind === 'ai'
-            ? `${this._escape(s.label)} <span style="color: var(--text-muted);">(${this._fmtTokens(s.input_tokens)} in / ${this._fmtTokens(s.output_tokens)} out)</span>`
-            : `${this._escape(s.label)} <span style="color: var(--text-muted);">(${this._fmtTokens(s.result_count || 0)} results)</span>`;
-        const kind = s.kind === 'web_search' ? 'SEARCH' : 'AI';
+        const KIND_LABELS = { ai: 'AI', web_search: 'SEARCH', tts: 'TTS', stt: 'STT' };
+        const kind = KIND_LABELS[s.kind] || (s.kind || '').toUpperCase();
+        let desc;
+        if (s.kind === 'ai') {
+            desc = `${this._escape(s.label)} <span style="color: var(--text-muted);">(${this._fmtTokens(s.input_tokens)} in / ${this._fmtTokens(s.output_tokens)} out)</span>`;
+        } else if (s.kind === 'web_search') {
+            desc = `${this._escape(s.label)} <span style="color: var(--text-muted);">(${this._fmtTokens(s.result_count || 0)} results)</span>`;
+        } else {
+            // tts / stt — just the provider/model label (no tokens/results)
+            desc = this._escape(s.label || kind.toLowerCase());
+        }
         return `
             <tr>
                 <td style="padding: 4px 0; color: var(--text-muted); width: 64px; text-transform: uppercase; font-size: 10px; letter-spacing: 0.5px;">${kind}</td>

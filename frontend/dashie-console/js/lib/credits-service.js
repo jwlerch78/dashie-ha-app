@@ -38,14 +38,18 @@ const CreditsService = (function () {
 
     async function fetch(opts = {}) {
         if (_inflight && !opts.force) return _inflight;
-        if (!window.DashieAuth?.dbRequest) {
+        // DashieAuth is a bare script-scope const, NOT on window — the old
+        // window.DashieAuth?.dbRequest guard was ALWAYS undefined, so this
+        // returned null every time and the sidebar/account balance never
+        // populated until the Credit Usage page fetched it directly.
+        if (typeof DashieAuth === 'undefined' || !DashieAuth.dbRequest) {
             // Auth bundle isn't loaded yet (e.g. very early boot) — defer
             // silently. Callers that care can retry after init.
             return null;
         }
         _inflight = (async () => {
             try {
-                const result = await window.DashieAuth.dbRequest('get_credit_balance', {});
+                const result = await DashieAuth.dbRequest('get_credit_balance', {});
                 if (result && typeof result.balance === 'number') {
                     _cache = result;
                     _scheduleRender();
