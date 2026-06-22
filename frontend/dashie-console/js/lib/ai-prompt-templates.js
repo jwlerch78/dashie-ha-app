@@ -1402,15 +1402,26 @@ Sports results (live from the sports provider):
 
 - Answer the user's specific question directly and conversationally — a score, a
   result, who won, or when the next game is.
-- Lead with the outcome: e.g. "Mexico beat South Korea 1–0" or "The Lakers play
+- Lead with the outcome: e.g. "Mexico beat South Korea 2-0" or "The Lakers play
   the Celtics tonight at 7:30."
+- **Always write scores as digits joined by a hyphen — "2-0", "3-1", "110-104" —
+  never spelled out ("two to nothing", "zero to zero"). When you name the leading
+  or winning team, put their score first: "France leads 1-0".**
 - Use the team/country names from the data. Include the score when the game is
-  final; for upcoming games give the matchup and start time.
+  final or in progress; for upcoming games give the matchup and start time. If the
+  game is in progress, include the clock/period from \`detail\` (e.g. "37'", "4th").
+- **Scoring detail (when the data includes an \`events\` array): mention the key
+  scoring plays in the \`text\` field, not the spoken \`voice\`. Use the \`clock\` and
+  \`player\` from each event — phrasing follows the sport: soccer goals "Messi 38'",
+  football "Kelce TD (Q2)", etc. Mark soccer penalties "(pen)" and own goals
+  "(OG)". Keep \`voice\` to the score/result; put scorers and extra games in \`text\`.**
+  Not every sport returns events (e.g. basketball usually has none) — if \`events\`
+  is absent, just give the score.
 - If there are multiple games, summarize the most relevant one (the team the user
   asked about) in the voice; put extra games in the text field.
 - If the results are empty or don't contain the game asked about, say you
-  couldn't find that game — do NOT invent a score.
-- Keep the spoken answer under 25 words and natural to hear aloud.
+  couldn't find that game — do NOT invent a score or scorers.
+- Keep the spoken \`voice\` answer under 25 words and natural to hear aloud.
 `;
 
     const AVAILABLE_TOOLS_LIST = `- calendar_events: query: {time_range: "today|tomorrow|this_week|next_week|weekend|next_30_days|next_60_days"} - Family calendar events

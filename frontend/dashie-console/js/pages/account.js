@@ -7,6 +7,7 @@ const AccountPage = {
     _loading: false,
     _error: null,
     _sharing: null,          // { householdSharing } — add-on mode only
+    _expiry: null,           // {next_expiry:{amount,expires_at}, lots} — get_credit_expiry
     _activeTab: 'account',   // 'account' | 'usage'
 
     setTab(tab) {
@@ -88,10 +89,16 @@ const AccountPage = {
         this._loading = true;
         this._error = null;
         try {
-            // Use the authenticated user ID from DashieAuth
-            const response = await DashieAuth.edgeFunctionRequest('check-subscription', {
-                auth_user_id: DashieAuth.jwtUserId,
-            });
+            // Use the authenticated user ID from DashieAuth. Fetch the credit
+            // balance / auto-replenish / expiry alongside (alpha-only) so the
+            // Credits card and section paint complete on first render.
+            const showCredits = typeof FeatureGate !== 'undefined' && FeatureGate.shouldShow('credits');
+            const [response] = await Promise.all([
+                DashieAuth.edgeFunctionRequest('check-subscription', { auth_user_id: DashieAuth.jwtUserId }),
+                showCredits ? CreditsService.fetch() : Promise.resolve(),
+                showCredits ? CreditsControls.fetchAutorefill() : Promise.resolve(),
+                showCredits ? DashieAuth.dbRequest('get_credit_expiry', {}).then(e => { this._expiry = e; }).catch(() => {}) : Promise.resolve(),
+            ]);
             this._data = response;
             // Household-sharing opt-in lives in the add-on only; fetch it so the
             // toggle reflects the persisted state. Best-effort (non-fatal).
@@ -196,11 +203,12 @@ const AccountPage = {
         const statusDisplay = this._formatStatus(d.subscription_status, d.tier_expires_at);
         const planLabel = this._formatPlan(d.subscription_plan);
 
-        // Credits (not yet wired to backend — show zeros until Phase 2).
-        // Whole credits surface is hidden in prod via FeatureGate; visible in
-        // dev so we can keep iterating on the per-token billing UI.
-        const credits = { included: 0, purchased: 0, total: 0 };
+        // Credits: real balance from CreditsService (the shared cache the
+        // sidebar reads). Gated alpha-only via FeatureGate, same as before.
         const showCredits = FeatureGate.shouldShow('credits');
+        const credBal = (typeof CreditsService !== 'undefined' && CreditsService.balance()) || {};
+        const credAmt = Number(credBal.balance || 0);
+        const credDetail = credBal.lifetime_granted ? `$${Number(credBal.lifetime_granted).toFixed(2)} granted total` : '';
         const expired = typeof SubscribeGate !== 'undefined' && SubscribeGate.isRequired(d);
         const isCancel = d.subscription_status === 'canceled';
         const bannerCopy = isCancel
@@ -230,7 +238,7 @@ const AccountPage = {
             <div class="stat-cards">
                 ${Card.stat('Plan', statusDisplay.label, statusDisplay.detail)}
                 ${Card.stat('Tier', this._formatTier(d.tier), d.has_voice_license ? 'Voice license active' : '')}
-                ${showCredits ? Card.stat('Credits', `$${credits.total.toFixed(2)}`, 'Coming in Phase 2') : ''}
+                ${showCredits ? Card.stat('Credits', `$${credAmt.toFixed(2)}`, credDetail) : ''}
             </div>
 
             <div class="section-header">Subscription Status</div>
@@ -269,13 +277,8 @@ const AccountPage = {
             </div>
 
             ${showCredits ? `
-                <div class="section-header">Credits & Usage</div>
-                <div class="card">
-                    <div class="card-body" style="color: var(--text-secondary); text-align: center; padding: 32px 16px;">
-                        <div style="font-size: var(--font-size-lg); color: var(--text-primary); margin-bottom: 6px;">Per-token billing coming soon</div>
-                        <div style="font-size: var(--font-size-sm);">Credit balance, usage tracking, and top-ups ship in Phase 2.</div>
-                    </div>
-                </div>
+                ${CreditsControls.renderExpiryNotice(this._expiry)}
+                ${CreditsControls.renderAccountControls()}
             ` : ''}
 
             ${this._renderHouseholdSharing()}

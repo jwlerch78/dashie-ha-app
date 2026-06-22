@@ -401,10 +401,27 @@ const ConsoleAiClient = {
         }
     },
 
+    /** Account-level "Save conversation details" opt-in
+     *  (user_settings.settings.ai.retainTranscripts, default false). Memoized
+     *  so we don't round-trip per chat message; privacy-first (suppress text
+     *  until we've confirmed it's on). */
+    async _retainTranscripts() {
+        if (this.__retainCache === undefined) {
+            try {
+                const s = await window.DashieAuth?.loadUserSettings();
+                this.__retainCache = s?.ai?.retainTranscripts === true;
+            } catch { this.__retainCache = false; }
+        }
+        return this.__retainCache;
+    },
+
     /** Fire-and-forget log_ai_interaction. Mirrors ai-analytics.js
-     *  logInteraction but stripped to the fields available here. */
-    _logInteraction(d) {
+     *  logInteraction but stripped to the fields available here. Transcript
+     *  text is gated on the account-level retainTranscripts opt-in; token/cost
+     *  rows always log for billing. */
+    async _logInteraction(d) {
         if (!window.DashieAuth?.dbRequest) return;
+        const retain = await this._retainTranscripts();
         const logData = {
             session_id: d.sessionId || null,
             request_type: d.requestType || 'console_chat',
@@ -421,8 +438,8 @@ const ConsoleAiClient = {
             total_latency_ms: d.totalLatencyMs || 0,
             success: true,
             error_type: null,
-            prompt_text: d.promptText || null,
-            response_text: d.responseText || null,
+            prompt_text: retain ? (d.promptText || null) : null,
+            response_text: retain ? (d.responseText || null) : null,
         };
         window.DashieAuth.dbRequest('log_ai_interaction', logData)
             .then(() => window.CreditsService?.fetch({ force: true }))

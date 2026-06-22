@@ -33,9 +33,6 @@ const AccountUsage = {
     _monthDaily: null,         // {days: [...]} always current month — powers the range-independent stat cards
     _rates: null,              // {rates: [...]} margined customer rate card for the pricing table
     _expiry: null,             // {next_expiry:{amount,expires_at}, lots:[...]} — get_credit_expiry
-    _autorefill: null,         // {enabled, threshold_usd, topup_usd, has_card, last_error} — get_autorefill
-    _busy: false,              // a buy / auto-replenish action is in flight
-    _autorefillError: null,    // last set_autorefill error (e.g. "buy a pack first")
     _flash: null,              // transient banner (e.g. after returning from Stripe)
     _activeRange: '30d',       // 'today' | '7d' | '30d' | 'month' | 'custom'
     _customStart: null,
@@ -86,14 +83,16 @@ const AccountUsage = {
             const now = new Date();
             const monthStart = new Date(now.getFullYear(), now.getMonth(), 1).toISOString();
             const nowIso = now.toISOString();
-            const [bal, sum, daily, monthDaily, rates, expiry, autorefill] = await Promise.all([
+            // Auto-replenish state lives in CreditsControls now (shared with the
+            // Account tab); fetch it alongside so the Balance card paints complete.
+            const [bal, sum, daily, monthDaily, rates, expiry] = await Promise.all([
                 DashieAuth.dbRequest('get_credit_balance', {}),
                 DashieAuth.dbRequest('get_usage_summary', { range_start: start, range_end: end, tz }),
                 DashieAuth.dbRequest('get_usage_daily',   { range_start: start, range_end: end, tz }),
                 DashieAuth.dbRequest('get_usage_daily',   { range_start: monthStart, range_end: nowIso, tz }),
                 DashieAuth.dbRequest('get_credit_rates',  {}).catch(() => null),
                 DashieAuth.dbRequest('get_credit_expiry', {}).catch(() => null),
-                DashieAuth.dbRequest('get_autorefill',    {}).catch(() => null),
+                CreditsControls.fetchAutorefill().catch(() => null),
             ]);
             this._balance = bal;
             this._summary = sum;
@@ -101,7 +100,6 @@ const AccountUsage = {
             this._monthDaily = monthDaily;
             this._rates = rates;
             this._expiry = expiry;
-            this._autorefill = autorefill;
             // Share the freshly-fetched balance with the sidebar so its
             // bottom-left widget never disagrees with the stat strip on
             // this page. CreditsService re-renders the sidebar in-place.
@@ -331,8 +329,7 @@ const AccountUsage = {
             <div style="max-width: 800px;">
                 ${this._renderFlash()}
                 ${this._renderStatStrip()}
-                ${this._renderExpiryNotice()}
-                ${this._renderBuyCreditsCard()}
+                ${CreditsControls.renderExpiryNotice(this._expiry)}
                 ${this._renderAdminSection()}
                 ${this._renderRangeBar()}
                 ${this._renderSummaryCard()}
@@ -351,134 +348,6 @@ const AccountUsage = {
                 </div></div>`;
     },
     dismissFlash() { this._flash = null; App.renderPage(); },
-
-    // ── credit packs (env-specific Stripe price ids) ───────────
-    /** Staging uses the test-mode prices; prod uses the live-mode copies. */
-    _creditPacks() {
-        const url = (window.DashieAuth?.config?.url) || '';
-        const isProd = url.includes('cseaywxcvnxcsypaqaid');
-        return isProd ? [
-            { usd: 5,  price_id: 'price_1Tk6cxDeFmFAr8Ip6Y1EtdbQ' },
-            { usd: 10, price_id: 'price_1Tk6cxDeFmFAr8IpJAXuCuNS' },
-            { usd: 25, price_id: 'price_1Tk6cxDeFmFAr8IpgMVJ5dkw' },
-        ] : [
-            { usd: 5,  price_id: 'price_1Tk6bID1HbVkqny7hS1Ey7sW' },
-            { usd: 10, price_id: 'price_1Tk6bID1HbVkqny7LS4LB1tX' },
-            { usd: 25, price_id: 'price_1Tk6bID1HbVkqny7tCp3ozbP' },
-        ];
-    },
-
-    /** Upcoming credit expiry banner (with 30/7-day warning styling). */
-    _renderExpiryNotice() {
-        const next = this._expiry?.next_expiry;
-        const amt = Number(next?.amount || 0);
-        if (!next?.expires_at || amt <= 0) return '';
-        const exp = new Date(next.expires_at);
-        const days = Math.ceil((exp.getTime() - Date.now()) / 86400_000);
-        const dateStr = exp.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
-        let color = 'var(--text-muted)';
-        if (days <= 7) color = 'var(--status-error, #c00)';
-        else if (days <= 30) color = 'var(--status-warning, #b45309)';
-        const within = days <= 30;
-        return `
-            <div class="card" style="margin-top: 12px; ${within ? `border-color: ${color};` : ''}">
-                <div class="card-body" style="padding: 12px 16px; font-size: 13px; color: ${color};">
-                    ${within ? '⚠️ ' : ''}<strong>$${amt.toFixed(2)}</strong> in credits expire on <strong>${dateStr}</strong>${days >= 0 ? ` (${days} day${days === 1 ? '' : 's'})` : ''}.
-                </div></div>`;
-    },
-
-    /** Buy Credits packs + the auto-replenish settings. */
-    _renderBuyCreditsCard() {
-        const packs = this._creditPacks();
-        const ar = this._autorefill || {};
-        const busy = this._busy;
-        const buttons = packs.map(p => `
-            <button class="btn btn-secondary" ${busy ? 'disabled' : ''} onclick="AccountUsage.buyCredits('${p.price_id}')" style="flex:1; min-width:80px; font-weight:600;">
-                Buy $${p.usd}
-            </button>`).join('');
-
-        const amtOptions = [5, 10, 25].map(a => `<option value="${a}" ${Number(ar.topup_usd) === a ? 'selected' : ''}>$${a}</option>`).join('');
-        const enableDisabled = (!ar.has_card && !ar.enabled);
-        const arError = this._autorefillError
-            ? `<div style="color: var(--status-error,#c00); font-size:12px; margin-top:6px;">${this._escape(this._autorefillError)}</div>` : '';
-        const lastErr = (ar.enabled && ar.last_error)
-            ? `<div style="color: var(--status-error,#c00); font-size:12px; margin-top:6px;">Last auto-charge failed: ${this._escape(ar.last_error)}</div>` : '';
-
-        const autorefill = `
-            <div style="padding: 14px 16px; border-top: 1px solid var(--border, #e5e7eb);">
-                <div style="display:flex; justify-content:space-between; align-items:center; gap:12px;">
-                    <div>
-                        <div style="font-weight:600; font-size:14px;">Auto-replenish</div>
-                        <div style="color: var(--text-muted); font-size:12px; margin-top:2px;">
-                            ${ar.has_card ? 'Automatically top up when your balance runs low.' : 'Buy a pack once to save a card, then enable.'}
-                        </div>
-                    </div>
-                    <label class="switch" style="cursor:${enableDisabled ? 'not-allowed' : 'pointer'};">
-                        <input type="checkbox" ${ar.enabled ? 'checked' : ''} ${(busy || enableDisabled) ? 'disabled' : ''} onchange="AccountUsage.toggleAutorefill()" />
-                    </label>
-                </div>
-                ${ar.enabled ? `
-                <div style="display:flex; gap:18px; align-items:center; margin-top:10px; font-size:13px; flex-wrap:wrap;">
-                    <label style="display:inline-flex; align-items:center; gap:6px;">When below
-                        $<input type="number" min="0" max="50" step="1" value="${Number(ar.threshold_usd ?? 1)}" ${busy ? 'disabled' : ''}
-                            onchange="AccountUsage.setAutorefillThreshold(this.value)" style="width:54px;" /></label>
-                    <label style="display:inline-flex; align-items:center; gap:6px;">add
-                        <select ${busy ? 'disabled' : ''} onchange="AccountUsage.setAutorefillAmount(this.value)">${amtOptions}</select>
-                    </label>
-                </div>` : ''}
-                ${lastErr}${arError}
-            </div>`;
-
-        return `
-            <div class="card" style="margin-top: 20px;"><div class="card-body" style="padding: 0;">
-                <div style="padding: 12px 16px; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; color: var(--text-muted);">
-                    Buy Credits
-                </div>
-                <div style="padding: 4px 16px 16px;">
-                    <div style="display:flex; gap:10px;">${buttons}</div>
-                    <div style="color: var(--text-muted); font-size:11px; margin-top:8px;">1 credit = $1 USD · credits expire 1 year after purchase.</div>
-                </div>
-                ${autorefill}
-            </div></div>`;
-    },
-
-    // ── billing actions ────────────────────────────────────────
-
-    async buyCredits(priceId) {
-        if (this._busy) return;
-        this._busy = true; this._error = null; App.renderPage();
-        try {
-            const ret = window.location.origin + window.location.pathname;
-            const res = await DashieAuth.edgeFunctionRequest('create-credit-checkout', {
-                auth_user_id: DashieAuth.jwtUserId,
-                email: DashieAuth.jwtUserEmail,
-                price_id: priceId,
-                success_url: ret + '?credits=success',
-                cancel_url: ret + '?credits=cancel',
-            });
-            if (res?.checkout_url) { window.location = res.checkout_url; return; }
-            throw new Error(res?.error || 'No checkout URL returned');
-        } catch (e) {
-            this._busy = false;
-            this._error = 'Checkout failed: ' + (e?.message || e);
-            App.renderPage();
-        }
-    },
-
-    async _saveAutorefill(patch) {
-        if (this._busy) return;
-        this._busy = true; this._autorefillError = null; App.renderPage();
-        try {
-            const res = await DashieAuth.dbRequest('set_autorefill', patch);
-            this._autorefill = res;   // handler returns the updated settings
-        } catch (e) {
-            this._autorefillError = (e?.message || String(e)).replace(/^DB operation error:\s*/, '');
-        }
-        this._busy = false; App.renderPage();
-    },
-    toggleAutorefill() { this._saveAutorefill({ enabled: !(this._autorefill?.enabled) }); },
-    setAutorefillAmount(v) { this._saveAutorefill({ topup_usd: Number(v) }); },
-    setAutorefillThreshold(v) { const n = Number(v); if (isFinite(n)) this._saveAutorefill({ threshold_usd: n }); },
 
     /** Credit Pricing table — customer-facing (already margined) rate per tool
      *  with a short description. Source: get_credit_rates. Build plan §11. */
@@ -523,15 +392,16 @@ const AccountUsage = {
     },
 
     _renderStatStrip() {
-        const bal = this._balance || {};
         // Today + month totals are derived from the existing summary fetch
         // when the active range covers them; otherwise we show a "—".
         const todayCost = this._totalCostForDay(this._todayDate());
         const monthCost = this._totalCostForMonth();
+        // Balance card is the shared CreditsControls card (balance + Buy more +
+        // auto-replenish). align-items:start so its extra height doesn't stretch
+        // the two simple stat cards beside it.
         return `
-            <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-bottom: 20px;">
-                ${this._statCard('Balance', this._fmtCost(bal.balance || 0),
-                    bal.lifetime_granted ? `${this._fmtCost(bal.lifetime_granted)} granted total` : '')}
+            <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-bottom: 20px; align-items: start;">
+                ${CreditsControls.renderBalanceCard(this._balance)}
                 ${this._statCard('Today', todayCost == null ? '—' : this._fmtCost(todayCost), '')}
                 ${this._statCard('This month', monthCost == null ? '—' : this._fmtCost(monthCost), '')}
             </div>`;

@@ -1,0 +1,225 @@
+/* ============================================================
+   Credits Controls (shared)
+   ------------------------------------------------------------
+   The compact credit UI shared by BOTH the Credit Usage tab
+   (AccountUsage) and the Account tab (AccountPage):
+     - a "Buy more" affordance that opens BuyCreditsModal
+     - an Auto-replenish checkbox (+ inline threshold/amount)
+     - the < 60-day expiry notice
+
+   Balance is read from CreditsService (the single cached source
+   the sidebar also reads), so the two tabs never disagree.
+   Auto-replenish state/handlers live HERE (moved out of
+   account-usage.js) so both pages reuse one implementation.
+
+   buyCredits() is the single choke point for checkout: it builds
+   the env-correct return URLs and calls create-credit-checkout,
+   returning the Stripe URL. BuyCreditsModal owns whether to
+   redirect (standalone browser) or pop out + poll (HA ingress).
+   ============================================================ */
+
+const CreditsControls = {
+    _autorefill: null,          // {enabled, threshold_usd, topup_usd, has_card, last_error}
+    _autorefillError: null,     // last set_autorefill error
+    _busy: false,               // a buy / auto-replenish action is in flight
+    _inflightAutorefill: null,  // dedupe concurrent get_autorefill
+
+    // ── data ──────────────────────────────────────────────────
+
+    /** Env-branched credit-pack price ids (staging uses Stripe test mode). */
+    creditPacks() {
+        const url = (window.DashieAuth?.config?.url) || '';
+        const isProd = url.includes('cseaywxcvnxcsypaqaid');
+        return isProd ? [
+            { usd: 5,  price_id: 'price_1Tk6cxDeFmFAr8Ip6Y1EtdbQ' },
+            { usd: 10, price_id: 'price_1Tk6cxDeFmFAr8IpJAXuCuNS' },
+            { usd: 25, price_id: 'price_1Tk6cxDeFmFAr8IpgMVJ5dkw' },
+        ] : [
+            { usd: 5,  price_id: 'price_1Tk6bID1HbVkqny7hS1Ey7sW' },
+            { usd: 10, price_id: 'price_1Tk6bID1HbVkqny7LS4LB1tX' },
+            { usd: 25, price_id: 'price_1Tk6bID1HbVkqny7tCp3ozbP' },
+        ];
+    },
+
+    /** Standalone console base for Stripe return URLs when in HA ingress —
+     *  the external checkout tab has no ingress session, so it must land on
+     *  the public console, not the ingress URL. */
+    _consoleBaseUrl() {
+        const url = (window.DashieAuth?.config?.url) || '';
+        const isProd = url.includes('cseaywxcvnxcsypaqaid');
+        return isProd ? 'https://app.dashieapp.com/console/' : 'https://dev.dashieapp.com/console/';
+    },
+
+    /** Fetch auto-replenish settings (deduped). Stores on _autorefill. */
+    async fetchAutorefill(opts = {}) {
+        if (this._inflightAutorefill && !opts.force) return this._inflightAutorefill;
+        if (!window.DashieAuth?.dbRequest) return null;
+        this._inflightAutorefill = (async () => {
+            try {
+                const res = await DashieAuth.dbRequest('get_autorefill', {});
+                if (res) this._autorefill = res;
+                return res;
+            } catch (e) {
+                console.warn('[CreditsControls] get_autorefill failed', e);
+                return null;
+            } finally {
+                this._inflightAutorefill = null;
+            }
+        })();
+        return this._inflightAutorefill;
+    },
+
+    // ── buy flow ──────────────────────────────────────────────
+
+    openBuyModal() {
+        if (this._busy) return;
+        if (typeof BuyCreditsModal === 'undefined') return;
+        BuyCreditsModal.open({
+            packs: this.creditPacks(),
+            getCheckoutUrl: (priceId) => this.buyCredits(priceId),
+        });
+    },
+
+    /** Single checkout choke point. Builds env-correct return URLs, calls
+     *  create-credit-checkout, returns the Stripe URL. Throws on failure.
+     *  Redirect-vs-popout is decided by BuyCreditsModal (ingress-aware). */
+    async buyCredits(priceId) {
+        const addon = !!window.DashieAuth?.isAddonMode;
+        const base = addon
+            ? this._consoleBaseUrl()
+            : (window.location.origin + window.location.pathname);
+        const sep = base.includes('?') ? '&' : '?';
+        const res = await DashieAuth.edgeFunctionRequest('create-credit-checkout', {
+            auth_user_id: DashieAuth.jwtUserId,
+            email: DashieAuth.jwtUserEmail,
+            price_id: priceId,
+            success_url: base + sep + 'credits=success',
+            cancel_url: base + sep + 'credits=cancel',
+        });
+        if (!res?.checkout_url) throw new Error(res?.error || 'No checkout URL returned');
+        return res.checkout_url;
+    },
+
+    // ── auto-replenish handlers (moved from AccountUsage) ──────
+
+    async _saveAutorefill(patch) {
+        if (this._busy) return;
+        this._busy = true; this._autorefillError = null; App.renderPage();
+        try {
+            const res = await DashieAuth.dbRequest('set_autorefill', patch);
+            this._autorefill = res;   // handler returns the updated settings
+        } catch (e) {
+            this._autorefillError = (e?.message || String(e)).replace(/^DB operation error:\s*/, '');
+        }
+        this._busy = false; App.renderPage();
+    },
+    toggleAutorefill() { this._saveAutorefill({ enabled: !(this._autorefill?.enabled) }); },
+    setAutorefillAmount(v) { this._saveAutorefill({ topup_usd: Number(v) }); },
+    setAutorefillThreshold(v) { const n = Number(v); if (isFinite(n)) this._saveAutorefill({ threshold_usd: n }); },
+
+    // ── render pieces ─────────────────────────────────────────
+
+    /** The compact "Buy more" button. */
+    _buyButton() {
+        return `<button class="btn btn-secondary btn-sm" ${this._busy ? 'disabled' : ''}
+            onclick="CreditsControls.openBuyModal()" style="font-weight:600; flex-shrink:0;">Buy more</button>`;
+    },
+
+    /** Auto-replenish checkbox + inline threshold/amount (revealed when on) +
+     *  hint/error lines. Disabled until a card is saved (first purchase). */
+    _autorefillBlock() {
+        const ar = this._autorefill || {};
+        const busy = this._busy;
+        const enableDisabled = (!ar.has_card && !ar.enabled);
+        const amtOptions = [5, 10, 25].map(a =>
+            `<option value="${a}" ${Number(ar.topup_usd) === a ? 'selected' : ''}>$${a}</option>`).join('');
+        const arError = this._autorefillError
+            ? `<div style="color: var(--status-error,#c00); font-size:12px; margin-top:6px;">${this._escape(this._autorefillError)}</div>` : '';
+        const lastErr = (ar.enabled && ar.last_error)
+            ? `<div style="color: var(--status-error,#c00); font-size:12px; margin-top:6px;">Last auto-charge failed: ${this._escape(ar.last_error)}</div>` : '';
+        const hint = (enableDisabled)
+            ? `<div style="color: var(--text-muted); font-size:11px; margin-top:4px;">Buy a pack once to save a card, then enable.</div>` : '';
+
+        return `
+            <div style="margin-top:12px;">
+                <label style="display:inline-flex; align-items:center; gap:8px; cursor:${enableDisabled ? 'not-allowed' : 'pointer'}; font-size:13px; font-weight:500;"
+                    ${enableDisabled ? 'title="Buy a pack once to save a card"' : ''}>
+                    <input type="checkbox" ${ar.enabled ? 'checked' : ''} ${(busy || enableDisabled) ? 'disabled' : ''}
+                        onchange="CreditsControls.toggleAutorefill()" />
+                    Auto-replenish
+                </label>
+                ${ar.enabled ? `
+                <div style="display:flex; gap:14px; align-items:center; margin-top:8px; font-size:13px; flex-wrap:wrap;">
+                    <label style="display:inline-flex; align-items:center; gap:6px;">when below
+                        $<input type="number" min="0" max="50" step="1" value="${Number(ar.threshold_usd ?? 1)}" ${busy ? 'disabled' : ''}
+                            onchange="CreditsControls.setAutorefillThreshold(this.value)" style="width:52px;" /></label>
+                    <label style="display:inline-flex; align-items:center; gap:6px;">add
+                        <select ${busy ? 'disabled' : ''} onchange="CreditsControls.setAutorefillAmount(this.value)">${amtOptions}</select>
+                    </label>
+                </div>` : ''}
+                ${hint}${lastErr}${arError}
+            </div>`;
+    },
+
+    /** Rich Balance card for the Credit Usage tab's stat strip: balance value,
+     *  a "Buy more" button next to it, and the auto-replenish checkbox below. */
+    renderBalanceCard(balanceObj) {
+        const bal = balanceObj || (window.CreditsService?.balance?.()) || {};
+        const balance = Number(bal.balance || 0);
+        const granted = bal.lifetime_granted
+            ? `<div style="font-size: 11px; color: var(--text-muted); margin-top: 2px;">$${Number(bal.lifetime_granted).toFixed(2)} granted total</div>` : '';
+        return `
+            <div class="card"><div class="card-body" style="padding: 14px 16px;">
+                <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:12px;">
+                    <div>
+                        <div style="font-size: 11px; font-weight: 600; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px;">Balance</div>
+                        <div style="font-size: 22px; font-weight: 700; color: var(--text-primary); margin-top: 4px;">$${balance.toFixed(2)}</div>
+                        ${granted}
+                    </div>
+                    ${this._buyButton()}
+                </div>
+                ${this._autorefillBlock()}
+            </div></div>`;
+    },
+
+    /** Controls block for the Account tab's "Credits" section: buy-more +
+     *  auto-replenish (the balance itself is already shown in the stat card). */
+    renderAccountControls() {
+        return `
+            <div class="section-header">Credits</div>
+            <div class="card"><div class="card-body">
+                <div style="display:flex; justify-content:space-between; align-items:center; gap:12px;">
+                    <div style="color: var(--text-secondary); font-size: var(--font-size-sm);">Buy credits or set up auto-replenish.</div>
+                    ${this._buyButton()}
+                </div>
+                ${this._autorefillBlock()}
+            </div></div>`;
+    },
+
+    /** Credit-expiry banner — only shown when the soonest expiry is < 60 days
+     *  away. Escalating styling: <=30d warns (border + ⚠️), <=7d errors. */
+    renderExpiryNotice(expiryObj) {
+        const next = expiryObj?.next_expiry;
+        const amt = Number(next?.amount || 0);
+        if (!next?.expires_at || amt <= 0) return '';
+        const exp = new Date(next.expires_at);
+        const days = Math.ceil((exp.getTime() - Date.now()) / 86400_000);
+        if (days >= 60) return '';   // hide until it's actually close
+        const dateStr = exp.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
+        let color = 'var(--text-muted)';
+        if (days <= 7) color = 'var(--status-error, #c00)';
+        else if (days <= 30) color = 'var(--status-warning, #b45309)';
+        const within = days <= 30;
+        return `
+            <div class="card" style="margin-top: 12px; ${within ? `border-color: ${color};` : ''}">
+                <div class="card-body" style="padding: 12px 16px; font-size: 13px; color: ${color};">
+                    ${within ? '⚠️ ' : ''}<strong>$${amt.toFixed(2)}</strong> in credits expire on <strong>${dateStr}</strong>${days >= 0 ? ` (${days} day${days === 1 ? '' : 's'})` : ''}.
+                </div></div>`;
+    },
+
+    _escape(s) {
+        return String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+    },
+};
+
+window.CreditsControls = CreditsControls;
