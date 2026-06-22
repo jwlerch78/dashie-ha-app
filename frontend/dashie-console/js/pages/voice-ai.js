@@ -257,10 +257,10 @@ const VoiceAiPage = {
 
     _personalityRow(p, isCustom) {
         const id = this._escape(isCustom ? p.id : (p.key || p.id));
-        const voiceBits = [];
-        if (p.voice) voiceBits.push(`${p.voice}${p.voice_mode === 'fixed' ? ' (locked)' : ''}`);
+        // Voice name intentionally hidden here — matches the tablet's Voice & AI menu,
+        // which doesn't surface the underlying voice on the personality list.
         const notes = isCustom ? '' : this.overrideNotes(p.key || p.id);
-        const subtitle = [p.description || '', voiceBits.join(''), notes ? '✏️ family notes set' : '']
+        const subtitle = [p.description || '', notes ? '✏️ family notes set' : '']
             .filter(Boolean).join(' · ');
 
         const actions = isCustom

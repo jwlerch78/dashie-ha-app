@@ -34,8 +34,13 @@ const BuyCreditsModal = {
 
     _render(packs) {
         const buttons = packs.map(p => `
-            <button class="btn btn-secondary" data-bc-price="${this._escape(p.price_id)}"
-                style="flex:1; min-width:80px; font-weight:600; padding:14px 0; font-size:15px;">
+            <button data-bc-price="${this._escape(p.price_id)}"
+                style="flex:1; min-width:80px; display:flex; align-items:center; justify-content:center;
+                       padding:20px 0; font-size:20px; font-weight:700; color:#fff; cursor:pointer;
+                       background:var(--accent); border:1px solid var(--accent); border-radius:10px;
+                       transition:background 0.15s;"
+                onmouseover="this.style.background='var(--accent-hover)'"
+                onmouseout="this.style.background='var(--accent)'">
                 $${p.usd}
             </button>`).join('');
 
@@ -77,12 +82,14 @@ const BuyCreditsModal = {
         } catch (e) {
             if (body) body.style.opacity = '';
             this._root?.querySelectorAll('[data-bc-price]').forEach(b => { b.disabled = false; });
-            if (window.Toast) Toast.error('Checkout failed: ' + (e?.message || e));
+            Toast.error('Checkout failed: ' + (e?.message || e));
             return;
         }
 
         // Standalone browser: full-page redirect to Stripe (return via ?credits=success).
-        if (!window.DashieAuth?.isAddonMode) { window.location = url; return; }
+        // DashieAuth is a bare global (not on window) — must reference it directly,
+        // else isAddonMode reads undefined and ingress falls through to same-frame nav.
+        if (!DashieAuth.isAddonMode) { window.location = url; return; }
 
         // HA ingress: pop out to a new tab + poll for the granted balance.
         const cur = window.CreditsService?.balance?.();
@@ -148,11 +155,11 @@ const BuyCreditsModal = {
                 </div>`;
             body.querySelector('[data-bc="done"]')?.addEventListener('click', () => {
                 this._closeImmediate();
-                window.App?.renderPage?.();
+                App.renderPage();
             });
         }
         // Refresh the page behind the modal so its balance/stat cards update too.
-        window.App?.renderPage?.();
+        App.renderPage();
     },
 
     _cancel() { this._closeImmediate(); },

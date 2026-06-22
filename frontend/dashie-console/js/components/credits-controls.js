@@ -28,7 +28,7 @@ const CreditsControls = {
 
     /** Env-branched credit-pack price ids (staging uses Stripe test mode). */
     creditPacks() {
-        const url = (window.DashieAuth?.config?.url) || '';
+        const url = (DashieAuth.config?.url) || '';
         const isProd = url.includes('cseaywxcvnxcsypaqaid');
         return isProd ? [
             { usd: 5,  price_id: 'price_1Tk6cxDeFmFAr8Ip6Y1EtdbQ' },
@@ -45,7 +45,7 @@ const CreditsControls = {
      *  the external checkout tab has no ingress session, so it must land on
      *  the public console, not the ingress URL. */
     _consoleBaseUrl() {
-        const url = (window.DashieAuth?.config?.url) || '';
+        const url = (DashieAuth.config?.url) || '';
         const isProd = url.includes('cseaywxcvnxcsypaqaid');
         return isProd ? 'https://app.dashieapp.com/console/' : 'https://dev.dashieapp.com/console/';
     },
@@ -53,7 +53,7 @@ const CreditsControls = {
     /** Fetch auto-replenish settings (deduped). Stores on _autorefill. */
     async fetchAutorefill(opts = {}) {
         if (this._inflightAutorefill && !opts.force) return this._inflightAutorefill;
-        if (!window.DashieAuth?.dbRequest) return null;
+        if (!DashieAuth.dbRequest) return null;
         this._inflightAutorefill = (async () => {
             try {
                 const res = await DashieAuth.dbRequest('get_autorefill', {});
@@ -84,7 +84,7 @@ const CreditsControls = {
      *  create-credit-checkout, returns the Stripe URL. Throws on failure.
      *  Redirect-vs-popout is decided by BuyCreditsModal (ingress-aware). */
     async buyCredits(priceId) {
-        const addon = !!window.DashieAuth?.isAddonMode;
+        const addon = !!DashieAuth.isAddonMode;
         const base = addon
             ? this._consoleBaseUrl()
             : (window.location.origin + window.location.pathname);
@@ -176,20 +176,6 @@ const CreditsControls = {
                         <div style="font-size: 22px; font-weight: 700; color: var(--text-primary); margin-top: 4px;">$${balance.toFixed(2)}</div>
                         ${granted}
                     </div>
-                    ${this._buyButton()}
-                </div>
-                ${this._autorefillBlock()}
-            </div></div>`;
-    },
-
-    /** Controls block for the Account tab's "Credits" section: buy-more +
-     *  auto-replenish (the balance itself is already shown in the stat card). */
-    renderAccountControls() {
-        return `
-            <div class="section-header">Credits</div>
-            <div class="card"><div class="card-body">
-                <div style="display:flex; justify-content:space-between; align-items:center; gap:12px;">
-                    <div style="color: var(--text-secondary); font-size: var(--font-size-sm);">Buy credits or set up auto-replenish.</div>
                     ${this._buyButton()}
                 </div>
                 ${this._autorefillBlock()}

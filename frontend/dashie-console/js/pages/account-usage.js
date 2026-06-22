@@ -602,10 +602,14 @@ const AccountUsage = {
             .join(' · ');
     },
 
-    /** USD cost of a single drill-down item, computed from the catalog. This is
-     *  illustrative detail (pre-margin) showing a turn's makeup; the authoritative
-     *  spend is the day/summary totals (actual margined charges). */
+    /** USD cost of a single drill-down item. Prefers the ACTUAL margined charge
+     *  debited for this call (joined server-side from credit_deductions) — it
+     *  matches the day total and is the only way to cost TTS/STT, which have no
+     *  token-based estimate (that's why those line items used to read $0.00).
+     *  Falls back to a client-side catalog estimate for legacy rows that predate
+     *  credit_deductions. */
     _itemCost(c) {
+        if (c.actual_cost_usd != null) return Number(c.actual_cost_usd) || 0;
         const C = window.AiModelCatalog;
         if (!C) return 0;
         if (c.service === 'ai') {

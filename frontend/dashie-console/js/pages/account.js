@@ -203,12 +203,10 @@ const AccountPage = {
         const statusDisplay = this._formatStatus(d.subscription_status, d.tier_expires_at);
         const planLabel = this._formatPlan(d.subscription_plan);
 
-        // Credits: real balance from CreditsService (the shared cache the
-        // sidebar reads). Gated alpha-only via FeatureGate, same as before.
+        // Credits: the same rich box used on the Credit Usage tab (balance +
+        // Buy more + auto-replenish), reading from the shared CreditsService.
+        // Gated alpha-only via FeatureGate.
         const showCredits = FeatureGate.shouldShow('credits');
-        const credBal = (typeof CreditsService !== 'undefined' && CreditsService.balance()) || {};
-        const credAmt = Number(credBal.balance || 0);
-        const credDetail = credBal.lifetime_granted ? `$${Number(credBal.lifetime_granted).toFixed(2)} granted total` : '';
         const expired = typeof SubscribeGate !== 'undefined' && SubscribeGate.isRequired(d);
         const isCancel = d.subscription_status === 'canceled';
         const bannerCopy = isCancel
@@ -235,11 +233,12 @@ const AccountPage = {
                 ${user.email} · Signed in via Google
             </div>
 
-            <div class="stat-cards">
+            <div class="stat-cards" style="align-items: start;">
                 ${Card.stat('Plan', statusDisplay.label, statusDisplay.detail)}
                 ${Card.stat('Tier', this._formatTier(d.tier), d.has_voice_license ? 'Voice license active' : '')}
-                ${showCredits ? Card.stat('Credits', `$${credAmt.toFixed(2)}`, credDetail) : ''}
+                ${showCredits ? CreditsControls.renderBalanceCard(CreditsService.balance()) : ''}
             </div>
+            ${showCredits ? CreditsControls.renderExpiryNotice(this._expiry) : ''}
 
             <div class="section-header">Subscription Status</div>
             <div class="card">
@@ -275,11 +274,6 @@ const AccountPage = {
                     ` : ''}
                 </div>
             </div>
-
-            ${showCredits ? `
-                ${CreditsControls.renderExpiryNotice(this._expiry)}
-                ${CreditsControls.renderAccountControls()}
-            ` : ''}
 
             ${this._renderHouseholdSharing()}
 
