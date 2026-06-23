@@ -396,14 +396,16 @@ const AccountUsage = {
         // when the active range covers them; otherwise we show a "—".
         const todayCost = this._totalCostForDay(this._todayDate());
         const monthCost = this._totalCostForMonth();
-        // Balance card is the shared CreditsControls card (balance + Buy more +
-        // auto-replenish). align-items:start so its extra height doesn't stretch
-        // the two simple stat cards beside it.
+        // Balance card (balance + Buy more + auto-replenish) on the left; Today
+        // stacked over This month on the right. align-items:start so the Balance
+        // card's extra height doesn't stretch the stacked column.
         return `
-            <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-bottom: 20px; align-items: start;">
+            <div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; margin-bottom: 20px; align-items: start;">
                 ${CreditsControls.renderBalanceCard(this._balance)}
-                ${this._statCard('Today', todayCost == null ? '—' : this._fmtCost(todayCost), '')}
-                ${this._statCard('This month', monthCost == null ? '—' : this._fmtCost(monthCost), '')}
+                <div style="display: grid; gap: 12px;">
+                    ${this._statCard('Today', todayCost == null ? '—' : this._fmtCost(todayCost), '')}
+                    ${this._statCard('This month', monthCost == null ? '—' : this._fmtCost(monthCost), '')}
+                </div>
             </div>`;
     },
 
