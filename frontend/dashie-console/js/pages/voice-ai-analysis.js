@@ -226,7 +226,7 @@ const VoiceAiAnalysis = {
     },
 
     _renderStep(s) {
-        const KIND_LABELS = { ai: 'AI', web_search: 'SEARCH', sports: 'SPORTS', tts: 'TTS', stt: 'STT' };
+        const KIND_LABELS = { ai: 'AI', web_search: 'SEARCH', sports: 'SPORTS', tts: 'SPEECH', stt: 'SPEECH' };
         const kind = KIND_LABELS[s.kind] || (s.kind || '').toUpperCase();
         let desc;
         if (s.kind === 'ai') {
