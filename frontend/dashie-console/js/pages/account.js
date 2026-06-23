@@ -8,6 +8,7 @@ const AccountPage = {
     _error: null,
     _expiry: null,           // {next_expiry:{amount,expires_at}, lots} — get_credit_expiry
     _transactions: null,     // [{kind,label,amount,unit,note,ts}] — get_transactions
+    _subRenewsAt: null,      // ISO — active sub's next renewal (Stripe current_period_end)
     _showAllTx: false,       // "Show transaction history" expand
     _activeTab: 'account',   // 'account' | 'usage'
 
@@ -99,7 +100,12 @@ const AccountPage = {
                 showCredits ? CreditsService.fetch() : Promise.resolve(),
                 showCredits ? CreditsControls.fetchAutorefill() : Promise.resolve(),
                 showCredits ? DashieAuth.dbRequest('get_credit_expiry', {}).then(e => { this._expiry = e; }).catch(() => {}) : Promise.resolve(),
-                showCredits ? DashieAuth.dbRequest('get_transactions', { limit: 50 }).then(r => { this._transactions = r?.transactions || []; }).catch(() => {}) : Promise.resolve(),
+                showCredits ? DashieAuth.dbRequest('get_transactions', { limit: 50 }).then(r => {
+                    // Only overwrite on a real array — a transient failure must not
+                    // wipe the displayed list (was showing blank on navigate-back).
+                    if (Array.isArray(r?.transactions)) this._transactions = r.transactions;
+                    if (r?.subscription_renews_at) this._subRenewsAt = r.subscription_renews_at;
+                }).catch(() => {}) : Promise.resolve(),
             ]);
             this._data = response;
             this._loading = false;
@@ -140,6 +146,29 @@ const AccountPage = {
     _retry() {
         this._error = null;
         this._data = null;
+        App.renderPage();
+    },
+
+    /** On re-entry, soft-refresh the credit/transaction data in place (no loading
+     *  flash) so navigating back shows current data and self-heals a transient
+     *  fetch failure (transactions/auto-replenish were going blank). First visit
+     *  goes through render()'s _fetchData. */
+    onNavigateTo() {
+        if (this._data) this._refreshCredits();
+    },
+
+    async _refreshCredits() {
+        const showCredits = typeof FeatureGate !== 'undefined' && FeatureGate.shouldShow('credits');
+        if (!showCredits) return;
+        await Promise.all([
+            CreditsService.fetch({ force: true }).catch(() => {}),
+            CreditsControls.fetchAutorefill({ force: true }).catch(() => {}),
+            DashieAuth.dbRequest('get_credit_expiry', {}).then(e => { this._expiry = e; }).catch(() => {}),
+            DashieAuth.dbRequest('get_transactions', { limit: 50 }).then(r => {
+                if (Array.isArray(r?.transactions)) this._transactions = r.transactions;
+                if (r?.subscription_renews_at) this._subRenewsAt = r.subscription_renews_at;
+            }).catch(() => {}),
+        ]);
         App.renderPage();
     },
 
@@ -250,18 +279,21 @@ const AccountPage = {
     },
 
     /** Single "Plan" box: tier (e.g. Core) + a renews/expires date, with a
-     *  Cancel button (opens the Stripe billing portal) on the right. Replaces
-     *  the separate Plan + Tier stat cards. */
+     *  "Manage subscription" button (opens the Stripe billing portal — where you
+     *  can change the plan or cancel) on the right. Replaces the separate Plan +
+     *  Tier stat cards. The renewal date for an active sub comes from Stripe
+     *  (current_period_end via get_transactions) since tier_expires_at is null. */
     _renderPlanBox(d) {
         const tier = this._formatTier(d.tier);
         const status = d.subscription_status;
+        const date = this._subRenewsAt || d.tier_expires_at;
         const verb = status === 'trialing' ? 'trial ends'
             : status === 'canceled' ? 'expires'
             : 'renews on';
-        const sub = d.tier_expires_at ? `${verb} ${this._formatDate(d.tier_expires_at)}` : '';
-        const cancelable = status === 'active' || status === 'trialing';
-        const cancelBtn = cancelable
-            ? `<button class="btn btn-secondary btn-sm" onclick="AccountPage.openBillingPortal()" style="flex-shrink:0;">Cancel</button>`
+        const sub = date ? `${verb} ${this._formatDate(date)}` : '';
+        const manageable = status === 'active' || status === 'trialing' || status === 'canceled';
+        const manageBtn = manageable
+            ? `<button class="btn btn-secondary btn-sm" onclick="AccountPage.openBillingPortal()" style="flex-shrink:0;">Manage subscription</button>`
             : '';
         return `
             <div class="stat-card" style="display:flex; justify-content:space-between; align-items:flex-start; gap:12px;">
@@ -270,7 +302,7 @@ const AccountPage = {
                     <div class="stat-card-value">${this._escape(tier)}</div>
                     ${sub ? `<div class="stat-card-detail">${this._escape(sub)}</div>` : ''}
                 </div>
-                ${cancelBtn}
+                ${manageBtn}
             </div>`;
     },
 
@@ -292,8 +324,20 @@ const AccountPage = {
                 return_url: window.location.origin + window.location.pathname + '#account',
             });
             if (res?.url) {
-                window.location.href = res.url;
-                return;  // navigation in progress; don't restore button
+                if (DashieAuth.isAddonMode) {
+                    // Stripe's portal refuses to be framed — in HA ingress a same-frame
+                    // redirect just hangs. Pop out to a new tab via a user-tap anchor.
+                    ExternalLinkModal.open({
+                        url: res.url,
+                        title: 'Manage subscription',
+                        cta: 'Open billing portal →',
+                        note: 'Opens Stripe in a new tab. Manage your plan or cancel there.',
+                    });
+                    restore();
+                } else {
+                    window.location.href = res.url;
+                }
+                return;
             }
             throw new Error('No portal URL returned');
         } catch (e) {
