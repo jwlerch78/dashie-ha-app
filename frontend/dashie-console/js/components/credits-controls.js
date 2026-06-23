@@ -179,8 +179,11 @@ const CreditsControls = {
         const balance = Number(bal.balance || 0);
         const granted = bal.lifetime_granted
             ? `<div style="font-size: 11px; color: var(--text-muted); margin-top: 2px;">$${Number(bal.lifetime_granted).toFixed(2)} granted total</div>` : '';
+        // height:100% + centered so when the grid stretches this card to match a
+        // taller neighbor (e.g. the stacked Today/This month column), the content
+        // sits vertically centered rather than top-aligned.
         return `
-            <div class="card"><div class="card-body" style="padding: 14px 16px;">
+            <div class="card" style="height:100%;"><div class="card-body" style="padding: 14px 16px; height:100%; display:flex; flex-direction:column; justify-content:center; box-sizing:border-box;">
                 <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:12px;">
                     <div>
                         <div style="font-size: 11px; font-weight: 600; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px;">Balance</div>

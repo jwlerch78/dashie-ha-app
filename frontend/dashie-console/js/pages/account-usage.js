@@ -397,10 +397,10 @@ const AccountUsage = {
         const todayCost = this._totalCostForDay(this._todayDate());
         const monthCost = this._totalCostForMonth();
         // Balance card (balance + Buy more + auto-replenish) on the left; Today
-        // stacked over This month on the right. align-items:start so the Balance
-        // card's extra height doesn't stretch the stacked column.
+        // stacked over This month on the right. Default (stretch) align so the
+        // Balance card matches the stacked column's height (it centers its content).
         return `
-            <div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; margin-bottom: 20px; align-items: start;">
+            <div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; margin-bottom: 20px;">
                 ${CreditsControls.renderBalanceCard(this._balance)}
                 <div style="display: grid; gap: 12px;">
                     ${this._statCard('Today', todayCost == null ? '—' : this._fmtCost(todayCost), '')}
