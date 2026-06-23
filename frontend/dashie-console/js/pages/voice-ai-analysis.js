@@ -44,14 +44,14 @@ const VoiceAiAnalysis = {
         this._loading = true;
         this._error = null;
         try {
-            const [log, defaults] = await Promise.all([
-                DashieAuth.dbRequest('get_intelligence_log', { limit: 50, tz: this._tz() }),
-                VoiceAiApi.loadAiDefaults().catch(() => ({})),
-            ]);
+            // retain comes from get_intelligence_log itself (the authoritative
+            // user_settings.retain_transcripts column) — NOT the clobberable
+            // settings blob, which the tablet resets. See _TECHNICAL_DEBT.md.
+            const log = await DashieAuth.dbRequest('get_intelligence_log', { limit: 50, tz: this._tz() });
             const interactions = log?.interactions || [];
             await this._mergeLocalTranscripts(interactions);
             this._interactions = interactions;
-            this._retain = defaults['ai.retainTranscripts'] === true;
+            this._retain = log?.retain === true;
             this._loaded = true;
         } catch (e) {
             console.error('[VoiceAiAnalysis] load failed', e);
@@ -71,11 +71,10 @@ const VoiceAiAnalysis = {
         this._retain = enabled;
         App.renderPage();
         try {
-            await VoiceAiApi.saveAiDefault('ai.retainTranscripts', enabled);
-            // Keep the Settings tab's copy in sync if it's loaded.
-            if (typeof VoiceAiPage !== 'undefined' && VoiceAiPage._defaults) {
-                VoiceAiPage._defaults['ai.retainTranscripts'] = enabled;
-            }
+            // Write the authoritative column (not the blob) so a tablet full-blob
+            // write can't reset it. See _TECHNICAL_DEBT.md (Option C).
+            await DashieAuth.dbRequest('set_retain_transcripts', { enabled });
+            this.refresh();  // reload so the interaction list reflects the new state
         } catch (e) {
             this._retain = prev;
             Toast.error(`Couldn't update setting: ${e.message}`);

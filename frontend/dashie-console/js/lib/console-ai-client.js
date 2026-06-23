@@ -408,8 +408,9 @@ const ConsoleAiClient = {
     async _retainTranscripts() {
         if (this.__retainCache === undefined) {
             try {
-                const s = await DashieAuth.loadUserSettings();
-                this.__retainCache = s?.ai?.retainTranscripts === true;
+                // Authoritative column, not the clobberable blob. See _TECHNICAL_DEBT.md.
+                const r = await DashieAuth.dbRequest('get_retain_transcripts');
+                this.__retainCache = r?.retain_transcripts === true;
             } catch { this.__retainCache = false; }
         }
         return this.__retainCache;
