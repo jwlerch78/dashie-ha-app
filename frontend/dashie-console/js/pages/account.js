@@ -8,6 +8,8 @@ const AccountPage = {
     _error: null,
     _sharing: null,          // { householdSharing } — add-on mode only
     _expiry: null,           // {next_expiry:{amount,expires_at}, lots} — get_credit_expiry
+    _transactions: null,     // [{kind,label,amount,unit,note,ts}] — get_transactions
+    _showAllTx: false,       // "Show transaction history" expand
     _activeTab: 'account',   // 'account' | 'usage'
 
     setTab(tab) {
@@ -98,6 +100,7 @@ const AccountPage = {
                 showCredits ? CreditsService.fetch() : Promise.resolve(),
                 showCredits ? CreditsControls.fetchAutorefill() : Promise.resolve(),
                 showCredits ? DashieAuth.dbRequest('get_credit_expiry', {}).then(e => { this._expiry = e; }).catch(() => {}) : Promise.resolve(),
+                showCredits ? DashieAuth.dbRequest('get_transactions', { limit: 50 }).then(r => { this._transactions = r?.transactions || []; }).catch(() => {}) : Promise.resolve(),
             ]);
             this._data = response;
             // Household-sharing opt-in lives in the add-on only; fetch it so the
@@ -149,6 +152,51 @@ const AccountPage = {
         this._error = null;
         this._data = null;
         App.renderPage();
+    },
+
+    /** Transaction history — credit purchases, auto-replenish, admin grants, and
+     *  monthly/annual subscription charges (Stripe). Shows the 5 most recent with
+     *  a "Show transaction history" expand. */
+    _renderTransactions() {
+        const tx = this._transactions || [];
+        if (!tx.length) return '';
+        const shown = this._showAllTx ? tx : tx.slice(0, 5);
+        const rows = shown.map(t => this._txRow(t)).join('');
+        const more = (!this._showAllTx && tx.length > 5)
+            ? `<div style="padding: 12px 16px; border-top: 1px solid var(--border, #e5e7eb);">
+                   <a href="#" onclick="event.preventDefault(); AccountPage.showAllTransactions()" style="color: var(--accent); font-size: 13px;">Show transaction history (${tx.length})</a>
+               </div>` : '';
+        return `
+            <div class="section-header" style="margin-top: 32px;">Transactions</div>
+            <div class="card"><div class="card-body" style="padding: 0;">
+                ${rows}${more}
+            </div></div>`;
+    },
+
+    _txRow(t) {
+        const date = (() => {
+            try { return new Date(t.ts).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }); }
+            catch { return t.ts; }
+        })();
+        // Subscription charges are payments ($); credit grants add credits (+$).
+        const isCharge = t.kind === 'subscription_charge';
+        const amt = `${isCharge ? '' : '+'}$${Number(t.amount || 0).toFixed(2)}`;
+        const color = isCharge ? 'var(--text-primary)' : 'var(--status-success, #16a34a)';
+        const sub = t.note ? ` · ${this._escape(t.note)}` : '';
+        return `
+            <div style="display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 16px; border-top: 1px solid var(--border, #f0f0f0);">
+                <div>
+                    <div style="font-weight: 500; font-size: 13px;">${this._escape(t.label)}</div>
+                    <div style="color: var(--text-muted); font-size: 11px; margin-top: 2px;">${this._escape(date)}${sub}</div>
+                </div>
+                <div style="font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-weight: 600; font-size: 13px; color: ${color};">${amt}</div>
+            </div>`;
+    },
+
+    showAllTransactions() { this._showAllTx = true; App.renderPage(); },
+
+    _escape(s) {
+        return String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
     },
 
     /** Household Dashie Cloud sharing toggle — add-on mode only. Controls whether
@@ -238,6 +286,8 @@ const AccountPage = {
                 ${showCredits ? CreditsControls.renderBalanceCard(CreditsService.balance()) : ''}
             </div>
             ${showCredits ? CreditsControls.renderExpiryNotice(this._expiry) : ''}
+
+            ${showCredits ? this._renderTransactions() : ''}
 
             ${this._renderHouseholdSharing()}
 
