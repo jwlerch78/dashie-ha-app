@@ -254,7 +254,7 @@ const AccountPage = {
                     ${user.email} · Signed in via Google
                 </div>
 
-                <div class="stat-cards" style="align-items: start;">
+                <div class="stat-cards">
                     ${this._renderPlanBox(d)}
                     ${showCredits ? CreditsControls.renderBalanceCard(CreditsService.balance()) : ''}
                 </div>

@@ -555,7 +555,11 @@ const AccountUsage = {
     _renderDayRow(d) {
         const expanded = this._expandedDays.get(d.date);
         const total = (d.by_service || []).reduce((sum, r) => sum + this._costForRow(r), 0);
-        const sparkline = this._dayServicePills(d.by_service || []);
+        const pills = this._dayServicePills(d.by_service || []);
+        const count = d.interaction_count;
+        const sparkline = (count != null)
+            ? `${count} Voice Interaction${count === 1 ? '' : 's'}${pills ? ` (${pills})` : ''}`
+            : pills;
         const caret = expanded ? '▾' : '▸';
 
         let detail = '';
@@ -589,16 +593,22 @@ const AccountUsage = {
             </div>`;
     },
 
+    // TTS + STT are both "Speech"; group them so the breakdown reads naturally.
+    _svcGroup(svc) { return (svc === 'tts' || svc === 'stt') ? 'speech' : svc; },
+    _svcLabel(svc) { return { ai: 'AI', speech: 'Speech', tts: 'Speech', stt: 'Speech', web_search: 'Search' }[svc] || svc; },
+    _SVC_ORDER: { ai: 0, speech: 1, web_search: 2 },
+
     _dayServicePills(rows) {
         const byService = new Map();
         for (const r of rows) {
             const cost = this._costForRow(r);
-            byService.set(r.service, (byService.get(r.service) || 0) + cost);
+            const g = this._svcGroup(r.service);
+            byService.set(g, (byService.get(g) || 0) + cost);
         }
-        const labels = { ai: 'AI', tts: 'TTS', stt: 'STT', web_search: 'Search' };
         return Array.from(byService.entries())
             .filter(([_, c]) => c > 0)
-            .map(([svc, c]) => `${labels[svc] || svc} ${this._fmtCost(c)}`)
+            .sort((a, b) => (this._SVC_ORDER[a[0]] ?? 9) - (this._SVC_ORDER[b[0]] ?? 9))
+            .map(([svc, c]) => `${this._svcLabel(svc)} ${this._fmtCost(c)}`)
             .join(' · ');
     },
 
@@ -634,10 +644,15 @@ const AccountUsage = {
             catch { return intr.ts; }
         })();
         const counts = {};
-        for (const it of items) counts[it.service] = (counts[it.service] || 0) + 1;
-        const labels = { ai: 'AI', tts: 'TTS', stt: 'STT', web_search: 'Search' };
+        for (const it of items) { const g = this._svcGroup(it.service); counts[g] = (counts[g] || 0) + 1; }
         const mix = Object.entries(counts)
-            .map(([s, n]) => `${labels[s] || s}${n > 1 ? ' ×' + n : ''}`)
+            .sort((a, b) => (this._SVC_ORDER[a[0]] ?? 9) - (this._SVC_ORDER[b[0]] ?? 9))
+            .map(([s, n]) => {
+                // AI with 2+ passes = a two-pass (tool/complex) turn; 1 pass = simple.
+                // Mirrors the COMPLEX/SIMPLE badge in the Recent Interactions tab.
+                if (s === 'ai') return n >= 2 ? 'AI (complex)' : 'AI (simple)';
+                return `${this._svcLabel(s)}${n > 1 ? ' ×' + n : ''}`;
+            })
             .join(' · ');
         const body = open
             ? `<div style="padding-left: 24px;">
@@ -687,7 +702,7 @@ const AccountUsage = {
                 : `${this._escape(c.provider || '')} ${c.service}`;
         return `
             <tr>
-                <td style="padding: 4px 0; color: var(--text-muted); width: 60px; text-transform: uppercase; font-size: 10px; letter-spacing: 0.5px;">${this._escape(c.service)}</td>
+                <td style="padding: 4px 0; color: var(--text-muted); width: 60px; text-transform: uppercase; font-size: 10px; letter-spacing: 0.5px;">${this._escape(this._svcLabel(c.service))}</td>
                 <td style="padding: 4px 8px;">${desc}</td>
                 <td style="padding: 4px 0; text-align: right; font-family: ui-monospace, SFMono-Regular, Menlo, monospace;">${this._fmtCost(cost)}</td>
             </tr>`;

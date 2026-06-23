@@ -148,27 +148,27 @@ const CreditsControls = {
         const lastErr = (ar.enabled && ar.last_error)
             ? `<div style="color: var(--status-error,#c00); font-size:12px; margin-top:6px;">Last auto-charge failed: ${this._escape(ar.last_error)}</div>` : '';
 
-        // Subtext under the checkbox: the rule (with an Edit link) when on, or
-        // the save-a-card prompt when it can't be enabled yet.
-        let subtext = '';
+        // Status to the RIGHT of the checkbox: the rule (with an Edit link) when on,
+        // or the save-a-card prompt when it can't be enabled yet.
+        let inline = '';
         if (enableDisabled) {
-            subtext = `<div style="color: var(--text-muted); font-size:11px; margin-top:4px;">Buy a pack once to save a card, then enable.</div>`;
+            inline = `<span style="color: var(--text-muted); font-size:11px;">Buy a pack once to save a card, then enable.</span>`;
         } else if (ar.enabled) {
-            subtext = `<div style="color: var(--text-muted); font-size:12px; margin-top:4px;">
-                When below $${threshold.toFixed(2)}, add $${topup}
-                <a href="#" onclick="event.preventDefault(); CreditsControls.openAutorefillModal()" style="color: var(--accent); margin-left:4px;">Edit</a>
-            </div>`;
+            inline = `<span style="color: var(--text-muted); font-size:12px;">When below $${threshold.toFixed(2)}, add $${topup}<a href="#" onclick="event.preventDefault(); CreditsControls.openAutorefillModal()" style="color: var(--accent); margin-left:6px;">Edit</a></span>`;
         }
 
         return `
             <div style="margin-top:12px;">
-                <label style="display:inline-flex; align-items:center; gap:8px; cursor:${enableDisabled ? 'not-allowed' : 'pointer'}; font-size:13px; font-weight:500;"
-                    ${enableDisabled ? 'title="Buy a pack once to save a card"' : ''}>
-                    <input type="checkbox" ${ar.enabled ? 'checked' : ''} ${(busy || enableDisabled) ? 'disabled' : ''}
-                        onchange="CreditsControls.toggleAutorefill()" />
-                    Auto-replenish
-                </label>
-                ${subtext}${lastErr}${arError}
+                <div style="display:flex; align-items:center; gap:12px; flex-wrap:wrap;">
+                    <label style="display:inline-flex; align-items:center; gap:8px; cursor:${enableDisabled ? 'not-allowed' : 'pointer'}; font-size:13px; font-weight:500;"
+                        ${enableDisabled ? 'title="Buy a pack once to save a card"' : ''}>
+                        <input type="checkbox" ${ar.enabled ? 'checked' : ''} ${(busy || enableDisabled) ? 'disabled' : ''}
+                            onchange="CreditsControls.toggleAutorefill()" />
+                        Auto-replenish
+                    </label>
+                    ${inline}
+                </div>
+                ${lastErr}${arError}
             </div>`;
     },
 
