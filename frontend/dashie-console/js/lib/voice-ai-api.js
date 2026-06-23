@@ -21,6 +21,10 @@ const VoiceAiApi = {
      *  in the blob is preserved verbatim. */
     AI_DEFAULT_KEYS: [
         ['ai', 'model'],
+        ['voice', 'controlMethod'],
+        ['voice', 'customizePipeline'],
+        ['voice', 'sttProvider'],
+        ['voice', 'ttsProvider'],
         ['ai', 'webSearchEnabled'],
         ['ai', 'retrievePicturesEnabled'],
         ['ai', 'conversationContextEnabled'],
@@ -31,6 +35,10 @@ const VoiceAiApi = {
 
     DEFAULTS: {
         'ai.model': 'gemini-2.5-flash',
+        'voice.controlMethod': 'dashie',
+        'voice.customizePipeline': false,
+        'voice.sttProvider': 'deepgram',
+        'voice.ttsProvider': 'elevenlabs',
         'ai.webSearchEnabled': true,
         'ai.retrievePicturesEnabled': false,
         'ai.conversationContextEnabled': false,

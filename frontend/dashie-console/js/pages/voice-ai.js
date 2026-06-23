@@ -29,7 +29,7 @@ const VoiceAiPage = {
     _activeTab: 'settings', // 'settings' | 'chat' | 'analysis'
 
     setTab(tab) {
-        if (tab !== 'settings' && tab !== 'chat' && tab !== 'analysis') return;
+        if (tab !== 'settings' && tab !== 'personalities' && tab !== 'chat' && tab !== 'analysis') return;
         this._activeTab = tab;
         if (tab === 'chat' && typeof VoiceAiChat !== 'undefined' && !VoiceAiChat._open) {
             VoiceAiChat.open();
@@ -50,6 +50,23 @@ const VoiceAiPage = {
     MEMORY_OPTIONS: [
         ['5', '5 minutes'], ['30', '30 minutes'], ['60', '1 hour'],
         ['360', '6 hours'], ['0', 'Never (until refresh)'],
+    ],
+
+    // Voice pipeline option sets (account-level). Stored in user_settings; the
+    // runtime providers/brain read these in a later phase (storage-first).
+    CONTROL_METHOD_OPTIONS: [
+        ['dashie', 'Dashie Cloud (premium AI)'],
+        ['ha', 'Home Assistant Voice Assistant'],
+    ],
+    STT_OPTIONS: [
+        ['deepgram', 'Deepgram (recommended)'],
+        ['whisper', 'Whisper'],
+        ['native', 'Device native'],
+    ],
+    TTS_OPTIONS: [
+        ['elevenlabs', 'ElevenLabs (premium voices)'],
+        ['openai', 'OpenAI'],
+        ['native', 'Device / Home Assistant (free)'],
     ],
 
     render() {
@@ -78,6 +95,9 @@ const VoiceAiPage = {
         if (this._loading && !this._defaults) return `${tabBar}${this._renderLoading()}${editorHtml}`;
         if (this._error && !this._defaults) return `${tabBar}${this._renderError()}${editorHtml}`;
 
+        if (this._activeTab === 'personalities') {
+            return `${tabBar}<div style="max-width: 760px;">${this._renderPersonalities()}</div>${editorHtml}`;
+        }
         return `${tabBar}${this._renderMain()}${editorHtml}`;
     },
 
@@ -98,6 +118,7 @@ const VoiceAiPage = {
         return `
             <div style="display: flex; gap: 24px; border-bottom: 1px solid var(--border, #d1d5db); margin-bottom: 20px; max-width: 760px;">
                 ${tab('settings', 'Voice & AI Settings')}
+                ${tab('personalities', 'Personalities')}
                 ${tab('chat', 'AI Chat Interface')}
                 ${tab('analysis', 'Dashie Intelligence Analysis')}
             </div>`;
@@ -178,10 +199,12 @@ const VoiceAiPage = {
     // ── AI default writes ────────────────────────────────────
 
     async saveDefault(dottedKey, rawValue) {
-        // Coerce to the stored type: timeout is numeric, model string, rest boolean.
+        // Coerce to the stored type: timeout numeric; model/control-method/STT/TTS
+        // are string selects; everything else boolean.
         let value = rawValue;
+        const STRING_KEYS = ['ai.model', 'voice.controlMethod', 'voice.sttProvider', 'voice.ttsProvider'];
         if (dottedKey === 'ai.conversationTimeout') value = Number(rawValue);
-        else if (dottedKey === 'ai.model') value = String(rawValue);
+        else if (STRING_KEYS.includes(dottedKey)) value = String(rawValue);
         else value = (rawValue === true || rawValue === 'true');
 
         const prev = this._defaults[dottedKey];
@@ -225,11 +248,11 @@ const VoiceAiPage = {
     // ── Render ───────────────────────────────────────────────
 
     _renderMain() {
+        // Personalities moved to its own tab; this is the Voice & AI Settings tab.
         return `
             <div style="max-width: 760px;">
                 ${this._renderAiDefaults()}
                 ${this._renderHouseholdSharing()}
-                ${this._renderPersonalities()}
             </div>
         `;
     },
@@ -281,10 +304,15 @@ const VoiceAiPage = {
     _renderAiDefaults() {
         const d = this._defaults;
         const memoryOn = d['ai.conversationContextEnabled'] === true;
+        const customPipeline = d['voice.customizePipeline'] === true;
         return `
-            ${this._sectionHeader('AI Defaults', 'Apply to every device signed into this account.')}
+            ${this._sectionHeader('Voice & AI Defaults', 'Apply to every device signed into this account.')}
             <div class="card"><div class="card-body">
+                ${this._selectRow('Voice control method', 'voice.controlMethod', this.CONTROL_METHOD_OPTIONS, String(d['voice.controlMethod']))}
                 ${this._modelRow(d['ai.model'])}
+                ${this._toggleRow('Customize voice pipeline', 'Override the default speech engines for this account.', 'voice.customizePipeline', customPipeline)}
+                ${customPipeline ? this._selectRow('Speech-to-text (STT)', 'voice.sttProvider', this.STT_OPTIONS, String(d['voice.sttProvider'])) : ''}
+                ${customPipeline ? this._selectRow('Text-to-speech (TTS)', 'voice.ttsProvider', this.TTS_OPTIONS, String(d['voice.ttsProvider'])) : ''}
                 ${this._toggleRow('Web search', 'Let the assistant search the web for answers.', 'ai.webSearchEnabled', d['ai.webSearchEnabled'])}
                 ${this._toggleRow('Retrieve pictures', 'Let the assistant pull family photos into responses.', 'ai.retrievePicturesEnabled', d['ai.retrievePicturesEnabled'])}
                 ${this._toggleRow('Conversation memory', 'Remember the prior conversation for follow-ups.', 'ai.conversationContextEnabled', d['ai.conversationContextEnabled'])}
