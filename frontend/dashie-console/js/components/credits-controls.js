@@ -130,7 +130,7 @@ const CreditsControls = {
 
     /** The compact "Buy more" button. */
     _buyButton() {
-        return `<button class="btn btn-secondary btn-sm" ${this._busy ? 'disabled' : ''}
+        return `<button class="btn btn-primary btn-sm" ${this._busy ? 'disabled' : ''}
             onclick="CreditsControls.openBuyModal()" style="font-weight:600; flex-shrink:0;">Buy more</button>`;
     },
 

@@ -6,7 +6,6 @@ const AccountPage = {
     _data: null,
     _loading: false,
     _error: null,
-    _sharing: null,          // { householdSharing } — add-on mode only
     _expiry: null,           // {next_expiry:{amount,expires_at}, lots} — get_credit_expiry
     _transactions: null,     // [{kind,label,amount,unit,note,ts}] — get_transactions
     _showAllTx: false,       // "Show transaction history" expand
@@ -103,16 +102,6 @@ const AccountPage = {
                 showCredits ? DashieAuth.dbRequest('get_transactions', { limit: 50 }).then(r => { this._transactions = r?.transactions || []; }).catch(() => {}) : Promise.resolve(),
             ]);
             this._data = response;
-            // Household-sharing opt-in lives in the add-on only; fetch it so the
-            // toggle reflects the persisted state. Best-effort (non-fatal).
-            if (DashieAuth.isAddonMode) {
-                try {
-                    const s = await fetch(DashieAuth._addonUrl('/api/settings')).then(r => r.ok ? r.json() : null);
-                    this._sharing = s || { householdSharing: false };
-                } catch (e) {
-                    this._sharing = { householdSharing: false };
-                }
-            }
             this._loading = false;
             App.renderPage();
         } catch (e) {
@@ -199,56 +188,10 @@ const AccountPage = {
         return String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
     },
 
-    /** Household Dashie Cloud sharing toggle — add-on mode only. Controls whether
-     *  un-logged-in tablets / voice satellites on this network may use this
-     *  account's cloud voice (billed to its credits). See add-on settings-store. */
-    _renderHouseholdSharing() {
-        if (!DashieAuth.isAddonMode) return '';
-        const enabled = this._sharing?.householdSharing === true;
-        return `
-            <div class="section-header" style="margin-top: 32px;">Household Dashie Cloud Sharing</div>
-            <div class="card">
-                <div class="card-body">
-                    <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:16px; flex-wrap:wrap;">
-                        <div style="flex:1; min-width:240px;">
-                            <div style="font-weight:500; margin-bottom:6px;">Let kiosk tablets &amp; voice satellites use this account</div>
-                            <div style="color: var(--text-secondary); font-size: var(--font-size-sm); line-height:1.5;">
-                                When on, un-logged-in Dashie tablets and Home Assistant voice satellites on this network can use this account's Dashie Cloud voice — premium AI answers and personality voices. Usage draws on <strong>your</strong> credits. You can turn this off any time.
-                            </div>
-                        </div>
-                        <button class="btn ${enabled ? 'btn-primary' : 'btn-secondary'}" id="household-sharing-btn"
-                            onclick="AccountPage.toggleHouseholdSharing(${!enabled})" style="flex-shrink:0;">
-                            ${enabled ? 'Sharing On' : 'Sharing Off'}
-                        </button>
-                    </div>
-                </div>
-            </div>
-        `;
-    },
-
-    async toggleHouseholdSharing(enabled) {
-        try {
-            const resp = await fetch(DashieAuth._addonUrl('/api/settings/household-sharing'), {
-                method: 'PUT',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ enabled }),
-            });
-            if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-            const data = await resp.json();
-            this._sharing = { householdSharing: data.householdSharing };
-            App.renderPage();
-        } catch (e) {
-            console.error('[AccountPage] Toggle household sharing failed:', e);
-            alert('Could not update sharing setting: ' + e.message);
-        }
-    },
 
     _renderLoaded() {
         const user = DashieAuth.user;
         const d = this._data || {};
-
-        // Subscription display
-        const statusDisplay = this._formatStatus(d.subscription_status, d.tier_expires_at);
 
         // Credits: the same rich box used on the Credit Usage tab (balance +
         // Buy more + auto-replenish), reading from the shared CreditsService.
@@ -274,37 +217,61 @@ const AccountPage = {
             </div>
         ` : '';
 
+        // Content is constrained to the same width as the tab divider bar (800px).
         return `
-            ${banner}
-            <div style="margin-bottom: 24px; color: var(--text-secondary); font-size: var(--font-size-sm);">
-                ${user.email} · Signed in via Google
-            </div>
+            <div style="max-width: 800px;">
+                ${banner}
+                <div style="margin-bottom: 24px; color: var(--text-secondary); font-size: var(--font-size-sm);">
+                    ${user.email} · Signed in via Google
+                </div>
 
-            <div class="stat-cards" style="align-items: start;">
-                ${Card.stat('Plan', statusDisplay.label, statusDisplay.detail)}
-                ${Card.stat('Tier', this._formatTier(d.tier), d.has_voice_license ? 'Voice license active' : '')}
-                ${showCredits ? CreditsControls.renderBalanceCard(CreditsService.balance()) : ''}
-            </div>
-            ${showCredits ? CreditsControls.renderExpiryNotice(this._expiry) : ''}
+                <div class="stat-cards" style="align-items: start;">
+                    ${this._renderPlanBox(d)}
+                    ${showCredits ? CreditsControls.renderBalanceCard(CreditsService.balance()) : ''}
+                </div>
+                ${showCredits ? CreditsControls.renderExpiryNotice(this._expiry) : ''}
 
-            ${showCredits ? this._renderTransactions() : ''}
+                ${showCredits ? this._renderTransactions() : ''}
 
-            ${this._renderHouseholdSharing()}
-
-            <div class="section-header" style="color: var(--status-error, #c00); margin-top: 32px;">Danger Zone</div>
-            <div class="card" style="border-color: var(--status-error, #c00);">
-                <div class="card-body">
-                    <div style="font-weight: 500; margin-bottom: 6px;">Delete your Dashie account</div>
-                    <div style="color: var(--text-secondary); font-size: var(--font-size-sm); line-height: 1.5; margin-bottom: 16px;">
-                        Permanently removes your Dashie account and everything associated with it — calendars, photos, chores, rewards, family members, OAuth tokens, voice profiles, and device registrations. This cannot be undone.
+                <div class="section-header" style="color: var(--status-error, #c00); margin-top: 32px;">Danger Zone</div>
+                <div class="card" style="border-color: var(--status-error, #c00);">
+                    <div class="card-body">
+                        <div style="font-weight: 500; margin-bottom: 6px;">Delete your Dashie account</div>
+                        <div style="color: var(--text-secondary); font-size: var(--font-size-sm); line-height: 1.5; margin-bottom: 16px;">
+                            Permanently removes your Dashie account and everything associated with it — calendars, photos, chores, rewards, family members, OAuth tokens, voice profiles, and device registrations. This cannot be undone.
+                        </div>
+                        <button class="btn btn-danger" id="delete-account-btn" onclick="AccountPage.handleDeleteAccount()">Delete Account</button>
                     </div>
-                    <button class="btn btn-danger" id="delete-account-btn" onclick="AccountPage.handleDeleteAccount()">Delete Account</button>
                 </div>
             </div>
-
         `;
         // Manage Subscription moved to topBarActions; Sign Out moved to the
         // top-bar avatar dropdown menu (TopBar._renderMenu).
+    },
+
+    /** Single "Plan" box: tier (e.g. Core) + a renews/expires date, with a
+     *  Cancel button (opens the Stripe billing portal) on the right. Replaces
+     *  the separate Plan + Tier stat cards. */
+    _renderPlanBox(d) {
+        const tier = this._formatTier(d.tier);
+        const status = d.subscription_status;
+        const verb = status === 'trialing' ? 'trial ends'
+            : status === 'canceled' ? 'expires'
+            : 'renews on';
+        const sub = d.tier_expires_at ? `${verb} ${this._formatDate(d.tier_expires_at)}` : '';
+        const cancelable = status === 'active' || status === 'trialing';
+        const cancelBtn = cancelable
+            ? `<button class="btn btn-secondary btn-sm" onclick="AccountPage.openBillingPortal()" style="flex-shrink:0;">Cancel</button>`
+            : '';
+        return `
+            <div class="stat-card" style="display:flex; justify-content:space-between; align-items:flex-start; gap:12px;">
+                <div>
+                    <div class="stat-card-label">Plan</div>
+                    <div class="stat-card-value">${this._escape(tier)}</div>
+                    ${sub ? `<div class="stat-card-detail">${this._escape(sub)}</div>` : ''}
+                </div>
+                ${cancelBtn}
+            </div>`;
     },
 
     /**

@@ -18,6 +18,7 @@
 
 const VoiceAiPage = {
     _defaults: null,        // {dotted: value}
+    _sharing: null,         // { householdSharing } — add-on mode only (below AI Defaults)
     _templates: null,       // built-in personality rows
     _custom: null,          // custom personality rows
     _overrides: null,       // {template_key: {family_notes}}
@@ -133,6 +134,16 @@ const VoiceAiPage = {
                 this._fetchPersonalities(),
             ]);
             this._defaults = defaults;
+            // Household sharing opt-in lives in the add-on only — fetch it so the
+            // toggle below AI Defaults reflects the persisted state. Best-effort.
+            if (DashieAuth.isAddonMode) {
+                try {
+                    const s = await fetch(DashieAuth._addonUrl('/api/settings')).then(r => r.ok ? r.json() : null);
+                    this._sharing = s || { householdSharing: false };
+                } catch (e) {
+                    this._sharing = { householdSharing: false };
+                }
+            }
         } catch (e) {
             console.error('[VoiceAiPage] fetch failed:', e);
             this._error = e.message || String(e);
@@ -217,9 +228,54 @@ const VoiceAiPage = {
         return `
             <div style="max-width: 760px;">
                 ${this._renderAiDefaults()}
+                ${this._renderHouseholdSharing()}
                 ${this._renderPersonalities()}
             </div>
         `;
+    },
+
+    /** Household Dashie Cloud sharing toggle — add-on mode only. Lets un-logged-in
+     *  tablets / voice satellites on this network use this account's cloud voice
+     *  (billed to its credits). Lives under AI Defaults. */
+    _renderHouseholdSharing() {
+        if (!DashieAuth.isAddonMode) return '';
+        const enabled = this._sharing?.householdSharing === true;
+        return `
+            <div class="section-header" style="margin-top: 32px;">Household Dashie Cloud Sharing</div>
+            <div class="card">
+                <div class="card-body">
+                    <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:16px; flex-wrap:wrap;">
+                        <div style="flex:1; min-width:240px;">
+                            <div style="font-weight:500; margin-bottom:6px;">Let kiosk tablets &amp; voice satellites use this account</div>
+                            <div style="color: var(--text-secondary); font-size: var(--font-size-sm); line-height:1.5;">
+                                When on, un-logged-in Dashie tablets and Home Assistant voice satellites on this network can use this account's Dashie Cloud voice — premium AI answers and personality voices. Usage draws on <strong>your</strong> credits. You can turn this off any time.
+                            </div>
+                        </div>
+                        <button class="btn ${enabled ? 'btn-primary' : 'btn-secondary'}" id="household-sharing-btn"
+                            onclick="VoiceAiPage.toggleHouseholdSharing(${!enabled})" style="flex-shrink:0;">
+                            ${enabled ? 'Sharing On' : 'Sharing Off'}
+                        </button>
+                    </div>
+                </div>
+            </div>
+        `;
+    },
+
+    async toggleHouseholdSharing(enabled) {
+        try {
+            const resp = await fetch(DashieAuth._addonUrl('/api/settings/household-sharing'), {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ enabled }),
+            });
+            if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+            const data = await resp.json();
+            this._sharing = { householdSharing: data.householdSharing };
+            App.renderPage();
+        } catch (e) {
+            console.error('[VoiceAiPage] Toggle household sharing failed:', e);
+            Toast.error('Could not update sharing setting: ' + e.message);
+        }
     },
 
     _renderAiDefaults() {
