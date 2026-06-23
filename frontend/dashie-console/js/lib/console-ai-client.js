@@ -408,7 +408,7 @@ const ConsoleAiClient = {
     async _retainTranscripts() {
         if (this.__retainCache === undefined) {
             try {
-                const s = await window.DashieAuth?.loadUserSettings();
+                const s = await DashieAuth.loadUserSettings();
                 this.__retainCache = s?.ai?.retainTranscripts === true;
             } catch { this.__retainCache = false; }
         }
@@ -420,7 +420,10 @@ const ConsoleAiClient = {
      *  text is gated on the account-level retainTranscripts opt-in; token/cost
      *  rows always log for billing. */
     async _logInteraction(d) {
-        if (!window.DashieAuth?.dbRequest) return;
+        // Bare DashieAuth (script-scope const), NOT window.DashieAuth — the
+        // optional-chained window.DashieAuth was always undefined, so console
+        // chat turns were never logged or billed.
+        if (typeof DashieAuth === 'undefined' || !DashieAuth.dbRequest) return;
         const retain = await this._retainTranscripts();
         const logData = {
             session_id: d.sessionId || null,
@@ -441,7 +444,7 @@ const ConsoleAiClient = {
             prompt_text: retain ? (d.promptText || null) : null,
             response_text: retain ? (d.responseText || null) : null,
         };
-        window.DashieAuth.dbRequest('log_ai_interaction', logData)
+        DashieAuth.dbRequest('log_ai_interaction', logData)
             .then(() => window.CreditsService?.fetch({ force: true }))
             .catch(() => {});
     },

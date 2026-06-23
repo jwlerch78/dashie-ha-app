@@ -227,13 +227,15 @@ const VoiceAiAnalysis = {
     },
 
     _renderStep(s) {
-        const KIND_LABELS = { ai: 'AI', web_search: 'SEARCH', tts: 'TTS', stt: 'STT' };
+        const KIND_LABELS = { ai: 'AI', web_search: 'SEARCH', sports: 'SPORTS', tts: 'TTS', stt: 'STT' };
         const kind = KIND_LABELS[s.kind] || (s.kind || '').toUpperCase();
         let desc;
         if (s.kind === 'ai') {
             desc = `${this._escape(s.label)} <span style="color: var(--text-muted);">(${this._fmtTokens(s.input_tokens)} in / ${this._fmtTokens(s.output_tokens)} out)</span>`;
         } else if (s.kind === 'web_search') {
             desc = `${this._escape(s.label)} <span style="color: var(--text-muted);">(${this._fmtTokens(s.result_count || 0)} results)</span>`;
+        } else if (s.kind === 'sports') {
+            desc = `${this._escape(s.label)} <span style="color: var(--text-muted);">(${this._fmtTokens(s.result_count || 0)} games)</span>`;
         } else {
             // tts / stt — just the provider/model label (no tokens/results)
             desc = this._escape(s.label || kind.toLowerCase());
