@@ -31,6 +31,17 @@ const VoiceAiCards = {
         const sel = opts.find(x => x.id === o.selectedId) || opts[0];
         if (!sel) return '';
 
+        // Single-option tool (e.g. Sports = ESPN only): a static info row, no expand.
+        if (opts.length === 1) {
+            return `
+                <div style="margin-bottom: 16px;">
+                    <div style="margin-bottom: 6px; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; color: var(--text-muted);">${this._esc(o.title)}</div>
+                    <div class="card"><div class="card-body" style="padding: 0;">
+                        ${this._row(sel, true, o.stageKey, o.getConfig, true, 'static')}
+                    </div></div>
+                </div>`;
+        }
+
         let body;
         if (o.expanded) {
             let prevGroup = null;
@@ -65,18 +76,21 @@ const VoiceAiCards = {
         const soon = x.comingSoon
             ? `<span style="font-size:10px; font-weight:600; color: var(--text-muted); background: var(--bg-card, #fff); border: 1px solid var(--border, #e5e7eb); padding: 1px 6px; border-radius: 9px;">coming soon</span>`
             : '';
+        const isStatic = mode === 'static';
         const right = mode === 'expand'
             ? `<span style="color: var(--text-muted); font-size: 13px;">▾</span>`
-            : (selected ? `<span style="color: var(--accent); font-weight: 700;">✓</span>` : '');
+            : (!isStatic && selected ? `<span style="color: var(--accent); font-weight: 700;">✓</span>` : '');
         const config = (selected && x.configFields) ? this._config(x, getConfig) : '';
         const topBorder = isFirst ? '' : 'border-top: 1px solid var(--border, #e5e7eb);';
-        const onclick = mode === 'expand'
-            ? `VoiceAiPage.toggleCard('${stageKey}')`
-            : `VoiceAiPage.selectOption('${stageKey}', '${this._esc(x.id)}')`;
+        const onclick = isStatic ? ''
+            : (mode === 'expand'
+                ? `VoiceAiPage.toggleCard('${stageKey}')`
+                : `VoiceAiPage.selectOption('${stageKey}', '${this._esc(x.id)}')`);
+        const onclickAttr = onclick ? `onclick="${onclick}"` : '';
 
         return `
-            <div onclick="${onclick}"
-                style="cursor: pointer; padding: 12px 14px; ${topBorder} background: ${bg}; border-left: 3px solid ${selected ? color : 'transparent'};">
+            <div ${onclickAttr}
+                style="cursor: ${isStatic ? 'default' : 'pointer'}; padding: 12px 14px; ${topBorder} background: ${bg}; border-left: 3px solid ${selected ? color : 'transparent'};">
                 <div style="display:flex; justify-content:space-between; align-items:baseline; gap: 10px;">
                     <div style="font-weight: 600; font-size: 14px; display:flex; align-items:center; gap: 8px; flex-wrap: wrap;">
                         ${this._esc(x.label)} ${localityTag} ${soon}

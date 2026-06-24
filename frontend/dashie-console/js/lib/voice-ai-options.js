@@ -95,11 +95,18 @@ const VoiceAiOptions = {
     ],
 
     SEARCH: [
-        { id: 'dashie', label: 'Dashie (Tavily)', locality: 'cloud', cost: '1,000/mo free, then ~0.8¢/search',
+        { id: 'dashie', label: 'Dashie (Tavily)', locality: 'cloud', cost: '~0.8¢/search',
           description: 'Managed web search — no setup.' },
         { id: 'searxng', label: 'SearXNG (self-hosted)', locality: 'local', cost: 'Free', comingSoon: true,
           description: 'Your own metasearch instance — private, no per-search cost.',
           configFields: [{ key: 'voice.searxngUrl', label: 'SearXNG instance URL', placeholder: 'http://192.168.1.50:8080' }] },
+    ],
+
+    // Sports has a single source today (free ESPN). Listing it makes clear that
+    // sports questions don't run through paid web search.
+    SPORTS: [
+        { id: 'espn', label: 'ESPN', locality: 'cloud', cost: 'Free — not billed',
+          description: 'Live scores & schedules. Sports questions use ESPN, not web search.' },
     ],
 
     // ── cost formatting ──────────────────────────────────────

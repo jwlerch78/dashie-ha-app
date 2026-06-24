@@ -204,8 +204,8 @@ const VoiceAiPage = {
         // are string selects; everything else boolean.
         let value = rawValue;
         const STRING_KEYS = ['ai.model', 'voice.controlMethod', 'voice.sttProvider', 'voice.ttsProvider',
-            'voice.searchSource', 'voice.localLlmUrl', 'voice.localLlmModel', 'voice.searxngUrl',
-            'voice.localTtsUrl', 'voice.localSttUrl'];
+            'voice.searchSource', 'voice.sportsSource', 'voice.localLlmUrl', 'voice.localLlmModel',
+            'voice.searxngUrl', 'voice.localTtsUrl', 'voice.localSttUrl'];
         if (dottedKey === 'ai.conversationTimeout') value = Number(rawValue);
         else if (STRING_KEYS.includes(dottedKey)) value = String(rawValue);
         else value = (rawValue === true || rawValue === 'true');
@@ -232,7 +232,7 @@ const VoiceAiPage = {
      *  the 'local' model stores ai.model='local' (the route); the endpoint + model
      *  live in their own voice.* keys, saved via the inline config fields. */
     selectOption(stageKey, id) {
-        const KEY = { model: 'ai.model', stt: 'voice.sttProvider', tts: 'voice.ttsProvider', search: 'voice.searchSource' };
+        const KEY = { model: 'ai.model', stt: 'voice.sttProvider', tts: 'voice.ttsProvider', search: 'voice.searchSource', sports: 'voice.sportsSource' };
         const key = KEY[stageKey];
         if (!key) return;
         this._expandedCards.delete(stageKey);   // collapse back to the chosen option
@@ -345,12 +345,13 @@ const VoiceAiPage = {
             ${this._sectionHeader('Voice & AI Defaults', 'Apply to every device signed into this account.')}
             ${this._renderControlMethodRow(d, customPipeline)}
 
+            ${this._renderLocalityLegend()}
             ${card('AI Model', 'model', O.models(), String(d['ai.model']))}
 
-            ${customPipeline ? this._renderLocalityLegend() : ''}
             ${customPipeline ? card('Text-to-speech (Voice)', 'tts', O.TTS, String(d['voice.ttsProvider'])) : ''}
             ${customPipeline ? card('Speech-to-text', 'stt', O.STT, String(d['voice.sttProvider'])) : ''}
             ${customPipeline ? card('Web search source', 'search', O.SEARCH, String(d['voice.searchSource'])) : ''}
+            ${customPipeline ? card('Sports source', 'sports', O.SPORTS, String(d['voice.sportsSource'])) : ''}
 
             ${this._sectionHeader('Tools', '')}
             <div class="card"><div class="card-body">
@@ -392,9 +393,9 @@ const VoiceAiPage = {
         const O = window.VoiceAiOptions;
         const dot = (c, label) => `<span style="display:inline-flex; align-items:center; gap:6px;"><span style="width:12px; height:12px; border-radius:3px; background:${c};"></span>${label}</span>`;
         return `
-            <div style="display:flex; gap: 20px; margin: 2px 0 14px; font-size: 12px; color: var(--text-secondary); flex-wrap: wrap;">
-                ${dot(O.COLOR.cloud, 'Cloud — premium, uses your credits')}
-                ${dot(O.COLOR.local, 'Local — private, stays on your network')}
+            <div style="display:flex; justify-content:flex-end; gap: 16px; margin: 0 0 8px; font-size: 12px; color: var(--text-secondary);">
+                ${dot(O.COLOR.cloud, 'Cloud')}
+                ${dot(O.COLOR.local, 'Local')}
             </div>`;
     },
 
