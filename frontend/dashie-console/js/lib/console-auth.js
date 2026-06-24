@@ -219,7 +219,13 @@ const DashieAuth = {
             type: 'broadcast',
             event: 'settings-changed',
             payload: {
-                kind: 'account',
+                // MUST be 'account_settings' — the dashboard's
+                // registerAccountSettingsSync consumer dispatches on this exact
+                // kind, and its legacy blanket handler ignores any kinded
+                // broadcast. Sending 'account' meant the tablet silently dropped
+                // every console settings change (no live propagation → stale
+                // tablet reverted the account on its next save).
+                kind: 'account_settings',
                 source_client_id: this.getSessionId(),
             },
         });
