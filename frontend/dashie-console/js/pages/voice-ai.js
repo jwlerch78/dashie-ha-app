@@ -55,20 +55,22 @@ const VoiceAiPage = {
 
     // Voice pipeline option sets (account-level). Stored in user_settings; the
     // runtime providers/brain read these in a later phase (storage-first).
+    // Control method (engine domain — matches Kotlin VoicePreferences). The third
+    // element flags HA-only options, hidden for non-HA accounts. STT/TTS option
+    // sets live in window.VoiceAiOptions (voice-ai-options.js), not here.
     CONTROL_METHOD_OPTIONS: [
-        ['dashie', 'Dashie Intelligence'],
-        ['ha', 'Home Assistant Voice Assistant'],
+        ['dashie_cloud', 'Dashie Intelligence'],
+        ['voice_assistant', 'Home Assistant Voice Assistant', true],
     ],
-    STT_OPTIONS: [
-        ['deepgram', 'Deepgram (recommended)'],
-        ['whisper', 'Whisper'],
-        ['native', 'Device native'],
-    ],
-    TTS_OPTIONS: [
-        ['elevenlabs', 'ElevenLabs (premium voices)'],
-        ['openai', 'OpenAI'],
-        ['native', 'Device / Home Assistant (free)'],
-    ],
+
+    /** Drop HA-only voice options (va_default / piper / voice_assistant) for
+     *  accounts without Home Assistant. Gated on the live user_profiles.is_ha_user
+     *  flag (DashieAuth.isHaUser). Accepts both descriptor objects ({haOnly}) and
+     *  the control-method [value, label, haOnly] tuples. */
+    _haFilter(options) {
+        if (DashieAuth.isHaUser) return options;
+        return options.filter(o => Array.isArray(o) ? !o[2] : !o.haOnly);
+    },
 
     render() {
         const editorHtml = (typeof VoiceAiPersonalityEdit !== 'undefined') ? VoiceAiPersonalityEdit.render() : '';
@@ -348,8 +350,8 @@ const VoiceAiPage = {
             ${this._renderLocalityLegend()}
             ${card('AI Model', 'model', O.models(), String(d['ai.model']))}
 
-            ${customPipeline ? card('Text-to-speech (Voice)', 'tts', O.TTS, String(d['voice.ttsProvider'])) : ''}
-            ${customPipeline ? card('Speech-to-text', 'stt', O.STT, String(d['voice.sttProvider'])) : ''}
+            ${customPipeline ? card('Text-to-speech (Voice)', 'tts', this._haFilter(O.TTS), String(d['voice.ttsProvider'])) : ''}
+            ${customPipeline ? card('Speech-to-text', 'stt', this._haFilter(O.STT), String(d['voice.sttProvider'])) : ''}
             ${customPipeline ? card('Web search source', 'search', O.SEARCH, String(d['voice.searchSource'])) : ''}
             ${customPipeline ? card('Sports source', 'sports', O.SPORTS, String(d['voice.sportsSource'])) : ''}
 
@@ -367,7 +369,7 @@ const VoiceAiPage = {
     /** Voice control method dropdown with a compact "Customize pipeline" toggle
      *  inline on the right. The toggle reveals the TTS / STT / search-source cards. */
     _renderControlMethodRow(d, customPipeline) {
-        const opts = this.CONTROL_METHOD_OPTIONS.map(([v, l]) =>
+        const opts = this._haFilter(this.CONTROL_METHOD_OPTIONS).map(([v, l]) =>
             `<option value="${this._escape(v)}" ${v === String(d['voice.controlMethod']) ? 'selected' : ''}>${this._escape(l)}</option>`).join('');
         return `
             <div class="card" style="margin-bottom: 16px;"><div class="card-body">

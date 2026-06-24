@@ -249,6 +249,11 @@ const DashieAuth = {
     /** Subscription tier ('basic' | 'core' | 'plus' | 'vip' | 'developer') */
     get tier() { return this._userProfile?.tier || null; },
 
+    /** Whether this account is flagged as a Home Assistant user (user_profiles.is_ha_user).
+     *  Set live, one-way, by send-welcome-email on login when a device has HA enabled.
+     *  Gates the HA-only voice pipeline options on the Voice & AI page. */
+    get isHaUser() { return this._userProfile?.is_ha_user === true; },
+
     /**
      * Fetch tier + special_access from user_profiles. Cheap REST call (one
      * row, two columns). Idempotent — repeated calls just refresh the cache.
@@ -257,7 +262,7 @@ const DashieAuth = {
     async loadUserProfile() {
         if (!this.jwt || !this.jwtUserId) return null;
         try {
-            const url = `${this.config.url}/rest/v1/user_profiles?select=tier,special_access&auth_user_id=eq.${this.jwtUserId}`;
+            const url = `${this.config.url}/rest/v1/user_profiles?select=tier,special_access,is_ha_user&auth_user_id=eq.${this.jwtUserId}`;
             const res = await fetch(url, {
                 headers: {
                     'Authorization': `Bearer ${this.jwt}`,
@@ -272,7 +277,7 @@ const DashieAuth = {
             const rows = await res.json();
             const row = Array.isArray(rows) ? rows[0] : null;
             if (row) {
-                this._userProfile = { tier: row.tier || 'basic', special_access: row.special_access || null };
+                this._userProfile = { tier: row.tier || 'basic', special_access: row.special_access || null, is_ha_user: row.is_ha_user === true };
             }
             this._attachProfileVisibilityRefresh();
             return this._userProfile;

@@ -42,10 +42,10 @@ const VoiceAiApi = {
 
     DEFAULTS: {
         'ai.model': 'gemini-2.5-flash',
-        'voice.controlMethod': 'dashie',
+        'voice.controlMethod': 'dashie_cloud',
         'voice.customizePipeline': false,
-        'voice.sttProvider': 'deepgram',
-        'voice.ttsProvider': 'elevenlabs',
+        'voice.sttProvider': 'dashie_cloud',
+        'voice.ttsProvider': 'dashie_cloud',
         'ai.webSearchEnabled': true,
         'ai.retrievePicturesEnabled': false,
         'ai.conversationContextEnabled': false,
@@ -61,14 +61,29 @@ const VoiceAiApi = {
         'voice.localSttUrl': '',
     },
 
+    /** Legacy → engine-domain value remap. Accounts the console wrote before the
+     *  engine-model alignment hold vendor values (deepgram/elevenlabs/dashie/native)
+     *  that no longer match the option ids; normalize on load so the dropdowns render
+     *  the right selection. Display-only — the normalized value isn't persisted until
+     *  the user next saves (honors the no-migration decision). */
+    _LEGACY_MAP: {
+        'voice.controlMethod': { dashie: 'dashie_cloud', ha: 'voice_assistant' },
+        'voice.sttProvider':   { deepgram: 'dashie_cloud', whisper: 'dashie_cloud', native: 'android_voice' },
+        'voice.ttsProvider':   { elevenlabs: 'dashie_cloud', openai: 'dashie_cloud', native: 'android_voice' },
+    },
+
     /** Load the account AI defaults as a flat {dotted: value} object,
-     *  filling defaults for anything unset. */
+     *  filling defaults for anything unset and normalizing legacy values. */
     async loadAiDefaults() {
         const settings = await DashieAuth.loadUserSettings();
         const out = {};
         for (const [a, b] of this.AI_DEFAULT_KEYS) {
+            const key = `${a}.${b}`;
             const v = settings?.[a]?.[b];
-            out[`${a}.${b}`] = v === undefined ? this.DEFAULTS[`${a}.${b}`] : v;
+            let val = v === undefined ? this.DEFAULTS[key] : v;
+            const lmap = this._LEGACY_MAP[key];
+            if (lmap && lmap[val] !== undefined) val = lmap[val];
+            out[key] = val;
         }
         return out;
     },

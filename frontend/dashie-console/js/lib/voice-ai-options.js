@@ -73,24 +73,30 @@ const VoiceAiOptions = {
         return out;
     },
 
-    // Whisper here is the on-device whisper.cpp build (cloud OpenAI Whisper removed).
+    // Engine domain (matches Kotlin VoicePreferences + the runtime voice providers):
+    // dashie_cloud = fixed cloud vendor; va_default = the device's Home Assistant
+    // voice pipeline; android_voice = on-device. `haOnly` options are hidden for
+    // non-HA accounts (gated on DashieAuth.isHaUser by the page).
     STT: [
-        { id: 'deepgram', label: 'Deepgram', locality: 'cloud', cost: '$0.0043/min · ~0.04¢/command',
+        { id: 'dashie_cloud', label: 'Dashie Cloud (Deepgram)', locality: 'cloud', cost: '$0.0043/min · ~0.04¢/command',
           description: 'Streaming, premium accuracy.' },
-        { id: 'native', label: 'Device native', locality: 'local', cost: 'Free',
+        { id: 'va_default', label: 'Home Assistant', locality: 'local', cost: 'Free', haOnly: true,
+          description: "Your Home Assistant voice pipeline's speech-to-text." },
+        { id: 'android_voice', label: 'Android voice', locality: 'local', cost: 'Free',
           description: 'Built-in Android / browser speech recognition.' },
         { id: 'local-whisper', label: 'Local Whisper', locality: 'local', cost: 'Free', comingSoon: true,
           description: 'On-device whisper.cpp — offline, nothing leaves the LAN.' },
     ],
 
-    // OpenAI TTS removed.
     TTS: [
-        { id: 'elevenlabs', label: 'ElevenLabs', locality: 'cloud', cost: '$0.18/1k chars · ~1–2¢/reply',
+        { id: 'dashie_cloud', label: 'Dashie Cloud (ElevenLabs)', locality: 'cloud', cost: '$0.18/1k chars · ~1–2¢/reply',
           description: 'Premium character voices.' },
-        { id: 'native', label: 'Device / HA (native)', locality: 'local', cost: 'Free',
-          description: 'Android TTS or Home Assistant Piper.' },
-        { id: 'piper', label: 'Piper (local)', locality: 'local', cost: 'Free', comingSoon: true,
-          description: 'Bundled local voice — offline.',
+        { id: 'va_default', label: 'Home Assistant', locality: 'local', cost: 'Free', haOnly: true,
+          description: "Your Home Assistant voice pipeline's text-to-speech." },
+        { id: 'android_voice', label: 'Android voice', locality: 'local', cost: 'Free',
+          description: 'Built-in Android text-to-speech.' },
+        { id: 'piper', label: 'Piper', locality: 'local', cost: 'Free', haOnly: true, comingSoon: true,
+          description: 'Home Assistant Piper voice — offline.',
           configFields: [{ key: 'voice.localTtsUrl', label: 'Piper endpoint (optional)', placeholder: 'http://homeassistant.local:10200' }] },
     ],
 
