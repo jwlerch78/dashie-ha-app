@@ -51,6 +51,16 @@ const UsageChart = {
             .map(([ym, g]) => ({ label: this._monthLabel(ym), ...g }));
     },
 
+    /** Drop leading + trailing all-zero buckets (interior gaps are kept) so the
+     *  chart starts at the first bucket with usage and ends at the last — no big
+     *  empty run before the data. */
+    trimEmptyEnds(buckets) {
+        let lo = 0, hi = buckets.length - 1;
+        while (lo <= hi && (buckets[lo].total || 0) <= 0) lo++;
+        while (hi >= lo && (buckets[hi].total || 0) <= 0) hi--;
+        return lo > hi ? [] : buckets.slice(lo, hi + 1);
+    },
+
     _sum(byService, bucketFn, costFn) {
         const o = { ai: 0, speech: 0, tools: 0, total: 0 };
         for (const r of (byService || [])) {

@@ -594,10 +594,11 @@ const AccountUsage = {
 
     _renderBreakdownBody(days) {
         if (this._breakdownView === 'daily') {
-            // Graphs span the whole range ascending (earliest on the left) with
-            // missing days filled as zero bars so gaps in usage are visible.
+            // Span the range ascending (earliest left) with missing days filled as
+            // zero bars (gaps), then trim the empty run before the first / after
+            // the last day with usage, then cap to the most recent N.
             const filled = this._filledDays();
-            const all = UsageChart.dayBuckets(filled, this._chartBucketFn, this._chartCostFn);
+            const all = UsageChart.trimEmptyEnds(UsageChart.dayBuckets(filled, this._chartBucketFn, this._chartCostFn));
             const cap = this.DAILY_GRAPH_CAP;
             const capped = all.length > cap ? all.slice(-cap) : all;
             const note = all.length > cap
@@ -606,7 +607,7 @@ const AccountUsage = {
             return UsageChart.render(capped, { note });
         }
         if (this._breakdownView === 'monthly') {
-            return UsageChart.render(UsageChart.monthBuckets(this._filledDays(), this._chartBucketFn, this._chartCostFn));
+            return UsageChart.render(UsageChart.trimEmptyEnds(UsageChart.monthBuckets(this._filledDays(), this._chartBucketFn, this._chartCostFn)));
         }
         // List view — month-grouped in year range, flat day rows otherwise.
         return this._activeRange === 'year'

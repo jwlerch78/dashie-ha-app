@@ -366,14 +366,31 @@ const VoiceAiChat = {
             if (h.provider && h.provider !== h.model) headerBits.push(esc(h.provider));
         }
 
-        // Timing line: "<total> - pass(1) X · search Y · pass(2) Z"
+        // Timing line: "<total> - pass(1) X · sports Y · pass(2) Z · overhead W".
+        // Map EVERY brain stage (unknown names fall through to a generic label so
+        // new tools — sports/weather/places/calendar — never silently vanish the
+        // way fetch_sports used to), then add an "overhead" remainder for the time
+        // not inside any reported stage (network round-trip to the edge fn + the
+        // entity prefetch) so the parts add up to the end-to-end total.
+        const STAGE_LABEL = {
+            pass1: 'pass(1)', pass2: 'pass(2)', fetch_search: 'search',
+            fetch_sports: 'sports', fetch_weather: 'weather', fetch_entities: 'entities',
+            nlp_intercept: 'HA Assist', noise_shortcircuit: 'noise',
+        };
         const stageBits = [];
+        let stageSum = 0;
         for (const s of (h.stages || [])) {
-            if (s.name === 'pass1') stageBits.push(`pass(1) ${this._fmtSeconds(s.latency_ms)}`);
-            else if (s.name === 'fetch_entities') stageBits.push(`entities ${this._fmtSeconds(s.latency_ms)} (${s.entity_count})`);
-            else if (s.name === 'fetch_search') stageBits.push(`search ${this._fmtSeconds(s.latency_ms)} (${s.result_count})`);
-            else if (s.name === 'pass2') stageBits.push(`pass(2) ${this._fmtSeconds(s.latency_ms)}`);
-            else if (s.name === 'nlp_intercept') stageBits.push(`HA Assist ${this._fmtSeconds(s.latency_ms)}`);
+            if (typeof s.latency_ms === 'number') stageSum += s.latency_ms;
+            const label = STAGE_LABEL[s.name] || s.name;
+            const extra = s.entity_count != null ? ` (${s.entity_count})`
+                : s.result_count != null ? ` (${s.result_count})` : '';
+            stageBits.push(`${label} ${this._fmtSeconds(s.latency_ms)}${extra}`);
+        }
+        // Everything that took time but isn't a reported stage (network + prefetch).
+        // Show only when meaningful so the breakdown reconciles to the total.
+        if (h.total_latency_ms != null && stageBits.length > 0) {
+            const overhead = h.total_latency_ms - stageSum;
+            if (overhead > 50) stageBits.push(`overhead ${this._fmtSeconds(overhead)}`);
         }
         const total = h.total_latency_ms != null ? this._fmtSeconds(h.total_latency_ms) : null;
         const timingLine = (total || stageBits.length > 0)
