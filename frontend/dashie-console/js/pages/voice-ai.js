@@ -27,6 +27,7 @@ const VoiceAiPage = {
     _savingKey: null,       // dotted key currently saving (for inline "saving…")
     _syncRegistered: false,
     _activeTab: 'settings', // 'settings' | 'chat' | 'analysis'
+    _expandedCards: new Set(), // expanded component cards (model/stt/tts/search)
 
     setTab(tab) {
         if (tab !== 'settings' && tab !== 'personalities' && tab !== 'chat' && tab !== 'analysis') return;
@@ -202,7 +203,9 @@ const VoiceAiPage = {
         // Coerce to the stored type: timeout numeric; model/control-method/STT/TTS
         // are string selects; everything else boolean.
         let value = rawValue;
-        const STRING_KEYS = ['ai.model', 'voice.controlMethod', 'voice.sttProvider', 'voice.ttsProvider'];
+        const STRING_KEYS = ['ai.model', 'voice.controlMethod', 'voice.sttProvider', 'voice.ttsProvider',
+            'voice.searchSource', 'voice.localLlmUrl', 'voice.localLlmModel', 'voice.searxngUrl',
+            'voice.localTtsUrl', 'voice.localSttUrl'];
         if (dottedKey === 'ai.conversationTimeout') value = Number(rawValue);
         else if (STRING_KEYS.includes(dottedKey)) value = String(rawValue);
         else value = (rawValue === true || rawValue === 'true');
@@ -221,6 +224,29 @@ const VoiceAiPage = {
             this._savingKey = null;
             App.renderPage();
         }
+    },
+
+    // ── Component-card handlers ──────────────────────────────
+
+    /** Card option chosen → map the stage to its dotted key and persist. Selecting
+     *  the 'local' model stores ai.model='local' (the route); the endpoint + model
+     *  live in their own voice.* keys, saved via the inline config fields. */
+    selectOption(stageKey, id) {
+        const KEY = { model: 'ai.model', stt: 'voice.sttProvider', tts: 'voice.ttsProvider', search: 'voice.searchSource' };
+        const key = KEY[stageKey];
+        if (key) this.saveDefault(key, id);
+    },
+
+    /** Inline local-config field (endpoint URL, model, SearXNG URL) → persist as string. */
+    saveLocalField(dottedKey, value) {
+        this.saveDefault(dottedKey, value);
+    },
+
+    /** Expand/collapse a component card. */
+    toggleCard(stageKey) {
+        if (this._expandedCards.has(stageKey)) this._expandedCards.delete(stageKey);
+        else this._expandedCards.add(stageKey);
+        App.renderPage();
     },
 
     // ── Personality actions ──────────────────────────────────
@@ -303,17 +329,36 @@ const VoiceAiPage = {
 
     _renderAiDefaults() {
         const d = this._defaults;
+        const O = window.VoiceAiOptions;
         const memoryOn = d['ai.conversationContextEnabled'] === true;
         const customPipeline = d['voice.customizePipeline'] === true;
+        const searchOn = d['ai.webSearchEnabled'] === true;
+        const cfg = k => d[k];
+        const card = (title, stageKey, options, selectedId) => VoiceAiCards.render({
+            title, stageKey, options, selectedId,
+            expanded: this._expandedCards.has(stageKey),
+            getConfig: cfg,
+        });
         return `
-            ${this._sectionHeader('Voice & AI Defaults', 'Apply to every device signed into this account.')}
-            <div class="card"><div class="card-body">
+            ${this._sectionHeader('Voice & AI Defaults', 'Apply to every device signed into this account. Cloud engines are tagged orange, on-device / self-hosted ones green.')}
+            <div class="card" style="margin-bottom: 16px;"><div class="card-body">
                 ${this._selectRow('Voice control method', 'voice.controlMethod', this.CONTROL_METHOD_OPTIONS, String(d['voice.controlMethod']))}
-                ${this._modelRow(d['ai.model'])}
-                ${this._toggleRow('Customize voice pipeline', 'Override the default speech engines for this account.', 'voice.customizePipeline', customPipeline)}
-                ${customPipeline ? this._selectRow('Speech-to-text (STT)', 'voice.sttProvider', this.STT_OPTIONS, String(d['voice.sttProvider'])) : ''}
-                ${customPipeline ? this._selectRow('Text-to-speech (TTS)', 'voice.ttsProvider', this.TTS_OPTIONS, String(d['voice.ttsProvider'])) : ''}
-                ${this._toggleRow('Web search', 'Let the assistant search the web for answers.', 'ai.webSearchEnabled', d['ai.webSearchEnabled'])}
+            </div></div>
+
+            ${card('AI Model', 'model', O.models(), String(d['ai.model']))}
+
+            <div class="card" style="margin-bottom: 16px;"><div class="card-body">
+                ${this._toggleRow('Customize speech engines', 'Override the default speech-to-text / text-to-speech for this account.', 'voice.customizePipeline', customPipeline)}
+            </div></div>
+            ${customPipeline ? card('Text-to-speech (Voice)', 'tts', O.TTS, String(d['voice.ttsProvider'])) : ''}
+            ${customPipeline ? card('Speech-to-text', 'stt', O.STT, String(d['voice.sttProvider'])) : ''}
+
+            ${this._sectionHeader('Tools', '')}
+            <div class="card" style="margin-bottom: 16px;"><div class="card-body">
+                ${this._toggleRow('Web search', 'Let the assistant search the web for answers.', 'ai.webSearchEnabled', searchOn)}
+            </div></div>
+            ${searchOn ? card('Web search source', 'search', O.SEARCH, String(d['voice.searchSource'])) : ''}
+            <div class="card"><div class="card-body">
                 ${this._toggleRow('Retrieve pictures', 'Let the assistant pull family photos into responses.', 'ai.retrievePicturesEnabled', d['ai.retrievePicturesEnabled'])}
                 ${this._toggleRow('Conversation memory', 'Remember the prior conversation for follow-ups.', 'ai.conversationContextEnabled', d['ai.conversationContextEnabled'])}
                 ${memoryOn ? this._selectRow('Memory duration', 'ai.conversationTimeout', this.MEMORY_OPTIONS, String(d['ai.conversationTimeout'])) : ''}

@@ -31,6 +31,12 @@ const VoiceAiApi = {
         ['ai', 'conversationTimeout'],
         ['ai', 'retainTranscripts'],
         ['voice', 'alwaysUseAI'],
+        ['voice', 'searchSource'],
+        ['voice', 'localLlmUrl'],
+        ['voice', 'localLlmModel'],
+        ['voice', 'searxngUrl'],
+        ['voice', 'localTtsUrl'],
+        ['voice', 'localSttUrl'],
     ],
 
     DEFAULTS: {
@@ -45,6 +51,12 @@ const VoiceAiApi = {
         'ai.conversationTimeout': 30,
         'ai.retainTranscripts': false,
         'voice.alwaysUseAI': false,
+        'voice.searchSource': 'dashie',
+        'voice.localLlmUrl': '',
+        'voice.localLlmModel': '',
+        'voice.searxngUrl': '',
+        'voice.localTtsUrl': '',
+        'voice.localSttUrl': '',
     },
 
     /** Load the account AI defaults as a flat {dotted: value} object,
