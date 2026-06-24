@@ -25,10 +25,12 @@ const BuyCreditsModal = {
     _pollTimer: null,
     _pollDeadline: 0,
     _getCheckoutUrl: null,
+    _packs: null,
 
     open({ packs, getCheckoutUrl }) {
         this._closeImmediate();   // collapse any prior instance
         this._getCheckoutUrl = getCheckoutUrl;
+        this._packs = packs || [];
         this._render(packs || []);
     },
 
@@ -92,17 +94,22 @@ const BuyCreditsModal = {
         if (!DashieAuth.isAddonMode) { window.location = url; return; }
 
         // HA ingress: pop out to a new tab + poll for the granted balance.
+        const pack = (this._packs || []).find(p => String(p.price_id) === String(priceId));
         const cur = window.CreditsService?.balance?.();
         const startBal = (cur && typeof cur.balance === 'number') ? cur.balance : 0;
-        this._renderWaiting(url);
+        this._renderWaiting(url, pack?.usd);
         this._startPolling(startBal);
     },
 
-    _renderWaiting(url) {
+    _renderWaiting(url, usd) {
         const body = this._root?.querySelector('[data-bc-body]');
         if (!body) return;
         body.style.opacity = '';
+        const amountLine = (usd != null && usd !== '')
+            ? `<div style="font-size:15px; font-weight:600; text-align:center; margin-bottom:14px;">Purchasing $${this._escape(usd)} in credits</div>`
+            : '';
         body.innerHTML = `
+            ${amountLine}
             <a href="${this._escape(url)}" target="_blank" rel="noopener" class="btn btn-primary"
                style="display:flex; align-items:center; justify-content:center; text-decoration:none; padding:14px 0; font-weight:600;">
                 Continue to secure checkout &rarr;
@@ -171,6 +178,7 @@ const BuyCreditsModal = {
         this._root = null;
         this._onKeyDown = null;
         this._getCheckoutUrl = null;
+        this._packs = null;
     },
 
     _escape(s) {

@@ -47,6 +47,11 @@ const AccountUsage = {
     /** Expanded service groups in the summary card (collapsed by default). */
     _expandedServices: new Set(),
 
+    /** Breakdown card: view mode + (year-list) expanded month groups. */
+    _breakdownView: 'list',       // 'list' | 'daily' | 'monthly'
+    _expandedMonths: new Set(),
+    DAILY_GRAPH_CAP: 90,          // Daily Graph caps at the most recent N days (year range)
+
     /** Admin form state. */
     _adminForm: { open: false, email: '', amount: '', note: '', busy: false, error: null },
 
@@ -81,7 +86,12 @@ const AccountUsage = {
             // Stat cards (Today / This month) must be range-INDEPENDENT, so fetch
             // the current month's daily separately from the selected-range data.
             const now = new Date();
-            const monthStart = new Date(now.getFullYear(), now.getMonth(), 1).toISOString();
+            // Range-INDEPENDENT stat window: cover both "this week" and "this month".
+            // Early in a month the calendar week reaches into the prior month, so start
+            // at whichever is earlier (else "This week" undercounts across the boundary).
+            const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+            const weekStart = this._weekStart();
+            const statStart = (weekStart < monthStart ? weekStart : monthStart).toISOString();
             const nowIso = now.toISOString();
             // Auto-replenish state lives in CreditsControls now (shared with the
             // Account tab); fetch it alongside so the Balance card paints complete.
@@ -89,7 +99,7 @@ const AccountUsage = {
                 DashieAuth.dbRequest('get_credit_balance', {}),
                 DashieAuth.dbRequest('get_usage_summary', { range_start: start, range_end: end, tz }),
                 DashieAuth.dbRequest('get_usage_daily',   { range_start: start, range_end: end, tz }),
-                DashieAuth.dbRequest('get_usage_daily',   { range_start: monthStart, range_end: nowIso, tz }),
+                DashieAuth.dbRequest('get_usage_daily',   { range_start: statStart, range_end: nowIso, tz }),
                 DashieAuth.dbRequest('get_credit_rates',  {}).catch(() => null),
                 DashieAuth.dbRequest('get_credit_expiry', {}).catch(() => null),
                 CreditsControls.fetchAutorefill().catch(() => null),
@@ -119,6 +129,7 @@ const AccountUsage = {
         this._activeRange = range;
         if (range !== 'custom') {
             this._expandedDays.clear();
+            this._expandedMonths.clear();
             this._fetchAll();
         } else {
             App.renderPage();
@@ -130,6 +141,7 @@ const AccountUsage = {
         this._customEnd = end;
         this._activeRange = 'custom';
         this._expandedDays.clear();
+        this._expandedMonths.clear();
         this._fetchAll();
     },
 
@@ -145,6 +157,10 @@ const AccountUsage = {
             case '7d':    start = new Date(now.getTime() - 7 * 86400_000).toISOString(); break;
             case 'month': {
                 const s = new Date(now.getFullYear(), now.getMonth(), 1);  // local month start
+                start = s.toISOString(); break;
+            }
+            case 'year': {
+                const s = new Date(now.getFullYear(), 0, 1);  // local Jan 1
                 start = s.toISOString(); break;
             }
             case 'custom':
@@ -333,7 +349,7 @@ const AccountUsage = {
                 ${this._renderAdminSection()}
                 ${this._renderRangeBar()}
                 ${this._renderSummaryCard()}
-                ${this._renderDailyCard()}
+                ${this._renderBreakdownCard()}
                 ${this._renderPricingCard()}
             </div>`;
     },
@@ -392,29 +408,32 @@ const AccountUsage = {
     },
 
     _renderStatStrip() {
-        // Today + month totals are derived from the existing summary fetch
-        // when the active range covers them; otherwise we show a "—".
+        // Balance card on the left; one combined period card (Today / This week /
+        // This month) on the right. All three totals are range-INDEPENDENT (read
+        // from the dedicated stat-window fetch, not the selected range).
         const todayCost = this._totalCostForDay(this._todayDate());
+        const weekCost = this._totalCostForWeek();
         const monthCost = this._totalCostForMonth();
-        // Balance card (balance + Buy more + auto-replenish) on the left; Today
-        // stacked over This month on the right. Default (stretch) align so the
-        // Balance card matches the stacked column's height (it centers its content).
         return `
-            <div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; margin-bottom: 20px;">
+            <div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; margin-bottom: 20px; align-items: stretch;">
                 ${CreditsControls.renderBalanceCard(this._balance)}
-                <div style="display: grid; gap: 12px;">
-                    ${this._statCard('Today', todayCost == null ? '—' : this._fmtCost(todayCost), '')}
-                    ${this._statCard('This month', monthCost == null ? '—' : this._fmtCost(monthCost), '')}
-                </div>
+                ${this._renderPeriodCard(todayCost, weekCost, monthCost)}
             </div>`;
     },
 
-    _statCard(label, value, sub) {
+    /** Combined Today / This week / This month card. Fills its grid cell so its
+     *  height matches the Balance card beside it (align-items: stretch). */
+    _renderPeriodCard(today, week, month) {
+        const row = (label, val) => `
+            <div style="display: flex; justify-content: space-between; align-items: baseline; gap: 12px;">
+                <span style="font-size: 11px; font-weight: 600; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px;">${label}</span>
+                <span style="font-size: 20px; font-weight: 700; color: var(--text-primary);">${val == null ? '—' : this._escape(this._fmtCost(val))}</span>
+            </div>`;
         return `
-            <div class="card"><div class="card-body" style="padding: 14px 16px;">
-                <div style="font-size: 11px; font-weight: 600; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px;">${this._escape(label)}</div>
-                <div style="font-size: 22px; font-weight: 700; color: var(--text-primary); margin-top: 4px;">${this._escape(value)}</div>
-                ${sub ? `<div style="font-size: 11px; color: var(--text-muted); margin-top: 2px;">${this._escape(sub)}</div>` : ''}
+            <div class="card" style="height: 100%;"><div class="card-body" style="height: 100%; box-sizing: border-box; display: flex; flex-direction: column; justify-content: space-between; gap: 10px; padding: 16px;">
+                ${row('Today', today)}
+                ${row('This week', week)}
+                ${row('This month', month)}
             </div></div>`;
     },
 
@@ -468,7 +487,7 @@ const AccountUsage = {
     },
 
     _renderRangeBar() {
-        const ranges = [['today', 'Today'], ['7d', '7 days'], ['30d', '30 days'], ['month', 'This month']];
+        const ranges = [['today', 'Today'], ['7d', '7 days'], ['30d', '30 days'], ['month', 'This month'], ['year', 'This year']];
         return `
             <div style="display: flex; gap: 6px; margin-bottom: 12px; flex-wrap: wrap;">
                 ${ranges.map(([id, label]) => `
@@ -542,16 +561,113 @@ const AccountUsage = {
             </tr>`;
     },
 
-    _renderDailyCard() {
+    /** Breakdown card: header + view selector (List / Daily Graph / Monthly Graph)
+     *  over the body. List is the per-day drill-down (month-grouped in year range);
+     *  the graphs are stacked AI/Speech/Tools bars from UsageChart. */
+    _renderBreakdownCard() {
         const days = this._daily?.days || [];
         if (days.length === 0) return '';
         return `
             <div class="card"><div class="card-body" style="padding: 0;">
-                <div style="padding: 12px 16px; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; color: var(--text-muted); border-bottom: 1px solid var(--border, #e5e7eb);">
-                    Daily breakdown
+                <div style="display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap; padding: 10px 16px; border-bottom: 1px solid var(--border, #e5e7eb);">
+                    <span style="font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; color: var(--text-muted);">Breakdown</span>
+                    ${this._renderBreakdownSelector()}
                 </div>
-                ${days.map(d => this._renderDayRow(d)).join('')}
+                ${this._renderBreakdownBody(days)}
             </div></div>`;
+    },
+
+    _renderBreakdownSelector() {
+        const views = [['list', 'List'], ['daily', 'Daily Graph'], ['monthly', 'Monthly Graph']];
+        return `<div style="display:inline-flex; gap:4px;">
+            ${views.map(([id, label]) => `
+                <button class="btn ${this._breakdownView === id ? 'btn-primary' : 'btn-secondary'} btn-sm"
+                    onclick="AccountUsage.setBreakdownView('${id}')">${label}</button>`).join('')}
+        </div>`;
+    },
+
+    setBreakdownView(v) {
+        if (v === this._breakdownView) return;
+        this._breakdownView = v;
+        App.renderPage();
+    },
+
+    _renderBreakdownBody(days) {
+        if (this._breakdownView === 'daily') {
+            const all = UsageChart.dayBuckets(days, this._chartBucketFn, this._chartCostFn);
+            const cap = this.DAILY_GRAPH_CAP;
+            const capped = all.length > cap ? all.slice(-cap) : all;
+            const note = all.length > cap
+                ? `Showing the most recent ${cap} days — switch to Monthly Graph for the full range.`
+                : '';
+            return UsageChart.render(capped, { note });
+        }
+        if (this._breakdownView === 'monthly') {
+            return UsageChart.render(UsageChart.monthBuckets(days, this._chartBucketFn, this._chartCostFn));
+        }
+        // List view — month-grouped in year range, flat day rows otherwise.
+        return this._activeRange === 'year'
+            ? this._renderYearList(days)
+            : days.map(d => this._renderDayRow(d)).join('');
+    },
+
+    /** row → chart bucket key ('ai' | 'speech' | 'tools'). Reuses _svcGroup
+     *  (tts/stt → speech) and folds web_search → tools. Bound for UsageChart. */
+    _chartBucketFn(r) {
+        const g = AccountUsage._svcGroup(r.service);
+        return g === 'web_search' ? 'tools' : g;
+    },
+    _chartCostFn(r) { return AccountUsage._costForRow(r); },
+
+    // ── year list: current month daily, prior months collapsed ──
+
+    _renderYearList(days) {
+        const sorted = [...days].sort((a, b) => (a.date < b.date ? 1 : -1));   // newest first
+        const curPrefix = new Date().toLocaleDateString('en-CA').slice(0, 7);   // local 'YYYY-MM'
+        const current = sorted.filter(d => d.date.startsWith(curPrefix));
+        const prior = sorted.filter(d => !d.date.startsWith(curPrefix));
+        // Preserve newest-first month order while grouping.
+        const order = [], byMonth = new Map();
+        for (const d of prior) {
+            const ym = d.date.slice(0, 7);
+            if (!byMonth.has(ym)) { byMonth.set(ym, []); order.push(ym); }
+            byMonth.get(ym).push(d);
+        }
+        return current.map(d => this._renderDayRow(d)).join('')
+            + order.map(ym => this._renderMonthGroup(ym, byMonth.get(ym))).join('');
+    },
+
+    _renderMonthGroup(ym, monthDays) {
+        const open = this._expandedMonths.has(ym);
+        const caret = open ? '▾' : '▸';
+        const allRows = monthDays.flatMap(d => d.by_service || []);
+        const total = allRows.reduce((s, r) => s + this._costForRow(r), 0);
+        const pills = this._dayServicePills(allRows);
+        const detail = open ? monthDays.map(d => this._renderDayRow(d)).join('') : '';
+        return `
+            <div style="border-bottom: 1px solid var(--border, #e5e7eb);">
+                <div onclick="AccountUsage.toggleMonth('${ym}')"
+                    style="display:flex; align-items:center; gap:12px; padding:10px 16px; cursor:pointer; background:var(--surface-muted,#fafafa);">
+                    <span style="color:var(--text-muted); width:12px;">${caret}</span>
+                    <span style="font-size:13px; font-weight:600; min-width:110px;">${this._escape(this._fmtMonthLong(ym))}</span>
+                    <span style="flex:1; font-size:12px; color:var(--text-muted);">${pills}</span>
+                    <span style="font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size:13px; font-weight:600;">${this._fmtCost(total)}</span>
+                </div>
+                ${detail}
+            </div>`;
+    },
+
+    toggleMonth(ym) {
+        if (this._expandedMonths.has(ym)) this._expandedMonths.delete(ym);
+        else this._expandedMonths.add(ym);
+        App.renderPage();
+    },
+
+    _fmtMonthLong(ym) {
+        try {
+            const [y, m] = ym.split('-').map(Number);
+            return new Date(Date.UTC(y, m - 1, 1)).toLocaleDateString('en-US', { timeZone: 'UTC', month: 'long', year: 'numeric' });
+        } catch { return ym; }
     },
 
     _renderDayRow(d) {
@@ -737,6 +853,26 @@ const AccountUsage = {
         const prefix = new Date().toLocaleDateString('en-CA').slice(0, 7) + '-';  // local 'YYYY-MM-'
         return this._monthDaily.days
             .filter(d => d.date.startsWith(prefix))
+            .reduce((sum, d) => sum + (d.by_service || []).reduce((s, r) => s + this._costForRow(r), 0), 0);
+    },
+
+    /** Local calendar week start (Sunday 00:00). Drives the stat-window fetch and
+     *  the "This week" total. For a Monday-start week, replace `- d.getDay()` with
+     *  `- ((d.getDay() + 6) % 7)`. */
+    _weekStart() {
+        const now = new Date();
+        const d = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+        d.setDate(d.getDate() - d.getDay());  // back up to Sunday
+        return d;
+    },
+
+    _totalCostForWeek() {
+        // Range-independent: read the dedicated stat-window fetch (covers the week
+        // even when it spans into the prior month).
+        if (!this._monthDaily?.days) return null;
+        const ws = this._weekStart().toLocaleDateString('en-CA');  // local 'YYYY-MM-DD'
+        return this._monthDaily.days
+            .filter(d => d.date >= ws)
             .reduce((sum, d) => sum + (d.by_service || []).reduce((s, r) => s + this._costForRow(r), 0), 0);
     },
 
