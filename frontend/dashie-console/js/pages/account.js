@@ -69,7 +69,7 @@ const AccountPage = {
         const expired = typeof SubscribeGate !== 'undefined' && SubscribeGate.isRequired(this._data);
         if (expired) return '';
         return `
-            <button class="btn btn-secondary" onclick="AccountPage.openBillingPortal()" id="manage-subscription-btn">
+            <button class="btn btn-primary" onclick="AccountPage.openBillingPortal()" id="manage-subscription-btn">
                 Manage Subscription
             </button>
         `;
@@ -293,7 +293,7 @@ const AccountPage = {
         const sub = date ? `${verb} ${this._formatDate(date)}` : '';
         const manageable = status === 'active' || status === 'trialing' || status === 'canceled';
         const manageBtn = manageable
-            ? `<button class="btn btn-secondary btn-sm" onclick="AccountPage.openBillingPortal()" style="flex-shrink:0;">Manage subscription</button>`
+            ? `<button class="btn btn-primary btn-sm" onclick="AccountPage.openBillingPortal()" style="flex-shrink:0;">Manage subscription</button>`
             : '';
         return `
             <div class="stat-card" style="display:flex; justify-content:space-between; align-items:flex-start; gap:12px;">
@@ -471,6 +471,13 @@ const AccountPage = {
             // else means the account is in a possibly-half-cleaned state and
             // we should surface for retry rather than redirect.
             if (result?.deleted !== true) {
+                // Active subscription couldn't be canceled → backend aborted the
+                // delete (no data touched). Tell the user to cancel first, then retry.
+                if (result?.reason === 'subscription_cancel_failed') {
+                    restore();
+                    Toast.error(result.error || 'Please cancel your subscription from “Manage subscription,” then delete your account.');
+                    return;
+                }
                 const detail = result?.errors?.[0]?.error
                     || result?.error
                     || 'Deletion did not complete';

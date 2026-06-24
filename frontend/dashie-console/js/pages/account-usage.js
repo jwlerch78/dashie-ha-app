@@ -594,7 +594,10 @@ const AccountUsage = {
 
     _renderBreakdownBody(days) {
         if (this._breakdownView === 'daily') {
-            const all = UsageChart.dayBuckets(days, this._chartBucketFn, this._chartCostFn);
+            // Graphs span the whole range ascending (earliest on the left) with
+            // missing days filled as zero bars so gaps in usage are visible.
+            const filled = this._filledDays();
+            const all = UsageChart.dayBuckets(filled, this._chartBucketFn, this._chartCostFn);
             const cap = this.DAILY_GRAPH_CAP;
             const capped = all.length > cap ? all.slice(-cap) : all;
             const note = all.length > cap
@@ -603,7 +606,7 @@ const AccountUsage = {
             return UsageChart.render(capped, { note });
         }
         if (this._breakdownView === 'monthly') {
-            return UsageChart.render(UsageChart.monthBuckets(days, this._chartBucketFn, this._chartCostFn));
+            return UsageChart.render(UsageChart.monthBuckets(this._filledDays(), this._chartBucketFn, this._chartCostFn));
         }
         // List view — month-grouped in year range, flat day rows otherwise.
         return this._activeRange === 'year'
@@ -618,6 +621,25 @@ const AccountUsage = {
         return g === 'web_search' ? 'tools' : g;
     },
     _chartCostFn(r) { return AccountUsage._costForRow(r); },
+
+    /** Complete ascending day list across the active range, merging the sparse
+     *  server rows in and filling absent days with an empty bucket — so the
+     *  graphs sort earliest-first and render gaps where there was no usage. */
+    _filledDays() {
+        const byDate = new Map((this._daily?.days || []).map(d => [d.date, d]));
+        const { start, end } = this._rangeBounds();
+        const out = [];
+        const cur = this._localMidnight(new Date(start));
+        const last = this._localMidnight(new Date(end));
+        for (let i = 0; cur <= last && i < 800; i++) {        // 800 = safety cap for custom ranges
+            const ds = cur.toLocaleDateString('en-CA');       // local 'YYYY-MM-DD'
+            out.push(byDate.get(ds) || { date: ds, by_service: [] });
+            cur.setDate(cur.getDate() + 1);
+        }
+        return out;
+    },
+
+    _localMidnight(d) { return new Date(d.getFullYear(), d.getMonth(), d.getDate()); },
 
     // ── year list: current month daily, prior months collapsed ──
 
