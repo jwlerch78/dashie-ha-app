@@ -56,7 +56,7 @@ const VoiceAiPage = {
     // Voice pipeline option sets (account-level). Stored in user_settings; the
     // runtime providers/brain read these in a later phase (storage-first).
     CONTROL_METHOD_OPTIONS: [
-        ['dashie', 'Dashie Cloud (premium AI)'],
+        ['dashie', 'Dashie Intelligence'],
         ['ha', 'Home Assistant Voice Assistant'],
     ],
     STT_OPTIONS: [
@@ -234,7 +234,9 @@ const VoiceAiPage = {
     selectOption(stageKey, id) {
         const KEY = { model: 'ai.model', stt: 'voice.sttProvider', tts: 'voice.ttsProvider', search: 'voice.searchSource' };
         const key = KEY[stageKey];
-        if (key) this.saveDefault(key, id);
+        if (!key) return;
+        this._expandedCards.delete(stageKey);   // collapse back to the chosen option
+        this.saveDefault(key, id);
     },
 
     /** Inline local-config field (endpoint URL, model, SearXNG URL) → persist as string. */
@@ -283,21 +285,21 @@ const VoiceAiPage = {
         `;
     },
 
-    /** Household Dashie Cloud sharing toggle — add-on mode only. Lets un-logged-in
+    /** Household Dashie Intelligence sharing toggle — add-on mode only. Lets un-logged-in
      *  tablets / voice satellites on this network use this account's cloud voice
      *  (billed to its credits). Lives under AI Defaults. */
     _renderHouseholdSharing() {
         if (!DashieAuth.isAddonMode) return '';
         const enabled = this._sharing?.householdSharing === true;
         return `
-            <div class="section-header" style="margin-top: 32px;">Household Dashie Cloud Sharing</div>
+            <div class="section-header" style="margin-top: 32px;">Household Dashie Intelligence Sharing</div>
             <div class="card">
                 <div class="card-body">
                     <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:16px; flex-wrap:wrap;">
                         <div style="flex:1; min-width:240px;">
                             <div style="font-weight:500; margin-bottom:6px;">Let kiosk tablets &amp; voice satellites use this account</div>
                             <div style="color: var(--text-secondary); font-size: var(--font-size-sm); line-height:1.5;">
-                                When on, un-logged-in Dashie tablets and Home Assistant voice satellites on this network can use this account's Dashie Cloud voice — premium AI answers and personality voices. Usage draws on <strong>your</strong> credits. You can turn this off any time.
+                                When on, un-logged-in Dashie tablets and Home Assistant voice satellites on this network can use this account's Dashie Intelligence voice — premium AI answers and personality voices. Usage draws on <strong>your</strong> credits. You can turn this off any time.
                             </div>
                         </div>
                         <button class="btn ${enabled ? 'btn-primary' : 'btn-secondary'}" id="household-sharing-btn"
@@ -340,31 +342,60 @@ const VoiceAiPage = {
             getConfig: cfg,
         });
         return `
-            ${this._sectionHeader('Voice & AI Defaults', 'Apply to every device signed into this account. Cloud engines are tagged orange, on-device / self-hosted ones green.')}
-            <div class="card" style="margin-bottom: 16px;"><div class="card-body">
-                ${this._selectRow('Voice control method', 'voice.controlMethod', this.CONTROL_METHOD_OPTIONS, String(d['voice.controlMethod']))}
-            </div></div>
+            ${this._sectionHeader('Voice & AI Defaults', 'Apply to every device signed into this account.')}
+            ${this._renderControlMethodRow(d, customPipeline)}
 
             ${card('AI Model', 'model', O.models(), String(d['ai.model']))}
 
-            <div class="card" style="margin-bottom: 16px;"><div class="card-body">
-                ${this._toggleRow('Customize speech engines', 'Override the default speech-to-text / text-to-speech for this account.', 'voice.customizePipeline', customPipeline)}
-            </div></div>
+            ${customPipeline ? this._renderLocalityLegend() : ''}
             ${customPipeline ? card('Text-to-speech (Voice)', 'tts', O.TTS, String(d['voice.ttsProvider'])) : ''}
             ${customPipeline ? card('Speech-to-text', 'stt', O.STT, String(d['voice.sttProvider'])) : ''}
+            ${customPipeline ? card('Web search source', 'search', O.SEARCH, String(d['voice.searchSource'])) : ''}
 
             ${this._sectionHeader('Tools', '')}
-            <div class="card" style="margin-bottom: 16px;"><div class="card-body">
-                ${this._toggleRow('Web search', 'Let the assistant search the web for answers.', 'ai.webSearchEnabled', searchOn)}
-            </div></div>
-            ${searchOn ? card('Web search source', 'search', O.SEARCH, String(d['voice.searchSource'])) : ''}
             <div class="card"><div class="card-body">
+                ${this._toggleRow('Web search', 'Let the assistant search the web for answers.', 'ai.webSearchEnabled', searchOn)}
                 ${this._toggleRow('Retrieve pictures', 'Let the assistant pull family photos into responses.', 'ai.retrievePicturesEnabled', d['ai.retrievePicturesEnabled'])}
                 ${this._toggleRow('Conversation memory', 'Remember the prior conversation for follow-ups.', 'ai.conversationContextEnabled', d['ai.conversationContextEnabled'])}
                 ${memoryOn ? this._selectRow('Memory duration', 'ai.conversationTimeout', this.MEMORY_OPTIONS, String(d['ai.conversationTimeout'])) : ''}
                 ${this._toggleRow('Always use AI for chores', 'Disable the fast path — routes all chore commands through AI (uses more tokens).', 'voice.alwaysUseAI', d['voice.alwaysUseAI'])}
             </div></div>
         `;
+    },
+
+    /** Voice control method dropdown with a compact "Customize pipeline" toggle
+     *  inline on the right. The toggle reveals the TTS / STT / search-source cards. */
+    _renderControlMethodRow(d, customPipeline) {
+        const opts = this.CONTROL_METHOD_OPTIONS.map(([v, l]) =>
+            `<option value="${this._escape(v)}" ${v === String(d['voice.controlMethod']) ? 'selected' : ''}>${this._escape(l)}</option>`).join('');
+        return `
+            <div class="card" style="margin-bottom: 16px;"><div class="card-body">
+                <div style="display:flex; align-items:flex-end; gap: 16px; flex-wrap: wrap;">
+                    <div style="flex: 1; min-width: 220px;">
+                        <label class="form-label">Voice control method</label>
+                        <select class="form-select" onchange="VoiceAiPage.saveDefault('voice.controlMethod', this.value)">${opts}</select>
+                    </div>
+                    <div style="display:flex; align-items:center; gap: 8px; padding-bottom: 8px; white-space: nowrap; color: var(--text-secondary); font-size: 13px;">
+                        <span>Customize pipeline</span>
+                        <label class="toggle">
+                            <input type="checkbox" ${customPipeline ? 'checked' : ''}
+                                onchange="VoiceAiPage.saveDefault('voice.customizePipeline', this.checked)">
+                            <span class="toggle-slider"></span>
+                        </label>
+                    </div>
+                </div>
+            </div></div>`;
+    },
+
+    /** Cloud-vs-local key, shown above the pipeline cards when customize is on. */
+    _renderLocalityLegend() {
+        const O = window.VoiceAiOptions;
+        const dot = (c, label) => `<span style="display:inline-flex; align-items:center; gap:6px;"><span style="width:12px; height:12px; border-radius:3px; background:${c};"></span>${label}</span>`;
+        return `
+            <div style="display:flex; gap: 20px; margin: 2px 0 14px; font-size: 12px; color: var(--text-secondary); flex-wrap: wrap;">
+                ${dot(O.COLOR.cloud, 'Cloud — premium, uses your credits')}
+                ${dot(O.COLOR.local, 'Local — private, stays on your network')}
+            </div>`;
     },
 
     _renderPersonalities() {

@@ -1,22 +1,23 @@
 /* ============================================================
    Voice & AI component cards
    ------------------------------------------------------------
-   Renders one expandable "component card" for a pipeline stage
-   (AI Model / Speech-to-text / Text-to-speech / Web search source).
+   Renders one "component card" for a pipeline stage (AI Model /
+   Speech-to-text / Text-to-speech / Web search source).
 
-   Collapsed: shows only the selected option (+ a "Change" button).
-   Expanded:  shows every option as a selectable row.
+   Collapsed: shows only the selected option, with a ▾ — click the
+   box to open. Expanded: shows every option (grouped by provider
+   when options carry a `group`); click an option to select it,
+   which collapses the card again.
 
-   Each row: a colored Cloud/Local tag (orange/green, NO icons),
-   the option name, its cost + description, a selected ✓, and — when
-   selected and the option declares configFields — inline inputs
-   (e.g. Local-LLM endpoint, SearXNG URL).
+   Each row: a colored Cloud/Local tag + a light row tint (orange =
+   cloud, green = local, no icons), the option name, cost +
+   description, and — when selected with configFields — inline
+   inputs (Local-LLM endpoint, SearXNG URL, …).
 
-   Pure render. All state (which card is expanded, current values)
-   lives in VoiceAiPage; selection + field edits call back into it:
-     VoiceAiPage.selectOption(stageKey, id)
+   Pure render. State lives in VoiceAiPage; interactions call back:
+     VoiceAiPage.toggleCard(stageKey)              (collapsed → open)
+     VoiceAiPage.selectOption(stageKey, id)        (open → pick + close)
      VoiceAiPage.saveLocalField(dottedKey, value)
-     VoiceAiPage.toggleCard(stageKey)
    ============================================================ */
 
 const VoiceAiCards = {
@@ -24,54 +25,65 @@ const VoiceAiCards = {
         return String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
     },
 
-    /** @param {object} o options: { title, stageKey, options[], selectedId, expanded, getConfig(key) } */
+    /** @param {object} o { title, stageKey, options[], selectedId, expanded, getConfig(key) } */
     render(o) {
-        const O = window.VoiceAiOptions;
         const opts = o.options || [];
         const sel = opts.find(x => x.id === o.selectedId) || opts[0];
         if (!sel) return '';
 
-        const rows = o.expanded
-            ? opts.map((x, i) => this._row(x, x.id === o.selectedId, o.stageKey, o.getConfig, i === 0)).join('')
-            : this._row(sel, true, o.stageKey, o.getConfig, true);
-
-        const changeBtn = opts.length > 1
-            ? `<button class="btn btn-ghost btn-sm" onclick="VoiceAiPage.toggleCard('${o.stageKey}')">${o.expanded ? 'Done' : 'Change'}</button>`
-            : '';
+        let body;
+        if (o.expanded) {
+            let prevGroup = null;
+            body = opts.map((x, i) => {
+                const groupChanged = !!x.group && x.group !== prevGroup;
+                let header = '';
+                if (groupChanged) {
+                    header = `<div style="padding: 9px 14px 5px; font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; color: var(--text-muted); ${i === 0 ? '' : 'border-top: 1px solid var(--border, #e5e7eb);'}">${this._esc(x.group)}</div>`;
+                    prevGroup = x.group;
+                }
+                const firstInGroup = groupChanged || i === 0;
+                return header + this._row(x, x.id === o.selectedId, o.stageKey, o.getConfig, firstInGroup, 'select');
+            }).join('');
+        } else {
+            body = this._row(sel, true, o.stageKey, o.getConfig, true, 'expand');
+        }
 
         return `
             <div style="margin-bottom: 16px;">
-                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom: 6px;">
-                    <span style="font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; color: var(--text-muted);">${this._esc(o.title)}</span>
-                    ${changeBtn}
-                </div>
+                <div style="margin-bottom: 6px; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; color: var(--text-muted);">${this._esc(o.title)}</div>
                 <div class="card"><div class="card-body" style="padding: 0;">
-                    ${rows}
+                    ${body}
                 </div></div>
             </div>`;
     },
 
-    _row(x, selected, stageKey, getConfig, isFirst) {
+    _row(x, selected, stageKey, getConfig, isFirst, mode) {
         const O = window.VoiceAiOptions;
         const color = O.COLOR[x.locality] || 'var(--text-muted)';
+        const bg = (O.BG || {})[x.locality] || 'transparent';
         const localityTag = `<span style="font-size:10px; font-weight:700; text-transform:uppercase; letter-spacing:0.4px; color:${color};">${O.LABEL[x.locality] || ''}</span>`;
         const soon = x.comingSoon
-            ? `<span style="font-size:10px; font-weight:600; color: var(--text-muted); background: var(--bg-muted, #f1f1f3); padding: 1px 6px; border-radius: 9px;">coming soon</span>`
+            ? `<span style="font-size:10px; font-weight:600; color: var(--text-muted); background: var(--bg-card, #fff); border: 1px solid var(--border, #e5e7eb); padding: 1px 6px; border-radius: 9px;">coming soon</span>`
             : '';
-        const check = selected ? `<span style="color: var(--accent); font-weight: 700;">✓</span>` : '';
+        const right = mode === 'expand'
+            ? `<span style="color: var(--text-muted); font-size: 13px;">▾</span>`
+            : (selected ? `<span style="color: var(--accent); font-weight: 700;">✓</span>` : '');
         const config = (selected && x.configFields) ? this._config(x, getConfig) : '';
         const topBorder = isFirst ? '' : 'border-top: 1px solid var(--border, #e5e7eb);';
+        const onclick = mode === 'expand'
+            ? `VoiceAiPage.toggleCard('${stageKey}')`
+            : `VoiceAiPage.selectOption('${stageKey}', '${this._esc(x.id)}')`;
 
         return `
-            <div onclick="VoiceAiPage.selectOption('${stageKey}', '${this._esc(x.id)}')"
-                style="cursor: pointer; padding: 12px 14px; ${topBorder} border-left: 3px solid ${selected ? color : 'transparent'};">
+            <div onclick="${onclick}"
+                style="cursor: pointer; padding: 12px 14px; ${topBorder} background: ${bg}; border-left: 3px solid ${selected ? color : 'transparent'};">
                 <div style="display:flex; justify-content:space-between; align-items:baseline; gap: 10px;">
                     <div style="font-weight: 600; font-size: 14px; display:flex; align-items:center; gap: 8px; flex-wrap: wrap;">
                         ${this._esc(x.label)} ${localityTag} ${soon}
                     </div>
                     <div style="display:flex; align-items:center; gap: 10px; flex-shrink: 0;">
                         <span style="font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; color: var(--text-muted);">${this._esc(x.cost || '')}</span>
-                        ${check}
+                        ${right}
                     </div>
                 </div>
                 ${x.description ? `<div style="font-size: 12px; color: var(--text-muted); margin-top: 3px;">${this._esc(x.description)}</div>` : ''}
@@ -88,7 +100,7 @@ const VoiceAiCards = {
                     onchange="VoiceAiPage.saveLocalField('${f.key}', this.value)"
                     style="padding: 7px 9px; border: 1px solid var(--border, #d1d5db); border-radius: 5px; font-size: 13px;">
             </label>`).join('');
-        // stopPropagation so typing/focusing a field doesn't re-trigger row select.
+        // stopPropagation so editing a field doesn't trigger the row's select/collapse.
         return `<div onclick="event.stopPropagation()" style="margin-top: 10px; display: grid; gap: 8px;">${fields}</div>`;
     },
 };
