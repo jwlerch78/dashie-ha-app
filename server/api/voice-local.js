@@ -13,15 +13,17 @@
 const express = require('express');
 const auth = require('../auth');
 const settingsStore = require('../settings-store');
+const { getAccountVoiceConfig } = require('../account-config');
 const { createNodeIO } = require('../brain/node-io');
 const brain = require('../brain/voice-brain.bundle.js');
 
 const router = express.Router();
 
-// LAN model target. OpenAI-compatible endpoint base (no trailing /v1). Defaults to Ollama on
-// localhost for local dev; override per environment. (Account-level config move is Wave 2 / §16.7.)
-const LOCAL_LLM_ENDPOINT = process.env.LOCAL_LLM_ENDPOINT || 'http://localhost:11434';
-const LOCAL_LLM_MODEL = process.env.LOCAL_LLM_MODEL || 'qwen2.5:3b';
+// LAN model target. Resolution order: account config (Console "My Local LLM" → voice.localLlmUrl /
+// voice.localLlmModel) → env override → built-in default. The account config is the productized
+// path (§16.7); env stays as a local-dev / pre-config fallback.
+const ENV_ENDPOINT = process.env.LOCAL_LLM_ENDPOINT || 'http://localhost:11434';
+const ENV_MODEL = process.env.LOCAL_LLM_MODEL || 'qwen2.5:3b';
 
 router.post('/converse-local', express.json(), async (req, res) => {
   // Gate on the household-sharing opt-in, consistent with /api/internal. NOTE: the local brain
@@ -45,8 +47,12 @@ router.post('/converse-local', express.json(), async (req, res) => {
     token = j.jwt || '';
   } catch { /* anonymous in M1 */ }
 
-  const model = (body.options && body.options.model) || LOCAL_LLM_MODEL;
-  const io = createNodeIO({ endpoint: LOCAL_LLM_ENDPOINT, model });
+  // Resolve the LAN target: account config (Console) → env → default. Request options.model
+  // still wins (per-turn override, e.g. the test harness).
+  const acct = await getAccountVoiceConfig();
+  const endpoint = acct.localLlmUrl || ENV_ENDPOINT;
+  const model = (body.options && body.options.model) || acct.localLlmModel || ENV_MODEL;
+  const io = createNodeIO({ endpoint, model });
 
   const brainReq = {
     text: body.text,
@@ -67,13 +73,17 @@ router.post('/converse-local', express.json(), async (req, res) => {
   }
 });
 
-// Tiny health/info probe — confirms the bundle loaded and which LAN model we'd hit.
-router.get('/local-status', (req, res) => {
+// Tiny health/info probe — confirms the bundle loaded and which LAN model we'd hit (account
+// config if set, else the env/default fallback).
+router.get('/local-status', async (req, res) => {
+  const acct = await getAccountVoiceConfig();
   res.json({
     ok: true,
     brain_source_sha: brain.BRAIN_SOURCE_SHA || null,
-    endpoint: LOCAL_LLM_ENDPOINT,
-    model: LOCAL_LLM_MODEL,
+    route: acct.route,
+    endpoint: acct.localLlmUrl || ENV_ENDPOINT,
+    model: acct.localLlmModel || ENV_MODEL,
+    source: acct.localLlmUrl ? 'account' : 'env',
   });
 });
 

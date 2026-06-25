@@ -16,6 +16,7 @@
 const express = require('express');
 const auth = require('../auth');
 const settingsStore = require('../settings-store');
+const { getAccountVoiceConfig } = require('../account-config');
 
 const router = express.Router();
 
@@ -59,6 +60,23 @@ router.get('/account-credential', async (req, res) => {
         });
     } catch (e) {
         return res.status(401).json({ error: 'not_authenticated', message: e.message });
+    }
+});
+
+/**
+ * GET /api/internal/voice-config
+ * The account's voice ROUTE for the integration's gateway (M7): 'local' when the account's
+ * AI model is "My Local LLM" (ai.model === 'local'), else 'cloud'. The add-on is the single
+ * reader of user_settings; the integration uses this to decide cloud-vs-local without reading
+ * Supabase itself. No secrets returned (the LAN endpoint stays add-on-side, used in converse-local).
+ */
+router.get('/voice-config', async (req, res) => {
+    try {
+        const cfg = await getAccountVoiceConfig();
+        return res.json({ route: cfg.route, model_is_local: cfg.route === 'local' });
+    } catch (e) {
+        // Never block the gateway on this — default to cloud.
+        return res.json({ route: 'cloud', model_is_local: false });
     }
 });
 
