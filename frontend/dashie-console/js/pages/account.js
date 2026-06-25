@@ -250,6 +250,7 @@ const AccountPage = {
         return `
             <div style="max-width: 800px;">
                 ${banner}
+                ${this._renderDeletionBanner(d)}
                 <div style="margin-bottom: 24px; color: var(--text-secondary); font-size: var(--font-size-sm);">
                     ${user.email} · Signed in via Google
                 </div>
@@ -266,10 +267,14 @@ const AccountPage = {
                 <div class="card" style="border-color: var(--status-error, #c00);">
                     <div class="card-body">
                         <div style="font-weight: 500; margin-bottom: 6px;">Delete your Dashie account</div>
+                        ${d.deletion_scheduled_at ? `
+                        <div style="color: var(--text-secondary); font-size: var(--font-size-sm); line-height: 1.5;">
+                            Your account is already scheduled for deletion — use the banner at the top of this page to keep it.
+                        </div>` : `
                         <div style="color: var(--text-secondary); font-size: var(--font-size-sm); line-height: 1.5; margin-bottom: 16px;">
-                            Permanently removes your Dashie account and everything associated with it — calendars, photos, chores, rewards, family members, OAuth tokens, voice profiles, and device registrations. This cannot be undone.
+                            Schedules your Dashie account for deletion in 15 days. Billing stops now; your data (calendars, photos, chores, rewards, family members, OAuth tokens, voice profiles, devices) is removed when the 15 days are up. You can cancel any time before then with “Keep account.”
                         </div>
-                        <button class="btn btn-danger" id="delete-account-btn" onclick="AccountPage.handleDeleteAccount()">Delete Account</button>
+                        <button class="btn btn-danger" id="delete-account-btn" onclick="AccountPage.handleDeleteAccount()">Delete Account</button>`}
                     </div>
                 </div>
             </div>
@@ -415,18 +420,16 @@ const AccountPage = {
     },
 
     /**
-     * Permanently delete the Dashie account. Backend (`delete_account` op in
-     * database-operations) wipes every user-scoped table, the photos +
-     * wake-word-samples storage buckets, and finally the auth.users row.
+     * Schedule account deletion (soft delete, 15-day grace). Backend
+     * (`delete_account` op → handleRequestAccountDeletion) sets
+     * deletion_scheduled_at = now()+15d and stops billing (cancel-at-period-end)
+     * WITHOUT touching data; the purge cron hard-deletes after the grace. The
+     * account stays usable during the window and the user can undo via "Keep
+     * account" (cancel_account_deletion) — see _renderDeletionBanner/keepAccount.
      *
-     * Required for Google Play Store compliance — apps with in-app account
-     * creation must offer a web-discoverable deletion path. See B.6 in
-     * .reference/build-plans/20260415_DASHIE_HA_ADDON_W_TOKEN_MGMT.md.
-     *
-     * Confirmation requires the user to type their email — defense in depth
-     * against a misclick by someone who walked away from a signed-in session.
-     * Backend only returns `deleted: true` when every step succeeded; partial
-     * failures leave the account intact and surface a Toast for retry.
+     * This console is the web-discoverable deletion path (Play Store compliance).
+     * Confirmation requires typing the email — defense in depth against a misclick
+     * on a shared session.
      */
     async handleDeleteAccount() {
         const email = DashieAuth.user?.email || '';
@@ -436,20 +439,18 @@ const AccountPage = {
         }
 
         const confirmed = await ConfirmModal.confirm({
-            title: 'Delete your Dashie account?',
+            title: 'Schedule account deletion?',
             message: [
-                'This permanently deletes:',
-                '  • Your subscription and account history',
-                '  • Family members and all their assignments',
-                '  • Calendars, calendar accounts, and OAuth tokens',
-                '  • Chores, rewards, and points history',
-                '  • Photos in your Dashie Cloud library',
-                '  • Voice profiles and AI personalities',
-                '  • All registered devices and their settings',
+                'Your account will be permanently deleted in 15 days. Until then:',
+                '  • Billing stops now — no further charges',
+                '  • Your data stays intact and you can cancel any time',
                 '',
-                'You will be signed out everywhere. This cannot be undone.',
+                'After 15 days this removes everything — calendars, photos, chores,',
+                'rewards, family members, OAuth tokens, voice profiles, and devices.',
+                '',
+                'You can undo this with “Keep account” before the 15 days are up.',
             ].join('\n'),
-            confirmLabel: 'Delete Forever',
+            confirmLabel: 'Schedule deletion',
             cancelLabel: 'Keep My Account',
             danger: true,
             requireTypedConfirmation: email,
@@ -458,61 +459,64 @@ const AccountPage = {
         if (!confirmed) return;
 
         const btn = document.getElementById('delete-account-btn');
-        const restore = () => {
-            if (btn) { btn.disabled = false; btn.textContent = 'Delete Account'; }
-        };
-        if (btn) { btn.disabled = true; btn.textContent = 'Deleting…'; }
+        const restore = () => { if (btn) { btn.disabled = false; btn.textContent = 'Delete Account'; } };
+        if (btn) { btn.disabled = true; btn.textContent = 'Scheduling…'; }
 
         try {
             const result = await DashieAuth.dbRequest('delete_account', {});
-
-            // The edge fn returns { deleted: false, errors: [...] } on partial
-            // failure. Only treat exact `deleted: true` as success — anything
-            // else means the account is in a possibly-half-cleaned state and
-            // we should surface for retry rather than redirect.
-            if (result?.deleted !== true) {
-                // Active subscription couldn't be canceled → backend aborted the
-                // delete (no data touched). Tell the user to cancel first, then retry.
-                if (result?.reason === 'subscription_cancel_failed') {
-                    restore();
-                    Toast.error(result.error || 'Please cancel your subscription from “Manage subscription,” then delete your account.');
-                    return;
-                }
-                const detail = result?.errors?.[0]?.error
-                    || result?.error
-                    || 'Deletion did not complete';
-                throw new Error(detail);
+            if (result?.scheduled !== true) {
+                throw new Error(result?.error || 'Could not schedule deletion');
             }
-
-            // Clean up every browser-side trace before navigating away —
-            // localStorage holds JWTs, family-member info, IndexedDB caches
-            // may hold tokens. A reload-without-cleanup would let the
-            // half-orphaned session linger.
-            try { localStorage.clear(); } catch (_) {}
-            try { sessionStorage.clear(); } catch (_) {}
-
-            // Best-effort: nuke common Console-side IDB stores if they exist.
-            // Failure is fine — they're stale and won't cause harm.
-            try {
-                if (window.indexedDB?.databases) {
-                    const dbs = await window.indexedDB.databases();
-                    for (const db of (dbs || [])) {
-                        if (db?.name) window.indexedDB.deleteDatabase(db.name);
-                    }
-                }
-            } catch (_) {}
-
-            // signOut clears DashieAuth's in-memory state + any subscriptions.
-            try { DashieAuth.signOut?.(); } catch (_) {}
-
-            // Redirect to the goodbye state — login page reads ?deleted=1
-            // and shows a one-time toast on the next load.
-            window.location.replace(window.location.origin + window.location.pathname + '?deleted=1');
+            // Reflect the pending state — the restore banner takes over and the
+            // account stays usable (so the user can view bills / restore). No
+            // sign-out, no redirect.
+            const at = result.deletion_scheduled_at || new Date(Date.now() + 15 * 86400000).toISOString();
+            if (this._data) this._data.deletion_scheduled_at = at;
+            const when = new Date(at).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
+            Toast.success(`Account scheduled for deletion on ${when}. You can keep it any time before then.`);
+            App.renderPage();
         } catch (err) {
             console.error('[AccountPage] handleDeleteAccount failed:', err);
-            const msg = String(err?.message || err);
-            Toast.error(`Failed to delete account: ${msg}. Please try again or contact support.`);
             restore();
+            Toast.error(`Couldn't schedule deletion: ${String(err?.message || err)}`);
+        }
+    },
+
+    /** Restore banner shown at the top when the account is pending deletion.
+     *  Restoring ("Keep account") is the only action — no "Delete now". */
+    _renderDeletionBanner(d) {
+        const at = d?.deletion_scheduled_at;
+        if (!at) return '';
+        const when = new Date(at);
+        const days = Math.max(0, Math.ceil((when.getTime() - Date.now()) / 86400000));
+        const dateStr = when.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
+        return `
+            <div class="card" style="margin-bottom: 16px; border-left: 4px solid var(--status-error, #c00); background: var(--bg-card-emphasis, #fff8e6);">
+                <div class="card-body" style="display:flex; align-items:center; justify-content:space-between; gap:16px; flex-wrap:wrap;">
+                    <div style="flex:1; min-width:240px;">
+                        <div style="font-weight:600; font-size:16px; margin-bottom:4px;">Account scheduled for deletion</div>
+                        <div style="color: var(--text-secondary); font-size:14px; line-height:1.5;">
+                            Your account and its data will be permanently deleted on <strong>${dateStr}</strong> (${days} day${days === 1 ? '' : 's'}). Changed your mind? You can keep it any time before then.
+                        </div>
+                    </div>
+                    <button class="btn btn-primary" id="keep-account-btn" onclick="AccountPage.keepAccount()" style="flex-shrink:0;">Keep account</button>
+                </div>
+            </div>`;
+    },
+
+    /** "Keep account" — cancel the pending deletion (clears the schedule + un-cancels the sub). */
+    async keepAccount() {
+        const btn = document.getElementById('keep-account-btn');
+        if (btn) { btn.disabled = true; btn.textContent = 'Restoring…'; }
+        try {
+            await DashieAuth.dbRequest('cancel_account_deletion', {});
+            if (this._data) this._data.deletion_scheduled_at = null;
+            Toast.success('Your account has been restored.');
+            App.renderPage();
+        } catch (e) {
+            console.error('[AccountPage] keepAccount failed:', e);
+            if (btn) { btn.disabled = false; btn.textContent = 'Keep account'; }
+            Toast.error(`Couldn't restore account: ${String(e?.message || e)}`);
         }
     },
 };

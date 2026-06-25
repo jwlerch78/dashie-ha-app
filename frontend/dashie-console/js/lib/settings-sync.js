@@ -145,6 +145,40 @@ window.SettingsSync = (function () {
 
   function isConnected() { return _connected; }
 
+  /**
+   * Send a kinded settings-changed broadcast on the LIVE subscribed channel.
+   *
+   * Writers (saveUserSettings) must NOT open their own channel on the same
+   * topic to broadcast: supabase-js keys channels by topic per client, and a
+   * second channel.subscribe() on an already-subscribed topic never reaches
+   * 'SUBSCRIBED' (it hangs), so the send is silently dropped — which is
+   * exactly why console settings changes stopped reaching the tablet live.
+   * Reuse this one persistent channel instead (mirrors the dashboard's
+   * broadcastChange, which reuses its single subscribed channel).
+   *
+   * @param {string} kind            e.g. 'account_settings'
+   * @param {string} [sourceClientId] self-filter id for the receiver; defaults
+   *                                  to this client's id.
+   * @returns {boolean} true if the send was issued, false if not connected.
+   */
+  function broadcast(kind, sourceClientId) {
+    if (!_channel || !_connected) {
+      console.debug('[SettingsSync] broadcast skipped — not connected: kind=' + kind);
+      return false;
+    }
+    try {
+      _channel.send({
+        type: 'broadcast',
+        event: 'settings-changed',
+        payload: { kind: kind, source_client_id: sourceClientId || getClientId() }
+      });
+      return true;
+    } catch (e) {
+      console.warn('[SettingsSync] broadcast failed: ' + (e && e.message));
+      return false;
+    }
+  }
+
   // ── Dispatch ──────────────────────────────────────────────
   function _handleBroadcast(payload) {
     if (!payload || typeof payload.kind !== 'string') {
@@ -202,6 +236,7 @@ window.SettingsSync = (function () {
     configure: configure,
     connect: connect,
     disconnect: disconnect,
-    isConnected: isConnected
+    isConnected: isConnected,
+    broadcast: broadcast
   };
 })();

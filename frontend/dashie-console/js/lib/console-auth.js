@@ -204,12 +204,31 @@ const DashieAuth = {
      *  the channel name uses underscores to match the tablet listener,
      *  while this._getOrCreateChannel adds a dash. */
     async _broadcastSettingsChanged() {
+        const sessionId = this.getSessionId();
+        // kind MUST be 'account_settings' — the dashboard's
+        // registerAccountSettingsSync consumer dispatches on this exact kind,
+        // and its legacy blanket handler ignores any kinded broadcast. Sending
+        // 'account' meant the tablet silently dropped every console change.
+        //
+        // Prefer the LIVE SettingsSync channel. When SettingsSync is wired
+        // (app.js _connectSettingsSync) it holds a persistent subscription to
+        // user_settings_<id> on this same supabase client. Opening a SECOND
+        // channel on that same topic to send makes supabase-js hang at
+        // subscribe() (a duplicate topic never reaches 'SUBSCRIBED'), so send()
+        // never fired and the broadcast was silently dropped — the actual
+        // reason console settings changes stopped propagating to the tablet
+        // live. Reuse the subscribed channel instead (mirrors the dashboard's
+        // broadcastChange, which reuses its one persistent channel).
+        if (window.SettingsSync && typeof window.SettingsSync.broadcast === 'function'
+            && window.SettingsSync.isConnected && window.SettingsSync.isConnected()) {
+            if (window.SettingsSync.broadcast('account_settings', sessionId)) return;
+        }
+        // Fallback: SettingsSync not wired/connected → no persistent channel
+        // holds this topic, so a one-shot subscribe-then-send is safe here.
         const sb = this._getSupabaseClient();
         if (!sb || !this.jwtUserId) return;
         const channelName = `user_settings_${this.jwtUserId}`;
         const ch = sb.channel(channelName, { config: { broadcast: { self: false, ack: false } } });
-        // Subscribe just long enough to send. Channel cleans up on the
-        // next page navigation; the broadcast itself is async-fire.
         await new Promise(resolve => {
             ch.subscribe(status => {
                 if (status === 'SUBSCRIBED') resolve();
@@ -219,14 +238,8 @@ const DashieAuth = {
             type: 'broadcast',
             event: 'settings-changed',
             payload: {
-                // MUST be 'account_settings' — the dashboard's
-                // registerAccountSettingsSync consumer dispatches on this exact
-                // kind, and its legacy blanket handler ignores any kinded
-                // broadcast. Sending 'account' meant the tablet silently dropped
-                // every console settings change (no live propagation → stale
-                // tablet reverted the account on its next save).
                 kind: 'account_settings',
-                source_client_id: this.getSessionId(),
+                source_client_id: sessionId,
             },
         });
     },
