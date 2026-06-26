@@ -513,12 +513,27 @@ const DevicesCard = {
         const screenshotSection = showScreenshot ? screenshotPanel : '';
         const cameraSection = showCamera ? cameraPanel : '';
 
-        if (!hasCameraSection) {
+        // Two-column layout only when there's an actual live camera feed to
+        // show. Otherwise — no camera hardware, Cameras toggle off, or the
+        // camera is simply off — collapse to a single centered column instead
+        // of an empty/placeholder ("no camera" / "Camera off") right column.
+        // In the collapsed layout the screenshot is horizontally centered and
+        // ALL controls are distributed in one row beneath it: the camera
+        // on/off toggle and motion/face sensor icons join the left toggles
+        // (only for devices that actually have a camera).
+        const showCameraColumn = hasCameraSection && showCamera && !!cameraSrc;
+
+        if (!showCameraColumn) {
+            const mergedControls = hasCameraSection
+                ? `${reloadIcon}${screenPill}${lightDarkPill}${cameraIcon}${motionIcon}${faceIcon}`
+                : `${reloadIcon}${screenPill}${lightDarkPill}`;
             return `
                 <div style="margin-top: 12px;">
                     <div style="max-width: 50%; margin: 0 auto;">
                         ${screenshotSection}
-                        ${controlRow(reloadIcon, screenPill, lightDarkPill)}
+                        <div style="display: flex; align-items: center; justify-content: space-around; gap: 4px; margin-top: 8px; ${offlineStyle}">
+                            ${mergedControls}
+                        </div>
                     </div>
                 </div>
             `;
