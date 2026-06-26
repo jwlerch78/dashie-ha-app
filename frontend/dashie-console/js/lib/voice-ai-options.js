@@ -45,9 +45,7 @@ const VoiceAiOptions = {
         const all = C?.AI_MODEL_CATALOG || [];
         // "My Local LLM" leads the list — the privacy/local-first option (build plan §16.4).
         // Selecting it stores ai.model='local' (the route signal) + the endpoint/model config
-        // fields; the integration + add-on read these to run the on-prem brain (§13.17). The
-        // "coming soon" badge stays until the on-prem path is deployed end-to-end — it does NOT
-        // block selection (selecting it already drives routing for testing).
+        // fields; the integration + add-on read these to run the on-prem brain (§13.17).
         const out = [{
             id: 'local',
             label: 'My Local LLM',
@@ -55,7 +53,6 @@ const VoiceAiOptions = {
             description: 'Runs on your own hardware (Ollama / llama.cpp). Nothing leaves your network.',
             locality: 'local',
             cost: 'Free',
-            comingSoon: true,
             configFields: [
                 { key: 'voice.localLlmUrl', label: 'Endpoint URL', placeholder: 'http://192.168.1.50:11434' },
                 { key: 'voice.localLlmModel', label: 'Model', placeholder: 'qwen3:8b' },

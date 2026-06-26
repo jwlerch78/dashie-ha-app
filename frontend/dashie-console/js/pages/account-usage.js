@@ -198,6 +198,15 @@ const AccountUsage = {
         return '$' + amount.toFixed(2);
     },
 
+    // Like _fmtCost, but for roll-up totals (day/week/month/section). A tiny
+    // positive total (>$0 and <$0.01) shows as "<$0.01" instead of a noisy
+    // 4-decimal figure. Per-call line items and interaction rows keep _fmtCost
+    // so the drill-down still shows the exact amount.
+    _fmtCostTotal(amount) {
+        if (amount != null && isFinite(amount) && amount > 0 && amount < 0.01) return '<$0.01';
+        return this._fmtCost(amount);
+    },
+
     _fmtCount(n) {
         if (n == null) return '—';
         return n.toLocaleString();
@@ -381,7 +390,7 @@ const AccountUsage = {
         const row = (label, val) => `
             <div style="display: flex; justify-content: space-between; align-items: baseline; gap: 12px;">
                 <span style="font-size: 11px; font-weight: 600; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px;">${label}</span>
-                <span style="font-size: 20px; font-weight: 700; color: var(--text-primary);">${val == null ? '—' : this._escape(this._fmtCost(val))}</span>
+                <span style="font-size: 20px; font-weight: 700; color: var(--text-primary);">${val == null ? '—' : this._escape(this._fmtCostTotal(val))}</span>
             </div>`;
         return `
             <div class="card" style="height: 100%;"><div class="card-body" style="height: 100%; box-sizing: border-box; display: flex; flex-direction: column; justify-content: space-between; gap: 10px; padding: 16px;">
@@ -478,7 +487,7 @@ const AccountUsage = {
                     style="padding: 14px 12px 6px; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; color: var(--text-muted); cursor: pointer;">
                     <span style="display: inline-block; width: 12px; color: var(--text-muted);">${caret}</span>
                     ${this._escape(this._serviceLabel(svc))}
-                    <span style="float: right; color: var(--text-primary); font-weight: 600;">${this._fmtCost(total)}</span>
+                    <span style="float: right; color: var(--text-primary); font-weight: 600;">${this._fmtCostTotal(total)}</span>
                 </td></tr>
                 ${itemRows}`;
         }).join('');
@@ -492,7 +501,7 @@ const AccountUsage = {
                         <tr style="border-top: 1px solid var(--border, #e5e7eb);">
                             <td style="padding: 12px; font-weight: 600;">Total</td>
                             <td colspan="2"></td>
-                            <td style="padding: 12px; text-align: right; font-weight: 700;">${this._fmtCost(grand)}</td>
+                            <td style="padding: 12px; text-align: right; font-weight: 700;">${this._fmtCostTotal(grand)}</td>
                         </tr>
                     </tfoot>
                 </table>
@@ -628,7 +637,7 @@ const AccountUsage = {
                     <span style="color:var(--text-muted); width:12px;">${caret}</span>
                     <span style="font-size:13px; font-weight:600; min-width:110px;">${this._escape(this._fmtMonthLong(ym))}</span>
                     <span style="flex:1; font-size:12px; color:var(--text-muted);">${pills}</span>
-                    <span style="font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size:13px; font-weight:600;">${this._fmtCost(total)}</span>
+                    <span style="font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size:13px; font-weight:600;">${this._fmtCostTotal(total)}</span>
                 </div>
                 ${detail}
             </div>`;
@@ -682,7 +691,7 @@ const AccountUsage = {
                     <span style="color: var(--text-muted); width: 12px;">${caret}</span>
                     <span style="font-size: 13px; font-weight: 500; min-width: 110px;">${this._escape(this._fmtDate(d.date))}</span>
                     <span style="flex: 1; font-size: 12px; color: var(--text-muted);">${sparkline}</span>
-                    <span style="font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 13px; font-weight: 600;">${this._fmtCost(total)}</span>
+                    <span style="font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 13px; font-weight: 600;">${this._fmtCostTotal(total)}</span>
                 </div>
                 ${detail}
             </div>`;
