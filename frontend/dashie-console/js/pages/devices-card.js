@@ -8,6 +8,7 @@ const DevicesCard = {
     _busyControl: {},   // `${deviceId}:${role}` → bool
     _sliderOpen: null,
     _screenshotTs: {},  // per-device cache-bust ts; bumped on manual refresh / post-toggle
+    _cameraFailed: {},  // `${deviceId}:${ts}` → true when the camera frame 404'd (collapse the column)
     _initialTs: Date.now(),
     _screenshotModal: null,
     _historyOpen: null,
@@ -394,8 +395,7 @@ const DevicesCard = {
             </div>`;
         const cameraPanel = cameraSrc
             ? `<div style="${panelOuter} cursor: zoom-in;" onclick="event.stopPropagation(); DevicesCamera.open('${idAttr}')">
-                   <img src="${cameraSrc}" alt="camera" style="${imgStyle}" onerror="this.style.display='none'; this.parentElement.querySelector('.placeholder-fallback').style.display='flex';">
-                   <span class="placeholder-fallback" style="display: none; position: absolute; inset: 0; align-items: center; justify-content: center; font-size: 11px; color: var(--text-muted);">no camera</span>
+                   <img src="${cameraSrc}" alt="camera" style="${imgStyle}" onerror="DevicesCard.onCameraError('${idAttr}')">
                </div>`
             : cameraOffPanel;
         const dark = !!m.controls?.dark_mode;
@@ -524,7 +524,14 @@ const DevicesCard = {
         // screenshot is horizontally centered and ALL controls are centered in
         // one row beneath it: the camera on/off toggle and motion/face sensor
         // icons join the left toggles (only for devices that have a camera).
-        const showCameraColumn = hasCameraSection && showCamera && imageReady && !!m.controls?.camera_streaming;
+        // Some devices falsely report camera_streaming yet serve no actual frame
+        // (e.g. the rk3576_u tablets) — the only reliable signal is the camera
+        // image 404ing. onCameraError() records that per device+screenshot-ts;
+        // honoring it here collapses the card instead of showing a "no camera"
+        // box. The ts is part of the key, so a manual refresh retries the feed.
+        const cameraFailed = !!this._cameraFailed[`${device.device_id}:${ts}`];
+        const showCameraColumn = hasCameraSection && showCamera && imageReady
+            && !!m.controls?.camera_streaming && !cameraFailed;
 
         if (!showCameraColumn) {
             // Include the camera on/off toggle + motion/face icons whenever the
@@ -565,6 +572,22 @@ const DevicesCard = {
                 </div>
             </div>
         `;
+    },
+
+    /**
+     * The camera frame failed to load (404 / no real camera despite a
+     * streaming state). Record it per device+screenshot-ts and re-render so
+     * the card collapses to the centered single-column layout instead of an
+     * empty "no camera" box. Keying on the ts means a manual refresh (which
+     * bumps the ts) retries the feed. Guarded so repeated error events before
+     * the re-render don't loop.
+     */
+    onCameraError(deviceId) {
+        const ts = this._screenshotTs[deviceId] || this._initialTs;
+        const key = `${deviceId}:${ts}`;
+        if (this._cameraFailed[key]) return;
+        this._cameraFailed[key] = true;
+        App.renderPage();
     },
 
     /**
