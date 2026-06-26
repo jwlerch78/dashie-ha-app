@@ -363,6 +363,7 @@ const VoiceAiPage = {
         const card = (title, stageKey, options, selectedId) => VoiceAiCards.render({
             title, stageKey, options, selectedId,
             expanded: this._expandedCards.has(stageKey),
+            anyExpanded: this._expandedCards.size > 0,  // dim the other cards while one is open
             getConfig: cfg,
         });
         return `

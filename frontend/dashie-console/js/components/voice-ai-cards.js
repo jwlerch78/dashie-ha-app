@@ -44,8 +44,16 @@ const VoiceAiCards = {
 
         let body;
         if (o.expanded) {
+            // Explicit "you're choosing" header with a ▴ close affordance, so an
+            // open card is unmistakable (vs the subtle ▾ in the collapsed state).
+            const head = `
+                <div onclick="VoiceAiPage.toggleCard('${o.stageKey}')"
+                    style="cursor: pointer; display:flex; justify-content:space-between; align-items:center; padding: 10px 14px; border-bottom: 1px solid var(--border, #e5e7eb); background: var(--surface-muted, #fafafa);">
+                    <span style="font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; color: var(--accent);">Choose ${this._esc(o.title)}</span>
+                    <span style="color: var(--text-muted); font-size: 13px;">▴</span>
+                </div>`;
             let prevGroup = null;
-            body = opts.map((x, i) => {
+            const rows = opts.map((x, i) => {
                 const groupChanged = !!x.group && x.group !== prevGroup;
                 let header = '';
                 if (groupChanged) {
@@ -55,14 +63,21 @@ const VoiceAiCards = {
                 const firstInGroup = groupChanged || i === 0;
                 return header + this._row(x, x.id === o.selectedId, o.stageKey, o.getConfig, firstInGroup, 'select');
             }).join('');
+            body = head + rows;
         } else {
             body = this._row(sel, true, o.stageKey, o.getConfig, true, 'expand');
         }
 
+        // Open card pops with an accent ring + shadow; sibling cards dim while
+        // another is open so it's clear which selector is currently active.
+        const cardStyle = o.expanded
+            ? 'box-shadow: 0 0 0 2px var(--accent), 0 6px 18px rgba(0,0,0,0.10); border-color: var(--accent);'
+            : '';
+        const dimmed = !o.expanded && o.anyExpanded;
         return `
-            <div style="margin-bottom: 16px;">
+            <div style="margin-bottom: 16px; transition: opacity 120ms ease; ${dimmed ? 'opacity: 0.45;' : ''}">
                 <div style="margin-bottom: 6px; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; color: var(--text-muted);">${this._esc(o.title)}</div>
-                <div class="card"><div class="card-body" style="padding: 0;">
+                <div class="card" style="${cardStyle}"><div class="card-body" style="padding: 0;">
                     ${body}
                 </div></div>
             </div>`;
