@@ -7,13 +7,21 @@
    versa — both sides round-trip through user_settings.
 
    Sections:
-     - Language          general.language        picker (15 locales)
-     - Date & Time       display.use24HourClock  toggle
-                         display.dateFormat       picker (mdy/dmy)
-                         time.useHa               toggle
-     - Weather           display.temperatureUnit  picker (F/C)
-                         general.zipCode          text
-                         weather.useHa            toggle
+     - Language          general.language          picker (15 locales)
+     - Date & Time       interface.use24HourClock  toggle
+                         interface.dateFormat       picker (mdy/dmy)
+                         time.useHa                 toggle
+     - Weather           family.temperatureUnit     picker (F/C)
+                         family.zipCode             text
+                         weather.useHa              toggle
+
+   PATHS ARE THE DASHBOARD-CANONICAL ones (what the widgets/services actually
+   read): family.zipCode, interface.use24HourClock, interface.dateFormat,
+   family.temperatureUnit. An earlier version wrote general.zipCode /
+   display.* which NO dashboard consumer reads, so console changes never
+   reached devices (the tablet's native Preferences page bridges display.* ->
+   interface.* via ACTION_DISPLAY_SETTINGS_CHANGED, but the web console has no
+   such bridge). general.language / time.useHa / weather.useHa already match.
 
    The "Use HA for time/weather" toggles are per-device in Kotlin;
    here they act as the account default a new device picks up at
@@ -68,6 +76,8 @@ const PreferencesPage = {
     topBarSubtitle() { return 'Account-wide settings shared across all your devices'; },
 
     onNavigateTo() { this._fetchSettings(); },
+
+    async refresh() { await this._fetchSettings(); },
 
     async _fetchSettings() {
         this._loading = true;
@@ -135,7 +145,10 @@ const PreferencesPage = {
     /** For each category the user touched on this page, keep the local
      *  value; for every other category, prefer the remote snapshot. */
     _mergeRemoteIntoLocal(remote, local) {
-        const ourCategories = new Set(['general', 'display', 'time', 'weather']);
+        // Categories this page writes (dashboard-canonical paths): general
+        // (language), interface (use24HourClock/dateFormat), family
+        // (temperatureUnit/zipCode), time/weather (useHa toggles).
+        const ourCategories = new Set(['general', 'interface', 'family', 'time', 'weather']);
         const out = { ...remote };
         for (const cat of ourCategories) {
             if (local[cat]) out[cat] = { ...(remote[cat] || {}), ...local[cat] };
@@ -184,17 +197,17 @@ const PreferencesPage = {
     },
 
     _renderDateTimeSection() {
-        const use24 = this._read('display', 'use24HourClock', false);
-        const fmt = this._read('display', 'dateFormat', 'mdy');
+        const use24 = this._read('interface', 'use24HourClock', false);
+        const fmt = this._read('interface', 'dateFormat', 'mdy');
         const useHa = this._read('time', 'useHa', false);
         return `
             <div class="card" style="margin-bottom: 16px;">
                 <div class="card-body">
                     <div class="section-header" style="font-weight: 600; padding: 0 4px 8px;">Date & Time</div>
                     ${this._renderToggleRow('24-hour Clock', use24,
-                        `PreferencesPage._setField('display', 'use24HourClock', this.checked)`)}
+                        `PreferencesPage._setField('interface', 'use24HourClock', this.checked)`)}
                     ${this._renderPickerRow('Date Format', fmt, this.DATE_FORMAT_OPTIONS,
-                        `PreferencesPage._setField('display', 'dateFormat', this.value)`)}
+                        `PreferencesPage._setField('interface', 'dateFormat', this.value)`)}
                     ${this._renderToggleRow('Use Home Assistant for time', useHa,
                         `PreferencesPage._setField('time', 'useHa', this.checked)`)}
                 </div>
@@ -203,17 +216,17 @@ const PreferencesPage = {
     },
 
     _renderWeatherSection() {
-        const tempUnit = this._read('display', 'temperatureUnit', 'F');
-        const zip = this._read('general', 'zipCode', '');
+        const tempUnit = this._read('family', 'temperatureUnit', 'F');
+        const zip = this._read('family', 'zipCode', '');
         const useHa = this._read('weather', 'useHa', false);
         return `
             <div class="card" style="margin-bottom: 16px;">
                 <div class="card-body">
                     <div class="section-header" style="font-weight: 600; padding: 0 4px 8px;">Weather</div>
                     ${this._renderPickerRow('Temperature Unit', tempUnit, this.TEMP_OPTIONS,
-                        `PreferencesPage._setField('display', 'temperatureUnit', this.value)`)}
+                        `PreferencesPage._setField('family', 'temperatureUnit', this.value)`)}
                     ${this._renderTextRow('Location', zip, '90210 or Berlin, Germany',
-                        `PreferencesPage._setField('general', 'zipCode', this.value)`)}
+                        `PreferencesPage._setField('family', 'zipCode', this.value)`)}
                     ${this._renderToggleRow('Use Home Assistant for weather', useHa,
                         `PreferencesPage._setField('weather', 'useHa', this.checked)`)}
                 </div>

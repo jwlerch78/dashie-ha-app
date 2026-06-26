@@ -5,6 +5,9 @@
 const App = {
     _currentPage: 'devices',
     _sidebarOpen: false,
+    _refreshing: false,           // true while a title-bar page refresh is in flight
+    _deletionScheduledAt: null,   // global "scheduled for deletion" banner state
+    _deletionPollTimer: null,
 
     pages: {
         devices:       { page: DevicesPage },
@@ -74,6 +77,105 @@ const App = {
         } else {
             this._showLogin();
         }
+    },
+
+    // ── Global "scheduled for deletion" banner ───────────────────────
+
+    /** Fetch the account's deletion state; show the persistent banner while
+     *  pending, and sign out if the account has since been hard-deleted. */
+    async _checkDeletionState() {
+        if (!DashieAuth.isAuthenticated) return;
+        let resp;
+        try {
+            resp = await DashieAuth.edgeFunctionRequest('check-subscription', { auth_user_id: DashieAuth.jwtUserId });
+        } catch (_) { return; }   // transient — don't act on a network blip
+        // Were tracking a pending deletion and the profile is now gone (hard-
+        // deleted → null status)? The cron / another session finished it — sign out.
+        if (this._deletionScheduledAt && (!resp || resp.subscription_status == null)) {
+            this._onAccountDeleted();
+            return;
+        }
+        this._deletionScheduledAt = resp?.deletion_scheduled_at || null;
+        this._renderGlobalBanner();
+        this._syncDeletionPoll();
+    },
+
+    _syncDeletionPoll() {
+        const pending = !!this._deletionScheduledAt;
+        if (pending && !this._deletionPollTimer) {
+            this._deletionPollTimer = setInterval(() => this._checkDeletionState(), 30000);
+        } else if (!pending && this._deletionPollTimer) {
+            clearInterval(this._deletionPollTimer);
+            this._deletionPollTimer = null;
+        }
+    },
+
+    _renderGlobalBanner() {
+        const el = document.getElementById('global-banner');
+        if (el) el.innerHTML = this._deletionBannerHtml();
+    },
+
+    _deletionBannerHtml() {
+        const at = this._deletionScheduledAt;
+        if (!at) return '';
+        const when = new Date(at);
+        const mins = Math.max(0, Math.round((when.getTime() - Date.now()) / 60000));
+        const label = mins < 120
+            ? `in ${mins} minute${mins === 1 ? '' : 's'}`
+            : `on ${when.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })}`;
+        return `
+            <div style="background: var(--status-error, #c00); color:#fff; padding:10px 16px; display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap;">
+                <div style="font-size:14px; font-weight:500;">⚠ Your account is scheduled for deletion <strong>${label}</strong>. All data will be permanently removed.</div>
+                <div style="display:flex; gap:8px; flex-shrink:0;">
+                    <button class="btn btn-sm" style="background:#fff; color:var(--status-error,#c00); font-weight:600; border:none;" onclick="App.keepAccount()">Keep account</button>
+                    <button class="btn btn-sm" style="background:transparent; color:#fff; border:1px solid rgba(255,255,255,0.7);" onclick="App.deleteNow()">Delete now</button>
+                </div>
+            </div>`;
+    },
+
+    /** "Keep account" — cancel the pending deletion. */
+    async keepAccount() {
+        try {
+            await DashieAuth.dbRequest('cancel_account_deletion', {});
+            this._deletionScheduledAt = null;
+            this._renderGlobalBanner();
+            this._syncDeletionPoll();
+            if (typeof Toast !== 'undefined') Toast.success('Your account has been restored.');
+            if (this._currentPage === 'account' && typeof AccountPage !== 'undefined' && AccountPage._data) {
+                AccountPage._data.deletion_scheduled_at = null;
+                this.renderPage();
+            }
+        } catch (e) {
+            if (typeof Toast !== 'undefined') Toast.error('Could not restore account: ' + (e?.message || e));
+        }
+    },
+
+    /** "Delete now" — hard-delete immediately (skips the remaining grace). */
+    async deleteNow() {
+        const ok = await ConfirmModal.confirm({
+            title: 'Delete account now?',
+            message: 'This permanently deletes your account and ALL data right now — calendars, photos, family, devices, everything. This cannot be undone.',
+            confirmLabel: 'Delete now',
+            cancelLabel: 'Cancel',
+            danger: true,
+        });
+        if (!ok) return;
+        try {
+            const r = await DashieAuth.dbRequest('delete_account_now', {});
+            if (r?.deleted !== true) throw new Error(r?.error || 'Deletion did not complete');
+            this._onAccountDeleted();
+        } catch (e) {
+            if (typeof Toast !== 'undefined') Toast.error('Delete failed: ' + (e?.message || e));
+        }
+    },
+
+    /** Tear down the session + redirect to login after the account is gone. */
+    _onAccountDeleted() {
+        if (this._deletionPollTimer) { clearInterval(this._deletionPollTimer); this._deletionPollTimer = null; }
+        try { localStorage.clear(); } catch (_) {}
+        try { sessionStorage.clear(); } catch (_) {}
+        try { DashieAuth.signOut?.(); } catch (_) {}
+        window.location.replace(window.location.origin + window.location.pathname + '?deleted=1');
     },
 
     /**
@@ -302,6 +404,9 @@ const App = {
         // and forget; failures only mean realtime falls back to TTL.
         this._connectSettingsSync();
 
+        // Global "scheduled for deletion" banner — fetch state + poll while pending.
+        this._checkDeletionState();
+
         // Update mock user data from real auth if available
         if (DashieAuth.user) {
             const stored = this._getStoredUserData();
@@ -422,7 +527,9 @@ const App = {
         const title = pageObj.topBarTitle ? pageObj.topBarTitle() : this._currentPage;
         const subtitle = pageObj.topBarSubtitle ? pageObj.topBarSubtitle() : '';
 
-        let topBarHtml = TopBar.render(title, subtitle);
+        // Show a refresh-data icon next to the title for pages that support it.
+        const showRefresh = typeof pageObj.refresh === 'function';
+        let topBarHtml = TopBar.render(title, subtitle, showRefresh);
 
         // Inject action buttons if page provides them
         if (pageObj.topBarActions) {
@@ -437,6 +544,10 @@ const App = {
 
         // Content
         document.getElementById('content').innerHTML = pageObj.render();
+
+        // Global pending-deletion banner (persists on every page while scheduled).
+        const _gb = document.getElementById('global-banner');
+        if (_gb) _gb.innerHTML = this._deletionBannerHtml();
         // No scroll reset here — `renderPage` is also called for in-place
         // state updates (e.g. toggling hide on a calendar row), and resetting
         // scroll mid-page is jarring. Navigation paths handle scroll reset
@@ -446,6 +557,27 @@ const App = {
     _resetContentScroll() {
         const el = document.getElementById('content');
         if (el) el.scrollTop = 0;
+    },
+
+    // Re-fetch the current page's data in place via its refresh() hook — keeps
+    // the user on the page (no navigation, no full reload). The title-bar
+    // refresh icon (TopBar) calls this; _refreshing drives its spin state.
+    async refreshCurrentPage() {
+        const pageObj = this.pages[this._currentPage]?.page;
+        if (!pageObj || typeof pageObj.refresh !== 'function' || this._refreshing) return;
+        this._refreshing = true;
+        this.renderPage();   // repaint so the icon shows its spinning state
+        try {
+            await pageObj.refresh();
+        } catch (e) {
+            console.warn('[App] page refresh failed:', e?.message);
+            if (typeof Toast !== 'undefined') {
+                Toast.error(Toast.friendly ? Toast.friendly(e, 'refresh') : 'Refresh failed');
+            }
+        } finally {
+            this._refreshing = false;
+            this.renderPage();
+        }
     },
 
     toggleSidebar() {

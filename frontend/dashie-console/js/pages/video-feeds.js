@@ -58,6 +58,8 @@ const VideoFeedsPage = {
         if (DashieAuth.isAddonMode) this._fetch();
     },
 
+    async refresh() { await this._fetch(); },
+
     async _fetch() {
         this._loading = true;
         this._error = null;

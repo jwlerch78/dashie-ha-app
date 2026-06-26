@@ -84,6 +84,8 @@ const RewardsPage = {
     //  Data loading
     // =========================================================
 
+    async refresh() { await this._fetchData(); },
+
     async _fetchData() {
         this._loading = true;
         this._error = null;

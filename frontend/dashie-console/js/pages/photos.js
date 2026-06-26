@@ -89,6 +89,8 @@ const PhotosPage = {
     },
 
     // ── Data fetching ───────────────────────────────────────
+    async refresh() { await this._fetchAll(); },
+
     async _fetchAll() {
         this._loading = true;
         this._error = null;

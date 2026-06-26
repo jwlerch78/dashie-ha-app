@@ -121,6 +121,8 @@ const CalendarPage = {
     },
 
     // ── Data fetching ───────────────────────────────────────
+    async refresh() { await this._fetch(); },
+
     async _fetch() {
         // First-call hook: register SettingsSync consumers so subsequent
         // edits on another surface (dashboard) trigger a re-fetch here.

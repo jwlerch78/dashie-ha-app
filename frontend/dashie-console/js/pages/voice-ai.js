@@ -136,6 +136,8 @@ const VoiceAiPage = {
 
     onNavigateTo() { this._fetch(); },
 
+    async refresh() { await this._fetch(); },
+
     _registerSyncOnce() {
         if (this._syncRegistered || !window.SettingsSync) return;
         this._syncRegistered = true;
@@ -335,7 +337,12 @@ const VoiceAiPage = {
         const d = this._defaults;
         const O = window.VoiceAiOptions;
         const memoryOn = d['ai.conversationContextEnabled'] === true;
+        // The pipeline (TTS/STT/search/sports) is a Dashie Intelligence concept.
+        // When the control method is Home Assistant Voice Assistant, HA owns the
+        // pipeline, so hide the "Customize pipeline" toggle and its cards.
+        const isDashieIntelligence = String(d['voice.controlMethod']) === 'dashie_cloud';
         const customPipeline = d['voice.customizePipeline'] === true;
+        const showPipeline = isDashieIntelligence && customPipeline;
         const searchOn = d['ai.webSearchEnabled'] === true;
         const cfg = k => d[k];
         const card = (title, stageKey, options, selectedId) => VoiceAiCards.render({
@@ -345,15 +352,15 @@ const VoiceAiPage = {
         });
         return `
             ${this._sectionHeader('Voice & AI Defaults', 'Apply to every device signed into this account.')}
-            ${this._renderControlMethodRow(d, customPipeline)}
+            ${this._renderControlMethodRow(d, customPipeline, isDashieIntelligence)}
 
             ${this._renderLocalityLegend()}
             ${card('AI Model', 'model', O.models(), String(d['ai.model']))}
 
-            ${customPipeline ? card('Text-to-speech (Voice)', 'tts', this._haFilter(O.TTS), String(d['voice.ttsProvider'])) : ''}
-            ${customPipeline ? card('Speech-to-text', 'stt', this._haFilter(O.STT), String(d['voice.sttProvider'])) : ''}
-            ${customPipeline ? card('Web search source', 'search', O.SEARCH, String(d['voice.searchSource'])) : ''}
-            ${customPipeline ? card('Sports source', 'sports', O.SPORTS, String(d['voice.sportsSource'])) : ''}
+            ${showPipeline ? card('Text-to-speech (Voice)', 'tts', this._haFilter(O.TTS), String(d['voice.ttsProvider'])) : ''}
+            ${showPipeline ? card('Speech-to-text', 'stt', this._haFilter(O.STT), String(d['voice.sttProvider'])) : ''}
+            ${showPipeline ? card('Web search source', 'search', O.SEARCH, String(d['voice.searchSource'])) : ''}
+            ${showPipeline ? card('Sports source', 'sports', O.SPORTS, String(d['voice.sportsSource'])) : ''}
 
             ${this._sectionHeader('Tools', '')}
             <div class="card"><div class="card-body">
@@ -368,16 +375,12 @@ const VoiceAiPage = {
 
     /** Voice control method dropdown with a compact "Customize pipeline" toggle
      *  inline on the right. The toggle reveals the TTS / STT / search-source cards. */
-    _renderControlMethodRow(d, customPipeline) {
+    _renderControlMethodRow(d, customPipeline, showCustomizeToggle) {
         const opts = this._haFilter(this.CONTROL_METHOD_OPTIONS).map(([v, l]) =>
             `<option value="${this._escape(v)}" ${v === String(d['voice.controlMethod']) ? 'selected' : ''}>${this._escape(l)}</option>`).join('');
-        return `
-            <div class="card" style="margin-bottom: 16px;"><div class="card-body">
-                <div style="display:flex; align-items:flex-end; gap: 16px; flex-wrap: wrap;">
-                    <div style="flex: 1; min-width: 220px;">
-                        <label class="form-label">Voice control method</label>
-                        <select class="form-select" onchange="VoiceAiPage.saveDefault('voice.controlMethod', this.value)">${opts}</select>
-                    </div>
+        // The "Customize pipeline" toggle is only meaningful for Dashie
+        // Intelligence — hide it when Home Assistant Voice Assistant is selected.
+        const customizeToggle = showCustomizeToggle ? `
                     <div style="display:flex; align-items:center; gap: 8px; padding-bottom: 8px; white-space: nowrap; color: var(--text-secondary); font-size: 13px;">
                         <span>Customize pipeline</span>
                         <label class="toggle">
@@ -385,7 +388,15 @@ const VoiceAiPage = {
                                 onchange="VoiceAiPage.saveDefault('voice.customizePipeline', this.checked)">
                             <span class="toggle-slider"></span>
                         </label>
+                    </div>` : '';
+        return `
+            <div class="card" style="margin-bottom: 16px;"><div class="card-body">
+                <div style="display:flex; align-items:flex-end; gap: 16px; flex-wrap: wrap;">
+                    <div style="flex: 1; min-width: 220px;">
+                        <label class="form-label">Voice control method</label>
+                        <select class="form-select" onchange="VoiceAiPage.saveDefault('voice.controlMethod', this.value)">${opts}</select>
                     </div>
+                    ${customizeToggle}
                 </div>
             </div></div>`;
     },

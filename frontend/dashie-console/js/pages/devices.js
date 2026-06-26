@@ -116,15 +116,8 @@ const DevicesPage = {
             // both time-archived (>30d since last_seen) AND user-dismissed
             // devices so the count matches what the user actually sees.
             const active = this._devices.filter(d => !this._isArchived(d) && !this._isDismissed(d)).length;
-            // Inline manual-refresh affordance next to the count — easier to
-            // find than buried under the Online section header.
-            const busy = this._manualRefreshing;
-            const refreshBtn = `
-                <button title="Refresh thumbnails and metrics" onclick="DevicesPage._manualRefresh()" ${busy ? 'disabled' : ''}
-                    style="background: none; border: 1px solid var(--border, #d1d5db); border-radius: 4px; padding: 3px 8px; cursor: ${busy ? 'wait' : 'pointer'}; line-height: 0; opacity: ${busy ? 0.5 : 0.85}; vertical-align: middle; margin-left: 8px;">
-                    <img src="assets/icons/icon-reload.svg" alt="Refresh" style="width: 12px; height: 12px; vertical-align: middle;">
-                </button>`;
-            return `${active} active${refreshBtn}`;
+            // Manual refresh now lives in the shared title-bar icon (refresh()).
+            return `${active} active`;
         }
         const device = this._findDevice(this._detailDeviceId);
         return device ? this._typeLabel(device) : '';
@@ -279,22 +272,15 @@ const DevicesPage = {
         } catch { return ''; }
     },
 
-    /** Manual refresh: auto poll + bump every screenshot cache-bust. */
-    _manualRefreshing: false,
-    async _manualRefresh() {
-        if (this._manualRefreshing) return;
-        this._manualRefreshing = true;
-        App.renderPage();
-        try {
-            const now = Date.now();
-            for (const d of (this._devices || [])) {
-                DevicesCard._screenshotTs[d.device_id] = now;
-            }
-            await this._refreshSilent();
-        } finally {
-            this._manualRefreshing = false;
-            App.renderPage();
+    /** Manual refresh (title-bar icon): re-poll + bump every screenshot
+     *  cache-bust. App.refreshCurrentPage() owns the spin state + re-render,
+     *  so no local busy flag is needed here. */
+    async refresh() {
+        const now = Date.now();
+        for (const d of (this._devices || [])) {
+            DevicesCard._screenshotTs[d.device_id] = now;
         }
+        await this._refreshSilent();
     },
 
     /**

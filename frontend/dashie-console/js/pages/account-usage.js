@@ -31,7 +31,6 @@ const AccountUsage = {
     _summary: null,            // {range_start, range_end, by_service: [...]}
     _daily: null,              // {days: [...]} for the SELECTED range (breakdown card)
     _monthDaily: null,         // {days: [...]} always current month — powers the range-independent stat cards
-    _rates: null,              // {rates: [...]} margined customer rate card for the pricing table
     _expiry: null,             // {next_expiry:{amount,expires_at}, lots:[...]} — get_credit_expiry
     _flash: null,              // transient banner (e.g. after returning from Stripe)
     _activeRange: '30d',       // 'today' | '7d' | '30d' | 'month' | 'custom'
@@ -95,12 +94,11 @@ const AccountUsage = {
             const nowIso = now.toISOString();
             // Auto-replenish state lives in CreditsControls now (shared with the
             // Account tab); fetch it alongside so the Balance card paints complete.
-            const [bal, sum, daily, monthDaily, rates, expiry] = await Promise.all([
+            const [bal, sum, daily, monthDaily, expiry] = await Promise.all([
                 DashieAuth.dbRequest('get_credit_balance', {}),
                 DashieAuth.dbRequest('get_usage_summary', { range_start: start, range_end: end, tz }),
                 DashieAuth.dbRequest('get_usage_daily',   { range_start: start, range_end: end, tz }),
                 DashieAuth.dbRequest('get_usage_daily',   { range_start: statStart, range_end: nowIso, tz }),
-                DashieAuth.dbRequest('get_credit_rates',  {}).catch(() => null),
                 DashieAuth.dbRequest('get_credit_expiry', {}).catch(() => null),
                 CreditsControls.fetchAutorefill().catch(() => null),
             ]);
@@ -108,7 +106,6 @@ const AccountUsage = {
             this._summary = sum;
             this._daily = daily;
             this._monthDaily = monthDaily;
-            this._rates = rates;
             this._expiry = expiry;
             // Share the freshly-fetched balance with the sidebar so its
             // bottom-left widget never disagrees with the stat strip on
@@ -350,7 +347,6 @@ const AccountUsage = {
                 ${this._renderRangeBar()}
                 ${this._renderSummaryCard()}
                 ${this._renderBreakdownCard()}
-                ${this._renderPricingCard()}
             </div>`;
     },
 
@@ -364,48 +360,6 @@ const AccountUsage = {
                 </div></div>`;
     },
     dismissFlash() { this._flash = null; App.renderPage(); },
-
-    /** Credit Pricing table — customer-facing (already margined) rate per tool
-     *  with a short description. Source: get_credit_rates. Build plan §11. */
-    _renderPricingCard() {
-        const rates = this._rates?.rates || [];
-        if (!rates.length) return '';
-        const fmtRate = (r) => r.included
-            ? `<span style="color: var(--status-success, #16a34a); font-weight: 600;">Included</span>`
-            : (r.rates || []).map(x =>
-                `<span style="white-space: nowrap;">${x.label ? this._escape(x.label) + ' ' : ''}<span style="font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-weight: 600;">${this._fmtRateAmount(x.amount)}</span> <span style="color: var(--text-muted);">${this._escape(x.unit)}</span></span>`
-            ).join('<span style="color: var(--text-muted); margin: 0 8px;">·</span>');
-        const rows = rates.map(r => `
-            <div style="padding: 14px 16px; border-top: 1px solid var(--border, #e5e7eb);">
-                <div style="display: flex; justify-content: space-between; align-items: baseline; gap: 12px; flex-wrap: wrap;">
-                    <div style="font-weight: 600; font-size: 14px;">${this._escape(r.title)}
-                        ${r.subtitle ? `<span style="color: var(--text-muted); font-weight: 400; font-size: 12px;"> · ${this._escape(r.subtitle)}</span>` : ''}
-                    </div>
-                    <div style="font-size: 13px; text-align: right;">${fmtRate(r)}</div>
-                </div>
-                ${r.description ? `<div style="color: var(--text-muted); font-size: 12px; line-height: 1.5; margin-top: 4px;">${this._escape(r.description)}</div>` : ''}
-            </div>`).join('');
-        return `
-            <div class="card" style="margin-top: 20px;"><div class="card-body" style="padding: 0;">
-                <div style="padding: 12px 16px; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; color: var(--text-muted);">
-                    Credit Pricing
-                </div>
-                ${rows}
-                <div style="padding: 12px 16px; border-top: 1px solid var(--border, #e5e7eb); color: var(--text-muted); font-size: 11px; line-height: 1.5;">
-                    Rates are what you pay in credits (1 credit = $1 USD). Most interactions cost well under a cent.
-                </div>
-            </div></div>`;
-    },
-
-    /** Format a small per-unit rate — more precision than _fmtCost since rates
-     *  like $0.0096/search would otherwise round to $0.01. */
-    _fmtRateAmount(amount) {
-        const n = Number(amount) || 0;
-        if (n === 0) return '$0';
-        if (n < 0.01) return `$${n.toFixed(4)}`;
-        if (n < 1) return `$${n.toFixed(3)}`;
-        return `$${n.toFixed(2)}`;
-    },
 
     _renderStatStrip() {
         // Balance card on the left; one combined period card (Today / This week /

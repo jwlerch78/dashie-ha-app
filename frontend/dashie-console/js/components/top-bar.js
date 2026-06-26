@@ -5,8 +5,18 @@
 const TopBar = {
     _menuOpen: false,
 
-    render(pageTitle, subtitle) {
+    render(pageTitle, subtitle, showRefresh) {
         const user = MockData.user;
+        // Per-page data refresh: re-fetches the current page's data in place
+        // (no navigation / no full reload). Shown only for pages that expose a
+        // refresh() method. Spins while a refresh is in flight (App._refreshing).
+        const refreshing = (typeof App !== 'undefined' && App._refreshing);
+        const refreshBtn = showRefresh ? `
+                <button class="top-bar-refresh" title="Refresh data" aria-label="Refresh data"
+                        onclick="App.refreshCurrentPage()" ${refreshing ? 'disabled' : ''}>
+                    <img src="assets/icons/icon-reload.svg" alt=""
+                         class="top-bar-refresh-icon${refreshing ? ' spinning' : ''}">
+                </button>` : '';
         // Google profile photo when available (stored at sign-in), initials
         // fallback otherwise — or when the photo URL fails to load (expired
         // googleusercontent link). referrerpolicy avoids Google's 403 on
@@ -22,6 +32,7 @@ const TopBar = {
             <div class="top-bar-left">
                 <button class="hamburger-btn" onclick="App.toggleSidebar()">☰</button>
                 <span class="top-bar-title">${pageTitle}</span>
+                ${refreshBtn}
                 ${subtitle ? `<span class="top-bar-subtitle">${subtitle}</span>` : ''}
             </div>
             <div class="top-bar-right">

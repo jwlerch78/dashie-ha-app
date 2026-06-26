@@ -21,6 +21,15 @@ const AccountPage = {
         App.renderPage();
     },
 
+    // Refresh the data for whichever tab is showing (account vs usage/credits).
+    async refresh() {
+        if (this._activeTab === 'usage' && typeof AccountUsage !== 'undefined' && AccountUsage._fetchAll) {
+            await AccountUsage._fetchAll();
+        } else {
+            await this._fetchData();
+        }
+    },
+
     render() {
         // Kick off data fetch if not loaded
         if (!this._data && !this._loading && !this._error) {
@@ -250,7 +259,6 @@ const AccountPage = {
         return `
             <div style="max-width: 800px;">
                 ${banner}
-                ${this._renderDeletionBanner(d)}
                 <div style="margin-bottom: 24px; color: var(--text-secondary); font-size: var(--font-size-sm);">
                     ${user.email} · Signed in via Google
                 </div>
@@ -425,7 +433,7 @@ const AccountPage = {
      * deletion_scheduled_at = now()+15d and stops billing (cancel-at-period-end)
      * WITHOUT touching data; the purge cron hard-deletes after the grace. The
      * account stays usable during the window and the user can undo via "Keep
-     * account" (cancel_account_deletion) — see _renderDeletionBanner/keepAccount.
+     * account" (cancel_account_deletion) — see App._deletionBannerHtml/keepAccount.
      *
      * This console is the web-discoverable deletion path (Play Store compliance).
      * Confirmation requires typing the email — defense in depth against a misclick
@@ -467,14 +475,15 @@ const AccountPage = {
             if (result?.scheduled !== true) {
                 throw new Error(result?.error || 'Could not schedule deletion');
             }
-            // Reflect the pending state — the restore banner takes over and the
-            // account stays usable (so the user can view bills / restore). No
-            // sign-out, no redirect.
-            const at = result.deletion_scheduled_at || new Date(Date.now() + 15 * 86400000).toISOString();
-            if (this._data) this._data.deletion_scheduled_at = at;
-            const when = new Date(at).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
-            Toast.success(`Account scheduled for deletion on ${when}. You can keep it any time before then.`);
-            App.renderPage();
+            // Per the model: schedule, then sign the user out. The pending state +
+            // Keep/Delete-now live in the global banner shown on next sign-in.
+            Toast.info('Account scheduled for deletion. Signing you out — sign back in any time before the deadline to keep it or delete now.');
+            setTimeout(() => {
+                try { localStorage.clear(); } catch (_) {}
+                try { sessionStorage.clear(); } catch (_) {}
+                try { DashieAuth.signOut?.(); } catch (_) {}
+                window.location.replace(window.location.origin + window.location.pathname);
+            }, 1800);
         } catch (err) {
             console.error('[AccountPage] handleDeleteAccount failed:', err);
             restore();
@@ -482,41 +491,7 @@ const AccountPage = {
         }
     },
 
-    /** Restore banner shown at the top when the account is pending deletion.
-     *  Restoring ("Keep account") is the only action — no "Delete now". */
-    _renderDeletionBanner(d) {
-        const at = d?.deletion_scheduled_at;
-        if (!at) return '';
-        const when = new Date(at);
-        const days = Math.max(0, Math.ceil((when.getTime() - Date.now()) / 86400000));
-        const dateStr = when.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
-        return `
-            <div class="card" style="margin-bottom: 16px; border-left: 4px solid var(--status-error, #c00); background: var(--bg-card-emphasis, #fff8e6);">
-                <div class="card-body" style="display:flex; align-items:center; justify-content:space-between; gap:16px; flex-wrap:wrap;">
-                    <div style="flex:1; min-width:240px;">
-                        <div style="font-weight:600; font-size:16px; margin-bottom:4px;">Account scheduled for deletion</div>
-                        <div style="color: var(--text-secondary); font-size:14px; line-height:1.5;">
-                            Your account and its data will be permanently deleted on <strong>${dateStr}</strong> (${days} day${days === 1 ? '' : 's'}). Changed your mind? You can keep it any time before then.
-                        </div>
-                    </div>
-                    <button class="btn btn-primary" id="keep-account-btn" onclick="AccountPage.keepAccount()" style="flex-shrink:0;">Keep account</button>
-                </div>
-            </div>`;
-    },
-
-    /** "Keep account" — cancel the pending deletion (clears the schedule + un-cancels the sub). */
-    async keepAccount() {
-        const btn = document.getElementById('keep-account-btn');
-        if (btn) { btn.disabled = true; btn.textContent = 'Restoring…'; }
-        try {
-            await DashieAuth.dbRequest('cancel_account_deletion', {});
-            if (this._data) this._data.deletion_scheduled_at = null;
-            Toast.success('Your account has been restored.');
-            App.renderPage();
-        } catch (e) {
-            console.error('[AccountPage] keepAccount failed:', e);
-            if (btn) { btn.disabled = false; btn.textContent = 'Keep account'; }
-            Toast.error(`Couldn't restore account: ${String(e?.message || e)}`);
-        }
-    },
+    // The pending-deletion banner + Keep/Delete-now now live globally on App
+    // (App._deletionBannerHtml / keepAccount / deleteNow) so they persist on
+    // every page, not just here.
 };
