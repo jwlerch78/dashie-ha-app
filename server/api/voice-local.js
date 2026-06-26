@@ -12,7 +12,6 @@
 
 const express = require('express');
 const auth = require('../auth');
-const settingsStore = require('../settings-store');
 const { getAccountVoiceConfig } = require('../account-config');
 const { createNodeIO } = require('../brain/node-io');
 const brain = require('../brain/voice-brain.bundle.js');
@@ -26,10 +25,12 @@ const ENV_ENDPOINT = process.env.LOCAL_LLM_ENDPOINT || 'http://localhost:11434';
 const ENV_MODEL = process.env.LOCAL_LLM_MODEL || 'qwen2.5:3b';
 
 router.post('/converse-local', express.json(), async (req, res) => {
-  // Gate on the household-sharing opt-in, consistent with /api/internal. NOTE: the local brain
-  // spends NO account credits, so this gate may relax later — for M1 keep the endpoint closed.
-  if (!settingsStore.isHouseholdSharingEnabled()) {
-    return res.status(403).json({ error: 'sharing_disabled', message: 'Household sharing is off in the add-on.' });
+  // Local inference stays on the LAN — nothing leaves the network and no account credential is
+  // vended — so it does NOT need the household-sharing opt-in (that gates credential vending in
+  // /api/internal). It only needs the add-on signed in, to read the account's saved local-LLM
+  // endpoint/model config.
+  if (!auth.readStoredJwt()) {
+    return res.status(403).json({ error: 'not_signed_in', message: 'The Dashie add-on is not signed in.' });
   }
 
   const body = req.body || {};
