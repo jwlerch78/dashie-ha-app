@@ -527,7 +527,14 @@ const DevicesCard = {
         const showCameraColumn = hasCameraSection && showCamera && imageReady && !!m.controls?.camera_streaming;
 
         if (!showCameraColumn) {
-            const mergedControls = hasCameraSection
+            // Include the camera on/off toggle + motion/face icons whenever the
+            // device is camera-capable. Use cameraConfigured (the rtsp_stream
+            // switch exists) rather than hasCameraSection (camera_resolution) —
+            // the resolution goes null when the camera is off, which would drop
+            // the toggle exactly when the user wants it to turn the camera back
+            // on. Motion/face icons self-gate on their *_active flags.
+            const hasCameraControls = cameraConfigured || hasCameraSection;
+            const mergedControls = hasCameraControls
                 ? `${reloadIcon}${screenPill}${lightDarkPill}${cameraIcon}${motionIcon}${faceIcon}`
                 : `${reloadIcon}${screenPill}${lightDarkPill}`;
             // Screenshot centered at 50% width; controls centered across the full
