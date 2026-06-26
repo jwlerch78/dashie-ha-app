@@ -15,7 +15,7 @@ const { SUPABASE } = require('./config');
 const TTL_MS = 30_000; // user_settings changes rarely; a short cache keeps converse latency low.
 let _cache = null; // { at, value }
 
-const SAFE_DEFAULT = { model: null, route: 'cloud', localLlmUrl: '', localLlmModel: '' };
+const SAFE_DEFAULT = { model: null, route: 'cloud', localLlmUrl: '', localLlmModel: '', retainTranscripts: false };
 
 /**
  * Resolve the account's voice routing config.
@@ -29,20 +29,24 @@ async function getAccountVoiceConfig() {
   try {
     const { jwt, userId } = await auth.getValidJwt();
     if (jwt && userId) {
+      // retain_transcripts is a dedicated column (not in the settings blob) — same source
+      // retention.ts reads. Governs whether the brain keeps the turn's transcript.
       const url = `${SUPABASE.url}/rest/v1/user_settings`
-        + `?auth_user_id=eq.${encodeURIComponent(userId)}&select=settings`;
+        + `?auth_user_id=eq.${encodeURIComponent(userId)}&select=settings,retain_transcripts`;
       const resp = await fetch(url, {
         headers: { apikey: SUPABASE.anonKey, Authorization: `Bearer ${jwt}` },
       });
       if (resp.ok) {
         const rows = await resp.json().catch(() => []);
-        const settings = (Array.isArray(rows) && rows[0] && rows[0].settings) || {};
+        const row = (Array.isArray(rows) && rows[0]) || {};
+        const settings = row.settings || {};
         const model = settings?.ai?.model || null;
         value = {
           model,
           route: model === 'local' ? 'local' : 'cloud',
           localLlmUrl: settings?.voice?.localLlmUrl || '',
           localLlmModel: settings?.voice?.localLlmModel || '',
+          retainTranscripts: row.retain_transcripts === true,
         };
       }
     }

@@ -17,6 +17,7 @@
 // expose /v1/chat/completions) — build plan §13.12.
 
 const { SUPABASE } = require('../config');
+const { getAccountVoiceConfig } = require('../account-config');
 
 /** Fire-and-forget POST to the database-operations edge fn under the account JWT (mirrors the
  *  cloud brain's logging.ts). Never throws — logging must not break a turn. No token (anonymous
@@ -102,7 +103,15 @@ function createNodeIO({ endpoint, model, log = console.log }) {
     logWebSearch: (token, data) => postDbOp(token, 'log_web_search', data),
     logSports: (token, data) => postDbOp(token, 'log_sports', data),
     getDefaultModel: async () => model,
-    readRetainTranscripts: async () => false,
+    // Read the account's "Keep transcripts" opt-in so the brain retains the turn's
+    // transcript. With the integration's caller-mode, the brain signals
+    // metadata.retain_transcript → the integration stores it HA-locally → the Console
+    // overlays it onto the interaction by session_id. Without this it was stuck false,
+    // so local transcripts landed nowhere.
+    readRetainTranscripts: async () => {
+      try { return (await getAccountVoiceConfig()).retainTranscripts === true; }
+      catch { return false; }
+    },
   };
 }
 
