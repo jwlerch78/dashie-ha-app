@@ -213,9 +213,15 @@ const VoiceAiChat = {
         // uses. Falls back to a single safe default if VoiceAiPage hasn't
         // initialised yet.
         const modelGroups = VoiceAiPage.MODEL_GROUPS || [['Claude', [['claude-sonnet-4-5-20250929', 'Claude Sonnet 4.5']]]];
+        // "My Local LLM" routes to the on-prem add-on brain (/api/voice/converse-local),
+        // which can reach the LAN model — the cloud brain can't. So only offer it when the
+        // console is running inside the HA add-on.
+        const allGroups = (typeof DashieAuth !== 'undefined' && DashieAuth.isAddonMode)
+            ? [...modelGroups, ['Local', [['local', 'My Local LLM']]]]
+            : modelGroups;
         const modelHtml = (() => {
             const opt = (val, label) => `<option value="${esc(val)}" ${m.modelId === val ? 'selected' : ''}>${esc(label)}</option>`;
-            const groups = modelGroups.map(([groupLabel, items]) =>
+            const groups = allGroups.map(([groupLabel, items]) =>
                 `<optgroup label="${esc(groupLabel)}">${items.map(([v, l]) => opt(v, l)).join('')}</optgroup>`);
             return `<select id="voice-ai-chat-model" onchange="VoiceAiChat.setModel(this.value)" style="${selectStyle}">${groups.join('')}</select>`;
         })();

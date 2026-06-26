@@ -448,14 +448,17 @@ const DevicesCard = {
             palette: { onBg: '#1f2937', offBg: '#f97316', onBorder: '#1f2937', offBorder: '#f97316', onIconInvert: true, offIconInvert: true },
         });
 
-        // Camera icon: orange (#f97316) filter when streaming; gray + diagonal slash when off.
-        const cameraOrange = 'filter: brightness(0) saturate(100%) invert(54%) sepia(90%) saturate(2018%) hue-rotate(354deg) brightness(101%) contrast(98%);';
+        // Camera toggle styled to match the screen / light-dark pills: an orange
+        // pill with a white icon when streaming; an unfilled (gray-outlined) pill
+        // with a dimmed gray icon + diagonal slash when off.
         const cameraIcon = `
             <button title="${cameraOn ? 'Camera streaming — tap to stop' : 'Camera off — tap to start'}" ${camBusy ? 'disabled' : ''}
                 onclick="event.stopPropagation(); DevicesCard.toggleSwitch('${idAttr}', 'camera_stream_enabled', ${cameraOn})"
-                style="background: none; border: none; cursor: ${camBusy ? 'wait' : 'pointer'}; padding: 2px; line-height: 0; display: inline-flex; align-items: center; position: relative;">
-                ${iconImg('icon-video-camera.svg', 18, cameraOn ? cameraOrange : 'opacity: 0.45;')}
-                ${cameraOn ? '' : slashSvg(18, '#9ca3af', 2)}
+                style="display: inline-flex; align-items: center; justify-content: center; padding: 4px 10px; border-radius: 999px; border: 1px solid ${cameraOn ? '#f97316' : '#d1d5db'}; background: ${cameraOn ? '#f97316' : 'transparent'}; cursor: ${camBusy ? 'wait' : 'pointer'}; opacity: ${camBusy ? 0.5 : 1}; line-height: 0;">
+                <span style="position: relative; display: inline-flex; line-height: 0;">
+                    ${iconImg('icon-video-camera.svg', 14, cameraOn ? 'filter: brightness(0) invert(1);' : 'opacity: 0.45;')}
+                    ${cameraOn ? '' : slashSvg(14, '#9ca3af', 2)}
+                </span>
             </button>
         `;
 

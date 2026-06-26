@@ -1414,14 +1414,18 @@ Sports results (live from the sports provider):
   scoring plays in the \`text\` field, not the spoken \`voice\`. Use the \`clock\` and
   \`player\` from each event — phrasing follows the sport: soccer goals "Messi 38'",
   football "Kelce TD (Q2)", etc. Mark soccer penalties "(pen)" and own goals
-  "(OG)". Keep \`voice\` to the score/result; put scorers and extra games in \`text\`.**
+  "(OG)". Put scorers and extra games in the \`text\` field; the spoken \`voice\`
+  delivers the result **in your configured personality's voice** — keep the score
+  itself factual and in digits, but say it with your character (a greeting or
+  flourish is welcome), not as a bare stat line.**
   Not every sport returns events (e.g. basketball usually has none) — if \`events\`
   is absent, just give the score.
 - If there are multiple games, summarize the most relevant one (the team the user
   asked about) in the voice; put extra games in the text field.
 - If the results are empty or don't contain the game asked about, say you
   couldn't find that game — do NOT invent a score or scorers.
-- Keep the spoken \`voice\` answer under 25 words and natural to hear aloud.
+- Keep the spoken \`voice\` answer brief and natural to hear aloud — a sentence or
+  two **in your personality's voice**, never a bare stat line.
 `;
 
     const AVAILABLE_TOOLS_LIST = `- calendar_events: query: {time_range: "today|tomorrow|this_week|next_week|weekend|next_30_days|next_60_days"} - Family calendar events

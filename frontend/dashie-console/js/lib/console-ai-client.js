@@ -514,6 +514,10 @@ const ConsoleAiClient = {
      *  the brain can't self-fulfill (e.g. HA entities). Returns the raw turn. */
     async _brainCall(text, { personalityId, modelId, history, providedContext } = {}) {
         const t0 = performance.now();
+        // "My Local LLM" routes to the on-prem add-on brain — it can reach the LAN model;
+        // the cloud brain can't. 'local' is a routing sentinel, not a real model name, so we
+        // DON'T forward it as options.model — the add-on resolves the saved local model.
+        const isLocal = modelId === 'local';
         const body = {
             text,
             endpoint_id: 'console',
@@ -524,21 +528,26 @@ const ConsoleAiClient = {
             })),
         };
         if (personalityId) body.options.personality_id = personalityId;
-        if (modelId) body.options.model = modelId;
+        if (modelId && !isLocal) body.options.model = modelId;
         if (providedContext) body.provided_context = providedContext;
+        const url = isLocal
+            ? DashieAuth._addonUrl('/api/voice/converse-local')
+            : `${DashieAuth.config.url}/functions/v1/voice-conversation`;
+        const headers = isLocal
+            ? { 'Content-Type': 'application/json' }
+            : {
+                'Content-Type': 'application/json',
+                'apikey': DashieAuth.anonKey,
+                'Authorization': `Bearer ${DashieAuth.jwt || DashieAuth.anonKey}`,
+            };
         try {
-            const resp = await fetch(`${DashieAuth.config.url}/functions/v1/voice-conversation`, {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'apikey': DashieAuth.anonKey,
-                    'Authorization': `Bearer ${DashieAuth.jwt || DashieAuth.anonKey}`,
-                },
-                body: JSON.stringify(body),
-            });
+            const resp = await fetch(url, { method: 'POST', headers, body: JSON.stringify(body) });
             const turn = await resp.json().catch(() => ({}));
             if (!resp.ok || turn.ok === false) {
-                return { ok: false, error: turn.error || turn.message || `HTTP ${resp.status}`, latency_ms: Math.round(performance.now() - t0), stages: turn.stages || [] };
+                const err = (isLocal && resp.status === 403)
+                    ? (turn.message || 'The Dashie add-on is not signed in.')
+                    : (turn.error || turn.message || `HTTP ${resp.status}`);
+                return { ok: false, error: err, latency_ms: Math.round(performance.now() - t0), stages: turn.stages || [] };
             }
             return turn;
         } catch (e) {
