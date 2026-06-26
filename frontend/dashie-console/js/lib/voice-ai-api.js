@@ -22,6 +22,7 @@ const VoiceAiApi = {
     AI_DEFAULT_KEYS: [
         ['ai', 'model'],
         ['voice', 'controlMethod'],
+        ['voice', 'conversationModel'],
         ['voice', 'customizePipeline'],
         ['voice', 'sttProvider'],
         ['voice', 'ttsProvider'],
@@ -43,6 +44,7 @@ const VoiceAiApi = {
     DEFAULTS: {
         'ai.model': 'gemini-2.5-flash',
         'voice.controlMethod': 'dashie_cloud',
+        'voice.conversationModel': '',
         'voice.customizePipeline': false,
         'voice.sttProvider': 'dashie_cloud',
         'voice.ttsProvider': 'dashie_cloud',
