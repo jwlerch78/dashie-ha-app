@@ -5,16 +5,36 @@
 // the Node analog of the cloud's default-io.ts. The orchestrator takes its I/O injectable, so the
 // loop logic is identical across runtimes; only these adapters differ (by design).
 //
-// ── Milestone 1 (walking skeleton) scope ──
-// ONLY `callGateway` is real: it forwards the assembled prompt to a LAN model over an
-// OpenAI-compatible endpoint (/v1/chat/completions). This is L3's inference hop — the one thing
-// that proves the core runs on-prem against a local model. Everything else is a safe STUB:
-//   - web search / sports → empty results (tools land in M3; the cloud SearXNG/sports come later)
-//   - personality        → null (base prompt)
-//   - logging/credits     → no-op (real metering lands with the credit mechanism)
-//   - retain transcripts  → false
+// ── Scope ──
+// `callGateway` forwards the assembled prompt to a LAN model over an OpenAI-compatible endpoint
+// (/v1/chat/completions) — L3's inference hop. `logInteraction`/`logWebSearch`/`logSports` mirror
+// the cloud's logging.ts: they POST to database-operations under the account JWT so on-prem turns
+// show up in the Console's interaction/intelligence log. A LOCAL model isn't in the cost catalog,
+// so log_ai_interaction logs it but debits $0 (handleLogAIInteraction only debits when cost>0) —
+// i.e. captured-but-free, per §11. Still STUBBED: web search / sports (tools land in M3; cloud
+// SearXNG/sports later), personality (null = base prompt), retain transcripts (false).
 // Target an OpenAI-compatible endpoint, NOT Ollama specifically (llama.cpp/LM Studio/vLLM/Ollama all
 // expose /v1/chat/completions) — build plan §13.12.
+
+const { SUPABASE } = require('../config');
+
+/** Fire-and-forget POST to the database-operations edge fn under the account JWT (mirrors the
+ *  cloud brain's logging.ts). Never throws — logging must not break a turn. No token (anonymous
+ *  M1 turn) → skip (nothing to attribute). */
+async function postDbOp(token, operation, data) {
+  if (!token) return;
+  try {
+    await fetch(`${SUPABASE.url}/functions/v1/database-operations`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        apikey: SUPABASE.anonKey,
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({ operation, data }),
+    });
+  } catch { /* fire-and-forget */ }
+}
 
 /**
  * @param {object} opts
@@ -77,9 +97,10 @@ function createNodeIO({ endpoint, model, log = console.log }) {
     runWebSearch: async (query) => ({ provider: 'none', query, results: [], result_count: 0, latency: 0 }),
     runSports: async (query) => ({ provider: 'none', query, games: [], result_count: 0, latency: 0 }),
     resolvePersonality: async () => null,
-    logInteraction: async () => {},
-    logWebSearch: async () => {},
-    logSports: async () => {},
+    // Capture on-prem turns in the Console (mirrors the cloud logging.ts). Local model = $0 debit.
+    logInteraction: (token, data) => postDbOp(token, 'log_ai_interaction', data),
+    logWebSearch: (token, data) => postDbOp(token, 'log_web_search', data),
+    logSports: (token, data) => postDbOp(token, 'log_sports', data),
     getDefaultModel: async () => model,
     readRetainTranscripts: async () => false,
   };
