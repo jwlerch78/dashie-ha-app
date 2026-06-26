@@ -513,27 +513,34 @@ const DevicesCard = {
         const screenshotSection = showScreenshot ? screenshotPanel : '';
         const cameraSection = showCamera ? cameraPanel : '';
 
-        // Two-column layout only when there's an actual live camera feed to
-        // show. Otherwise — no camera hardware, Cameras toggle off, or the
-        // camera is simply off — collapse to a single centered column instead
-        // of an empty/placeholder ("no camera" / "Camera off") right column.
-        // In the collapsed layout the screenshot is horizontally centered and
-        // ALL controls are distributed in one row beneath it: the camera
-        // on/off toggle and motion/face sensor icons join the left toggles
-        // (only for devices that actually have a camera).
-        const showCameraColumn = hasCameraSection && showCamera && !!cameraSrc;
+        // Two-column layout only when the camera entity is ACTUALLY streaming
+        // (camera_streaming) — not merely when the rtsp switch is enabled. Some
+        // devices without a real camera report a placeholder resolution AND keep
+        // the stream switch on, so they'd otherwise try to load a frame, 404,
+        // and show a "no camera" box. Gating on camera_streaming collapses those.
+        // Otherwise — no camera hardware, Cameras toggle off, or not streaming —
+        // collapse to a single centered column instead of an empty/placeholder
+        // ("no camera" / "Camera off") right column. In the collapsed layout the
+        // screenshot is horizontally centered and ALL controls are centered in
+        // one row beneath it: the camera on/off toggle and motion/face sensor
+        // icons join the left toggles (only for devices that have a camera).
+        const showCameraColumn = hasCameraSection && showCamera && imageReady && !!m.controls?.camera_streaming;
 
         if (!showCameraColumn) {
             const mergedControls = hasCameraSection
                 ? `${reloadIcon}${screenPill}${lightDarkPill}${cameraIcon}${motionIcon}${faceIcon}`
                 : `${reloadIcon}${screenPill}${lightDarkPill}`;
+            // Screenshot centered at 50% width; controls centered across the full
+            // card width (not constrained to the screenshot box) so the icons form
+            // a centered, evenly-spaced cluster rather than left-aligning to the
+            // screenshot's left edge.
             return `
                 <div style="margin-top: 12px;">
                     <div style="max-width: 50%; margin: 0 auto;">
                         ${screenshotSection}
-                        <div style="display: flex; align-items: center; justify-content: space-around; gap: 4px; margin-top: 8px; ${offlineStyle}">
-                            ${mergedControls}
-                        </div>
+                    </div>
+                    <div style="display: flex; align-items: center; justify-content: center; gap: 16px; margin-top: 8px; ${offlineStyle}">
+                        ${mergedControls}
                     </div>
                 </div>
             `;
