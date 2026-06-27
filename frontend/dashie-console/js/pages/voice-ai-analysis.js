@@ -127,7 +127,7 @@ const VoiceAiAnalysis = {
             const bySession = new Map();
             for (const t of rows) if (t.session_id) bySession.set(t.session_id, t);
             for (const intr of interactions) {
-                if (intr.prompt || intr.response) continue;
+                if (intr.realtime || intr.prompt || intr.response) continue;
                 const t = intr.session_id && bySession.get(intr.session_id);
                 if (t) { intr.prompt = t.text || null; intr.response = t.voice || null; intr.subtext = t.subtext || null; }
             }
@@ -192,6 +192,7 @@ const VoiceAiAnalysis = {
             try { return new Date(intr.ts).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }); }
             catch { return intr.ts; }
         })();
+        if (intr.realtime) return this._renderRealtimeInteraction(intr, open, time);
         const badge = intr.complexity === 'complex'
             ? `<span style="background: var(--accent-soft, #eef2ff); color: var(--accent, #4f46e5); font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.4px; padding: 2px 6px; border-radius: 4px;">Complex</span>`
             : `<span style="background: var(--surface-muted, #f3f4f6); color: var(--text-muted); font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.4px; padding: 2px 6px; border-radius: 4px;">Simple</span>`;
@@ -222,6 +223,57 @@ const VoiceAiAnalysis = {
                     ${transcript}
                     ${steps}
                 </div>
+            </div>`;
+    },
+
+    /** Realtime "conversation mode" interaction — a multi-turn thread, not a
+     *  cascade turn. Shows the opening turn with a "Show more" toggle to reveal
+     *  the full conversation; each turn carries its own timestamp. */
+    _renderRealtimeInteraction(intr, open, time) {
+        const turns = intr.turns || [];
+        const badge = `<span style="background: var(--surface-muted, #f3f4f6); color: var(--text-secondary); font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.4px; padding: 2px 6px; border-radius: 4px;">Conversation</span>`;
+        const meta = `${turns.length} turn${turns.length === 1 ? '' : 's'} · ${this._fmtTokens(intr.total_tokens)} tokens`;
+        const shown = open ? turns : turns.slice(0, 1);
+        const thread = shown.map((t, i) => this._renderTurn(t, i === shown.length - 1)).join('');
+        const more = turns.length > 1
+            ? `<button onclick="event.stopPropagation(); VoiceAiAnalysis.toggleInteraction('${this._escape(intr.key)}')"
+                    style="background: none; border: none; color: var(--accent, #4f46e5); font-size: 12px; font-weight: 600; cursor: pointer; padding: 8px 0 0;">
+                    ${open ? 'Show less ▴' : `Show full conversation (${turns.length - 1} more) ▾`}
+                </button>`
+            : '';
+        return `
+            <div style="border-top: 1px solid var(--border, #f0f0f0);">
+                <div style="display: flex; align-items: center; gap: 10px; padding: 10px 16px;">
+                    <span style="width: 12px;"></span>
+                    <span style="color: var(--text-muted); width: 72px; font-size: 12px;">${this._escape(time)}</span>
+                    <span style="flex-shrink: 0;">${badge}</span>
+                    <span style="flex: 1; text-align: right; color: var(--text-muted); font-size: 12px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace;">${this._escape(meta)}</span>
+                </div>
+                <div style="padding: 0 16px 12px 38px;">
+                    <div style="background: var(--surface-muted, #f7f7f8); border-radius: 8px; padding: 10px 12px;">
+                        ${thread}
+                    </div>
+                    ${more}
+                </div>
+            </div>`;
+    },
+
+    /** One conversation turn: You/Dashie lines, with the AI response latency
+     *  (end-of-user-speech → response) shown on "Dashie said" when captured.
+     *  `last` drops the divider so the thread doesn't end with a dangling rule. */
+    _renderTurn(t, last) {
+        const lat = (t.latency_ms > 0)
+            ? `<span style="color: var(--text-muted); font-size: 10px; margin-left: 6px; letter-spacing: 0;">${this._escape(this._fmtMs(t.latency_ms))} to respond</span>`
+            : '';
+        const dashie = t.response ? `
+            <div style="margin: 0 0 4px;">
+                <span style="color: var(--text-muted); font-size: 10px; text-transform: uppercase; letter-spacing: 0.5px;">Dashie said</span>${lat}
+                <div style="font-size: 13px; line-height: 1.4;">${this._escape(t.response)}</div>
+            </div>` : '';
+        return `
+            <div style="margin: 0 0 ${last ? '0' : '10px'}; padding: 0 0 ${last ? '0' : '10px'}; ${last ? '' : 'border-bottom: 1px dashed var(--border, #e5e7eb);'}">
+                ${t.prompt ? this._line('You said', t.prompt, 13) : ''}
+                ${dashie}
             </div>`;
     },
 

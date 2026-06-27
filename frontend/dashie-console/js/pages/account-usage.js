@@ -747,6 +747,9 @@ const AccountUsage = {
             try { return new Date(intr.ts).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }); }
             catch { return intr.ts; }
         })();
+        if (intr.realtime || items.some(c => c.request_type === 'realtime')) {
+            return this._renderRealtimeInteractionRow(intr, items, total, open, caret, time);
+        }
         const counts = {};
         for (const it of items) { const g = this._svcGroup(it.service); counts[g] = (counts[g] || 0) + 1; }
         const mix = Object.entries(counts)
@@ -777,6 +780,68 @@ const AccountUsage = {
                 </div>
                 ${body}
             </div>`;
+    },
+
+    /** Realtime "conversation mode" interaction: collapse the per-modality
+     *  token_usage rows into two billing lines — Voice (the audio model) and
+     *  Text (the `:text` model) — and show the conversation transcript as turns. */
+    _renderRealtimeInteractionRow(intr, items, total, open, caret, time) {
+        const isText = (m) => typeof m === 'string' && m.endsWith(':text');
+        const roll = (filterFn) => items.filter(filterFn).reduce((a, c) => ({
+            cost: a.cost + this._itemCost(c),
+            inTok: a.inTok + (c.input_tokens || 0),
+            outTok: a.outTok + (c.output_tokens || 0),
+        }), { cost: 0, inTok: 0, outTok: 0 });
+        const voice = roll(c => !isText(c.model));
+        const text = roll(c => isText(c.model));
+        const turns = intr.turns || [];
+        const turnCount = turns.length || items.filter(c => !isText(c.model)).length;
+        const mix = `Conversation · ${turnCount} turn${turnCount === 1 ? '' : 's'}`;
+        const rollupRow = (label, g) => `
+            <tr>
+                <td style="padding: 4px 0; color: var(--text-muted); width: 60px; text-transform: uppercase; font-size: 10px; letter-spacing: 0.5px;">${label}</td>
+                <td style="padding: 4px 8px;">${this._fmtCount(g.inTok)} in / ${this._fmtCount(g.outTok)} out</td>
+                <td style="padding: 4px 0; text-align: right; font-family: ui-monospace, SFMono-Regular, Menlo, monospace;">${this._fmtCost(g.cost)}</td>
+            </tr>`;
+        const has = (g) => g.cost || g.inTok || g.outTok;
+        const body = open
+            ? `<div style="padding-left: 24px;">
+                 ${this._renderRealtimeTranscript(turns)}
+                 <table style="width: 100%; border-collapse: collapse; font-size: 12px; margin: 0 0 6px;"><tbody>
+                    ${has(voice) ? rollupRow('Voice', voice) : ''}
+                    ${has(text) ? rollupRow('Text', text) : ''}
+                 </tbody></table>
+               </div>`
+            : '';
+        return `
+            <div style="border-bottom: 1px solid var(--border, #f0f0f0);">
+                <div onclick="event.stopPropagation(); AccountUsage.toggleInteraction('${this._escape(intr.key)}')"
+                    style="display: flex; align-items: center; gap: 10px; padding: 7px 0; cursor: pointer;">
+                    <span style="color: var(--text-muted); width: 12px; font-size: 11px;">${caret}</span>
+                    <span style="color: var(--text-muted); width: 76px; font-size: 12px;">${this._escape(time)}</span>
+                    <span style="flex: 1; font-size: 12px;">${this._escape(mix)}</span>
+                    <span style="font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; font-weight: 600;">${this._fmtCost(total)}</span>
+                </div>
+                ${body}
+            </div>`;
+    },
+
+    /** Conversation transcript (realtime) as a You/Dashie thread. */
+    _renderRealtimeTranscript(turns) {
+        if (!turns || !turns.length || !turns.some(t => t.prompt || t.response)) return '';
+        const line = (label, val) => `
+            <div style="margin: 0 0 4px;">
+                <span style="color: var(--text-muted); font-size: 10px; text-transform: uppercase; letter-spacing: 0.5px;">${label}</span>
+                <div style="font-size: 12px; line-height: 1.4;">${this._escape(val)}</div>
+            </div>`;
+        const turn = (t, last) => `
+            <div style="margin: 0 0 ${last ? '0' : '8px'}; padding: 0 0 ${last ? '0' : '8px'}; ${last ? '' : 'border-bottom: 1px dashed var(--border, #e5e7eb);'}">
+                ${t.prompt ? line('You said', t.prompt) : ''}
+                ${t.response ? line('Dashie said', t.response) : ''}
+            </div>`;
+        return `<div style="background: var(--surface-muted, #f7f7f8); border-radius: 8px; padding: 8px 10px; margin: 0 0 8px;">
+            ${turns.map((t, i) => turn(t, i === turns.length - 1)).join('')}
+        </div>`;
     },
 
     /** Retained transcript for one interaction (only present when the account
