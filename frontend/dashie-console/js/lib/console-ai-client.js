@@ -555,6 +555,73 @@ const ConsoleAiClient = {
         }
     },
 
+    /** Compact sports detector for the dev console (§23.6). Lighter than the
+     *  shared js/core parser (which has the full team lexicon) — sport/league cues
+     *  + a modest team set are enough here; misses fall to the brain's template. */
+    _SPORTS_TEAMS: {
+        chiefs: { sport: 'football', league: 'nfl' }, eagles: { sport: 'football', league: 'nfl' },
+        cowboys: { sport: 'football', league: 'nfl' }, packers: { sport: 'football', league: 'nfl' },
+        '49ers': { sport: 'football', league: 'nfl' }, bills: { sport: 'football', league: 'nfl' },
+        lakers: { sport: 'basketball', league: 'nba' }, celtics: { sport: 'basketball', league: 'nba' },
+        warriors: { sport: 'basketball', league: 'nba' }, knicks: { sport: 'basketball', league: 'nba' },
+        yankees: { sport: 'baseball', league: 'mlb' }, dodgers: { sport: 'baseball', league: 'mlb' },
+        'red sox': { sport: 'baseball', league: 'mlb' }, mets: { sport: 'baseball', league: 'mlb' },
+        bruins: { sport: 'hockey', league: 'nhl' },
+        'manchester united': { sport: 'soccer', league: 'premier-league' },
+        liverpool: { sport: 'soccer', league: 'premier-league' }, arsenal: { sport: 'soccer', league: 'premier-league' },
+        mexico: { sport: 'soccer', league: 'world-cup' },
+    },
+    _SPORTS_CUES: [
+        [/world cup|\bfifa\b/i, { sport: 'soccer', league: 'world-cup' }],
+        [/premier league|\bepl\b/i, { sport: 'soccer', league: 'premier-league' }],
+        [/champions league/i, { sport: 'soccer', league: 'champions-league' }],
+        [/\bnfl\b/i, { sport: 'football', league: 'nfl' }], [/\bnba\b/i, { sport: 'basketball', league: 'nba' }],
+        [/\bmlb\b/i, { sport: 'baseball', league: 'mlb' }], [/\bnhl\b/i, { sport: 'hockey', league: 'nhl' }],
+        [/\bsoccer\b/i, { sport: 'soccer' }], [/\bbasketball\b/i, { sport: 'basketball' }],
+        [/\bbaseball\b/i, { sport: 'baseball' }], [/\bhockey\b/i, { sport: 'hockey' }],
+    ],
+    _detectWhen(t) {
+        if (/\b(winning|losing|right now|currently|live|still (on|going|playing))\b/i.test(t)) return 'live';
+        if (/\b(next|upcoming|tomorrow|when (do|does|is|are)|play(ing)? (today|tonight)|tonight)\b/i.test(t)) return 'next';
+        return 'last';
+    },
+    _extractTeam(t) {
+        const m = t.match(/of (?:the )?([a-z][\w'.\- ]+?) (?:game|match|score)\b/i)
+            || t.match(/\bdid (?:the )?([a-z][\w'.\- ]+?) (?:win|play|beat|lose)/i)
+            || t.match(/\b(?:are|is) (?:the )?([a-z][\w'.\- ]+?) (?:play|game)/i);
+        if (!m) return null;
+        const stop = new Set(['the', 'a', 'an', 'score', 'game', 'match']);
+        return m[1].split(/\s+/).filter(w => !stop.has(w)).join(' ').trim() || null;
+    },
+    /** Detect a team-scoped sports query → fetch the gateway. Returns the result or null. */
+    async _prefetchSports(text) {
+        const t = (text || '').toLowerCase().trim();
+        if (!/\b(game|score|match|won|win|winning|beat|playing|play|vs\.?|versus)\b/i.test(t)) return null;
+        let query = null;
+        for (const key of Object.keys(this._SPORTS_TEAMS).sort((a, b) => b.length - a.length)) {
+            if (new RegExp(`\\b${key}\\b`, 'i').test(t)) { query = { ...this._SPORTS_TEAMS[key], team: key }; break; }
+        }
+        if (!query) {
+            let sl = null;
+            for (const [re, x] of this._SPORTS_CUES) if (re.test(t)) { sl = x; break; }
+            if (!sl) return null;
+            const team = this._extractTeam(t);
+            if (!team) return null;
+            query = { ...sl, team };
+        }
+        query.when = this._detectWhen(t);
+        try {
+            const resp = await fetch(`${DashieAuth.config.url}/functions/v1/sports-gateway`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', apikey: DashieAuth.anonKey, Authorization: `Bearer ${DashieAuth.jwt || DashieAuth.anonKey}` },
+                body: JSON.stringify({ provider: 'auto', query }),
+            });
+            if (!resp.ok) return null;
+            const data = await resp.json().catch(() => null);
+            return (data && data.result_count > 0) ? data : null; // empty → let the brain template/say "couldn't find"
+        } catch (_) { return null; }
+    },
+
     /** Full console→brain turn: pre-fetch HA entities (so an HA command resolves in
      *  one round-trip), call the brain, then dispatch any returned action — the brain
      *  returns actions but does not execute them; the caller (console) does. */
@@ -569,6 +636,13 @@ const ConsoleAiClient = {
             const ents = await this._getControllableEntities();
             if (ents) providedContext = { ha_entities: ents.entities || [] };
         } catch (_) { /* no HA available */ }
+
+        // §23.6: pre-fetch sports so pass-1 voices it IN PERSONALITY (vs the
+        // deterministic template the brain falls back to without a pre-fetch).
+        try {
+            const sports = await this._prefetchSports(text);
+            if (sports) providedContext = { ...(providedContext || {}), sports };
+        } catch (_) { /* pre-fetch best-effort; brain templates on miss */ }
 
         const turn = await this._brainCall(text, { personalityId, modelId, history, providedContext });
         if (!turn.ok) return turn;

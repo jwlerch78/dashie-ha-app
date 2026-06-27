@@ -194,6 +194,24 @@
         // Current (2026-06)
         'gemini-3.5-flash': { input: 1.50, output: 9.00 },
         'gemini-3.1-flash-lite': { input: 0.25, output: 1.50 },
+    
+        // ── Gemini Live (realtime "conversation mode", per 1M tokens) ──────────
+        // Live billing splits by MODALITY. Because the credit ledger has one
+        // input/output rate pair per model id, we model each Live model as TWO
+        // ids: the base id holds the AUDIO rate, a ':text' companion holds the
+        // TEXT rate. The conversation-relay meters each turn's usageMetadata into
+        // two rows (audio tokens → base id, text tokens → ':text' id) so COGS is
+        // exact per modality. See 20260625_REALTIME_VOICE_CONVERSATION_MODE.md §4.1.
+        //   AUDIO: native-audio confirmed $3 in / $12 out (2026-06-26).
+        //   TEXT:  $0.50 in / $2.00 out.
+        // ⚠️ 3.1-flash-live audio rates are NOT broken out on Google's pricing
+        //    page yet — using native-audio's as a conservative placeholder.
+        //    CONFIRM before prod. Hot-overridable via runtime_config.token_costs.
+        'gemini-3.1-flash-live-preview': { input: 3.00, output: 12.00 },
+        'gemini-3.1-flash-live-preview:text': { input: 0.50, output: 2.00 },
+        'gemini-2.5-flash-native-audio-latest': { input: 3.00, output: 12.00 },
+        'gemini-2.5-flash-native-audio-latest:text': { input: 0.50, output: 2.00 },
+    
         // Legacy
         'gemini-2.0-flash': {
           input: 0.10,    // $0.10 per 1M input tokens

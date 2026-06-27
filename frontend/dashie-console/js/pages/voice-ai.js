@@ -356,8 +356,13 @@ const VoiceAiPage = {
         // STT+LLM+TTS+search, so hide the cascade model/pipeline items it replaces.
         const liveModel = isDashieIntelligence ? String(d['voice.conversationModel'] || '') : '';
         const liveOn = liveModel !== '';
+        // "Always use conversation mode": the Live model REPLACES the cascade, so hide
+        // the cascade settings (as before). When OFF (on-demand), the cascade still
+        // runs for normal wakes — keep its settings visible; the user enters
+        // conversation mode by voice ("conversation mode", "go live", …).
+        const conversationAlways = liveOn && d['voice.conversationAlways'] === true;
         const customPipeline = d['voice.customizePipeline'] === true;
-        const showPipeline = isDashieIntelligence && customPipeline && !liveOn;
+        const showPipeline = isDashieIntelligence && customPipeline && !conversationAlways;
         const searchOn = d['ai.webSearchEnabled'] === true;
         const cfg = k => d[k];
         const card = (title, stageKey, options, selectedId) => VoiceAiCards.render({
@@ -368,11 +373,11 @@ const VoiceAiPage = {
         });
         return `
             ${this._sectionHeader('Voice & AI Defaults', 'Apply to every device signed into this account.')}
-            ${this._renderControlMethodRow(d, customPipeline, isDashieIntelligence && !liveOn)}
+            ${this._renderControlMethodRow(d, customPipeline, isDashieIntelligence && !conversationAlways)}
             ${isDashieIntelligence ? this._renderConversationModeRow(d, liveOn) : ''}
 
-            ${!liveOn ? this._renderLocalityLegend() : ''}
-            ${!liveOn ? card('AI Model', 'model', O.models(), String(d['ai.model'])) : ''}
+            ${!conversationAlways ? this._renderLocalityLegend() : ''}
+            ${!conversationAlways ? card('AI Model', 'model', O.models(), String(d['ai.model'])) : ''}
 
             ${showPipeline ? card('Text-to-speech (Voice)', 'tts', this._haFilter(O.TTS), String(d['voice.ttsProvider'])) : ''}
             ${showPipeline ? card('Speech-to-text', 'stt', this._haFilter(O.STT), String(d['voice.sttProvider'])) : ''}
@@ -426,14 +431,34 @@ const VoiceAiPage = {
         const sel = String(d['voice.conversationModel'] || '');
         const opts = this.CONVERSATION_MODELS.map(([v, l]) =>
             `<option value="${this._escape(v)}" ${v === sel ? 'selected' : ''}>${this._escape(l)}</option>`).join('');
+        const always = d['voice.conversationAlways'] === true;
+        // "Always use conversation mode" — shown once a Live model is selected.
+        // On: the Live model replaces the cascade (settings below hidden).
+        // Off: enter conversation mode on demand by voice; the cascade stays active.
+        const alwaysToggle = liveOn ? `
+                <div class="setting-row" style="align-items:flex-start; padding: 12px 0 0; border-top: 1px solid var(--border, #e5e7eb); margin-top: 12px;">
+                    <div style="flex:1; padding-right:12px;">
+                        <div class="setting-row-label">Always use conversation mode</div>
+                        <div style="font-size:12px; color:var(--text-muted); margin-top:2px; line-height:1.5;">
+                            <strong>On:</strong> every request goes straight to realtime conversation — the Live model owns speech, language &amp; search, so the settings below are hidden.<br>
+                            <strong>Off:</strong> enter it on demand by saying “conversation mode”, “go live”, or “let’s have a conversation”. The standard pipeline handles everything else, so those settings stay available below.
+                        </div>
+                    </div>
+                    <label class="toggle">
+                        <input type="checkbox" ${always ? 'checked' : ''}
+                            onchange="VoiceAiPage.saveDefault('voice.conversationAlways', this.checked)">
+                        <span class="toggle-slider"></span>
+                    </label>
+                </div>` : '';
         const note = liveOn ? `
                 <div style="margin-top: 10px; font-size: 12px; color: var(--text-secondary); line-height: 1.5;">
-                    ⚡ Realtime conversation (beta). One Live model handles speech, language, and web search — so the AI model, voice, and pipeline options are managed by it and hidden here. Speaks in a Google voice for now; billed per audio token (see usage).
+                    ⚡ Realtime conversation (beta). Speaks in a Google voice for now; billed per audio token (see usage).
                 </div>` : '';
         return `
             <div class="card" style="margin-bottom: 16px;"><div class="card-body">
                 <label class="form-label">Conversation mode (Live · beta)</label>
                 <select class="form-select" onchange="VoiceAiPage.saveDefault('voice.conversationModel', this.value)">${opts}</select>
+                ${alwaysToggle}
                 ${note}
             </div></div>`;
     },
