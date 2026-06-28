@@ -588,6 +588,23 @@ router.get('/mjpeg/:deviceId/:role', requireSignedIn, async (req, res) => {
     }
 });
 
+/** GET /api/ha/image/:deviceId/:role/updated — the capture timestamp only, so the
+ *  Console can show "Nm ago" on a (possibly stale) screenshot. An HA image entity's
+ *  STATE is its image_last_updated ISO string. Reads entity state only — never
+ *  fetches the picture, so it does NOT trigger a device capture. */
+router.get('/image/:deviceId/:role/updated', requireSignedIn, async (req, res) => {
+    const { deviceId, role } = req.params;
+    if (role !== 'screenshot' && role !== 'camera') {
+        return res.status(400).json({ error: 'unknown role (screenshot|camera)' });
+    }
+    try {
+        const state = await findMediaEntity(deviceId, role);
+        res.json({ updated: state?.state || state?.last_updated || null });
+    } catch (e) {
+        res.json({ updated: null });
+    }
+});
+
 router.get('/image/:deviceId/:role', requireSignedIn, async (req, res) => {
     const { deviceId, role } = req.params;
     if (role !== 'screenshot' && role !== 'camera') {
