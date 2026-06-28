@@ -133,7 +133,7 @@ const VoiceAiPage = {
                 ${tab('settings', 'Voice & AI Settings')}
                 ${tab('personalities', 'Personalities')}
                 ${tab('chat', 'AI Chat Interface')}
-                ${tab('analysis', 'Dashie Intelligence Analysis')}
+                ${tab('analysis', 'History')}
             </div>`;
     },
 

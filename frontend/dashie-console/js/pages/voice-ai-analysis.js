@@ -1,5 +1,5 @@
 /* ============================================================
-   Voice & AI — Dashie Intelligence Analysis subpage
+   Voice & AI — History subpage (recent voice interactions)
    ------------------------------------------------------------
    A transcript-forward view of recent voice interactions:
 
@@ -29,6 +29,8 @@ const VoiceAiAnalysis = {
     _retain: false,
     _clearing: false,
     _expanded: new Set(),
+    _expandedDays: new Set(),    // 'YYYY-MM-DD' day groups that are open
+    _expandedMonths: new Set(),  // 'YYYY-MM' prior-month groups that are open
 
     render() {
         if (!this._loaded && !this._loading && !this._error) {
@@ -53,6 +55,12 @@ const VoiceAiAnalysis = {
             this._interactions = interactions;
             this._retain = log?.retain === true;
             this._loaded = true;
+            // Default: current-month day rows visible, newest day expanded so the
+            // most recent interactions show without a click (interactions are
+            // newest-first from the handler).
+            const newest = interactions.length ? this._localDate(interactions[0].ts) : null;
+            this._expandedDays = new Set(newest ? [newest] : []);
+            this._expandedMonths = new Set();
         } catch (e) {
             console.error('[VoiceAiAnalysis] load failed', e);
             this._error = e?.message || String(e);
@@ -178,11 +186,96 @@ const VoiceAiAnalysis = {
         }
         return `
             <div class="card"><div class="card-body" style="padding: 0;">
-                <div style="padding: 12px 16px; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; color: var(--text-muted);">
-                    Recent interactions
-                </div>
-                ${items.map(i => this._renderInteraction(i)).join('')}
+                ${this._renderGroupedList(items)}
             </div></div>`;
+    },
+
+    /** Group interactions by local day → month, the way the Usage breakdown does:
+     *  current-month days render as day rows directly; prior months collapse into
+     *  month groups that expand to their day rows. Each day row expands to its
+     *  interactions (already in memory — no extra fetch). */
+    _renderGroupedList(items) {
+        const byDay = new Map(), dayOrder = [];
+        for (const it of items) {
+            const ds = this._localDate(it.ts);
+            if (!byDay.has(ds)) { byDay.set(ds, []); dayOrder.push(ds); }
+            byDay.get(ds).push(it);
+        }
+        dayOrder.sort((a, b) => (a < b ? 1 : -1));  // newest day first
+        const curPrefix = this._localDate(Date.now()).slice(0, 7);  // local 'YYYY-MM'
+        const current = dayOrder.filter(ds => ds.startsWith(curPrefix));
+        const prior = dayOrder.filter(ds => !ds.startsWith(curPrefix));
+        const monthOrder = [], byMonth = new Map();
+        for (const ds of prior) {
+            const ym = ds.slice(0, 7);
+            if (!byMonth.has(ym)) { byMonth.set(ym, []); monthOrder.push(ym); }
+            byMonth.get(ym).push(ds);
+        }
+        return current.map(ds => this._renderDayGroup(ds, byDay.get(ds))).join('')
+            + monthOrder.map(ym => this._renderMonthGroup(ym, byMonth.get(ym), byDay)).join('');
+    },
+
+    _renderDayGroup(ds, dayItems) {
+        const open = this._expandedDays.has(ds);
+        const caret = open ? '▾' : '▸';
+        const n = dayItems.length;
+        const detail = open ? dayItems.map(i => this._renderInteraction(i)).join('') : '';
+        return `
+            <div style="border-bottom: 1px solid var(--border, #e5e7eb);">
+                <div onclick="VoiceAiAnalysis.toggleDay('${ds}')"
+                    style="display:flex; align-items:center; gap:12px; padding:10px 16px; cursor:pointer;">
+                    <span style="color:var(--text-muted); width:12px;">${caret}</span>
+                    <span style="font-size:13px; font-weight:600; min-width:150px;">${this._escape(this._fmtDay(ds))}</span>
+                    <span style="flex:1; font-size:12px; color:var(--text-muted);">${n} interaction${n === 1 ? '' : 's'}</span>
+                </div>
+                ${detail}
+            </div>`;
+    },
+
+    _renderMonthGroup(ym, monthDays, byDay) {
+        const open = this._expandedMonths.has(ym);
+        const caret = open ? '▾' : '▸';
+        const n = monthDays.reduce((s, ds) => s + (byDay.get(ds)?.length || 0), 0);
+        const detail = open ? monthDays.map(ds => this._renderDayGroup(ds, byDay.get(ds))).join('') : '';
+        return `
+            <div style="border-bottom: 1px solid var(--border, #e5e7eb);">
+                <div onclick="VoiceAiAnalysis.toggleMonth('${ym}')"
+                    style="display:flex; align-items:center; gap:12px; padding:10px 16px; cursor:pointer; background:var(--surface-muted,#fafafa);">
+                    <span style="color:var(--text-muted); width:12px;">${caret}</span>
+                    <span style="font-size:13px; font-weight:600; min-width:150px;">${this._escape(this._fmtMonthLong(ym))}</span>
+                    <span style="flex:1; font-size:12px; color:var(--text-muted);">${n} interaction${n === 1 ? '' : 's'}</span>
+                </div>
+                ${detail}
+            </div>`;
+    },
+
+    toggleDay(ds) {
+        if (this._expandedDays.has(ds)) this._expandedDays.delete(ds);
+        else this._expandedDays.add(ds);
+        App.renderPage();
+    },
+    toggleMonth(ym) {
+        if (this._expandedMonths.has(ym)) this._expandedMonths.delete(ym);
+        else this._expandedMonths.add(ym);
+        App.renderPage();
+    },
+
+    _localDate(ts) {
+        try { return new Date(ts).toLocaleDateString('en-CA'); }  // local 'YYYY-MM-DD'
+        catch { return String(ts).slice(0, 10); }
+    },
+    _fmtDay(ds) {
+        try {
+            if (ds === this._localDate(Date.now())) return 'Today';
+            const [y, m, d] = ds.split('-').map(Number);
+            return new Date(y, m - 1, d).toLocaleDateString('en-US', { weekday: 'short', month: 'long', day: 'numeric' });
+        } catch { return ds; }
+    },
+    _fmtMonthLong(ym) {
+        try {
+            const [y, m] = ym.split('-').map(Number);
+            return new Date(y, m - 1, 1).toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
+        } catch { return ym; }
     },
 
     _renderInteraction(intr) {
