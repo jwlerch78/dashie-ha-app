@@ -63,14 +63,24 @@ const VoiceAiPage = {
         ['voice_assistant', 'Home Assistant Voice Assistant', true],
     ],
 
-    // Realtime "conversation mode" (Gemini Live) — Step 1: a selectable Live
-    // model under Dashie Intelligence. Selecting one hides the cascade model/
-    // pipeline options it replaces. Speaks in a Google voice (beta). See
-    // 20260625_REALTIME_VOICE_CONVERSATION_MODE.md §3.1/§3.2.
+    // Conversation Agent Mode — how the assistant carries a turn:
+    //   live   → Gemini Live S2S (one model owns speech+language+search; native only)
+    //   dialog → cascade pipeline, mic stays open for continuous dialogue (conversation loop)
+    //   single → cascade pipeline, one response then back to wake-word (today's default)
+    // Maps 1:1 onto voice-command-router._conversationMode(). See
+    // 20260628_CASCADE_CONVERSATION_MODE.md + 20260625_REALTIME_VOICE_CONVERSATION_MODE.md.
+    AGENT_MODES: [
+        ['live', 'Live (recommended)'],
+        ['dialog', 'Dialog'],
+        ['single', 'Single Response'],
+    ],
+
+    // Live S2S models, shown in the AI-model dropdown when Agent Mode = Live.
+    // Bound to voice.conversationModel (the Live engine reads it). Speaks in a
+    // Google voice (beta). NOTE: "more capable" is a 2.5 model, hence the honest labels.
     CONVERSATION_MODELS: [
-        ['', 'Off — use the standard pipeline'],
-        ['gemini-3.1-flash-live-preview', 'Live · Fast (recommended)'],
-        ['gemini-2.5-flash-native-audio-latest', 'Live · Expressive'],
+        ['gemini-3.1-flash-live-preview', 'Gemini 3.1 (faster)'],
+        ['gemini-2.5-flash-native-audio-latest', 'Gemini 2.5 (more capable)'],
     ],
 
     /** Drop HA-only voice options (va_default / piper / voice_assistant) for
@@ -236,7 +246,7 @@ const VoiceAiPage = {
         // Coerce to the stored type: timeout numeric; model/control-method/STT/TTS
         // are string selects; everything else boolean.
         let value = rawValue;
-        const STRING_KEYS = ['ai.model', 'voice.controlMethod', 'voice.conversationModel',
+        const STRING_KEYS = ['ai.model', 'voice.controlMethod', 'voice.conversationModel', 'voice.agentMode',
             'voice.sttProvider', 'voice.ttsProvider',
             'voice.searchSource', 'voice.sportsSource', 'voice.localLlmUrl', 'voice.localLlmModel',
             'voice.searxngUrl', 'voice.localTtsUrl', 'voice.localSttUrl'];
@@ -371,17 +381,20 @@ const VoiceAiPage = {
         // When the control method is Home Assistant Voice Assistant, HA owns the
         // pipeline, so hide the "Customize pipeline" toggle and its cards.
         const isDashieIntelligence = String(d['voice.controlMethod']) === 'dashie_cloud';
-        // Realtime conversation mode (Live model). When ON, the Live model owns
-        // STT+LLM+TTS+search, so hide the cascade model/pipeline items it replaces.
-        const liveModel = isDashieIntelligence ? String(d['voice.conversationModel'] || '') : '';
-        const liveOn = liveModel !== '';
-        // "Always use conversation mode": the Live model REPLACES the cascade, so hide
-        // the cascade settings (as before). When OFF (on-demand), the cascade still
-        // runs for normal wakes — keep its settings visible; the user enters
-        // conversation mode by voice ("conversation mode", "go live", …).
-        const conversationAlways = liveOn && d['voice.conversationAlways'] === true;
+        // Conversation Agent Mode (canonical: voice.agentMode = live|dialog|single).
+        // Back-compat: derive from the old conversationAlways/conversationModel pair
+        // for accounts not yet migrated — mirrors voice-command-router._conversationMode.
+        let agentMode = String(d['voice.agentMode'] || '');
+        if (!agentMode) {
+            const always = d['voice.conversationAlways'] === true;
+            const lm = String(d['voice.conversationModel'] || '');
+            agentMode = always ? (lm ? 'live' : 'dialog') : 'single';
+        }
+        // Live (S2S) owns STT+LLM+TTS+search, so hide the cascade model/pipeline items
+        // it replaces. Dialog + Single both run the cascade → keep their settings shown.
+        const isLive = isDashieIntelligence && agentMode === 'live';
         const customPipeline = d['voice.customizePipeline'] === true;
-        const showPipeline = isDashieIntelligence && customPipeline && !conversationAlways;
+        const showPipeline = isDashieIntelligence && customPipeline && !isLive;
         const searchOn = d['ai.webSearchEnabled'] === true;
         const cfg = k => d[k];
         const card = (title, stageKey, options, selectedId) => VoiceAiCards.render({
@@ -392,11 +405,11 @@ const VoiceAiPage = {
         });
         return `
             ${this._sectionHeader('Voice & AI Defaults', 'Apply to every device signed into this account.')}
-            ${this._renderControlMethodRow(d, customPipeline, isDashieIntelligence && !conversationAlways)}
-            ${isDashieIntelligence ? this._renderConversationModeRow(d, liveOn) : ''}
+            ${this._renderControlMethodRow(d, customPipeline, isDashieIntelligence && !isLive)}
+            ${isDashieIntelligence ? this._renderAgentModeRow(d, agentMode, isLive) : ''}
 
-            ${!conversationAlways ? this._renderLocalityLegend() : ''}
-            ${!conversationAlways ? card('AI Model', 'model', O.models(), String(d['ai.model'])) : ''}
+            ${!isLive ? this._renderLocalityLegend() : ''}
+            ${!isLive ? card('AI Model', 'model', O.models(), String(d['ai.model'])) : ''}
 
             ${showPipeline ? card('Text-to-speech (Voice)', 'tts', this._haFilter(O.TTS), String(d['voice.ttsProvider'])) : ''}
             ${showPipeline ? card('Speech-to-text', 'stt', this._haFilter(O.STT), String(d['voice.sttProvider'])) : ''}
@@ -442,44 +455,50 @@ const VoiceAiPage = {
             </div></div>`;
     },
 
-    /** Step-1 realtime "conversation mode" selector — a separate dropdown under
-     *  Dashie Intelligence listing the Live models (+ Off). Selecting one switches
-     *  to a single Gemini Live model that owns speech+language+search; the caller
-     *  hides the now-redundant cascade model/pipeline cards. Google voice (beta). */
-    _renderConversationModeRow(d, liveOn) {
-        const sel = String(d['voice.conversationModel'] || '');
-        const opts = this.CONVERSATION_MODELS.map(([v, l]) =>
-            `<option value="${this._escape(v)}" ${v === sel ? 'selected' : ''}>${this._escape(l)}</option>`).join('');
-        const always = d['voice.conversationAlways'] === true;
-        // "Always use conversation mode" — shown once a Live model is selected.
-        // On: the Live model replaces the cascade (settings below hidden).
-        // Off: enter conversation mode on demand by voice; the cascade stays active.
-        const alwaysToggle = liveOn ? `
-                <div class="setting-row" style="align-items:flex-start; padding: 12px 0 0; border-top: 1px solid var(--border, #e5e7eb); margin-top: 12px;">
-                    <div style="flex:1; padding-right:12px;">
-                        <div class="setting-row-label">Always use conversation mode</div>
-                        <div style="font-size:12px; color:var(--text-muted); margin-top:2px; line-height:1.5;">
-                            <strong>On:</strong> every request goes straight to realtime conversation — the Live model owns speech, language &amp; search, so the settings below are hidden.<br>
-                            <strong>Off:</strong> enter it on demand by saying “conversation mode”, “go live”, or “let’s have a conversation”. The standard pipeline handles everything else, so those settings stay available below.
-                        </div>
-                    </div>
-                    <label class="toggle">
-                        <input type="checkbox" ${always ? 'checked' : ''}
-                            onchange="VoiceAiPage.saveDefault('voice.conversationAlways', this.checked)">
-                        <span class="toggle-slider"></span>
-                    </label>
-                </div>` : '';
-        const note = liveOn ? `
+    /** Conversation Agent Mode selector (Live / Dialog / Single Response) under
+     *  Dashie Intelligence. When Live, the AI-model dropdown below is replaced by a
+     *  Live-model picker (Gemini 3.1/2.5, bound to voice.conversationModel) and the
+     *  cascade pipeline cards are hidden. Dialog + Single keep the full model list +
+     *  pipeline. See 20260628_CASCADE_CONVERSATION_MODE.md. */
+    _renderAgentModeRow(d, agentMode, isLive) {
+        const modeOpts = this.AGENT_MODES.map(([v, l]) =>
+            `<option value="${this._escape(v)}" ${v === agentMode ? 'selected' : ''}>${this._escape(l)}</option>`).join('');
+        const desc = {
+            live:   'One Gemini Live model handles speech, language & search end-to-end (fastest, most natural). Android only.',
+            dialog: 'Continuous conversation: the mic stays open between turns so you can keep talking without the wake word.',
+            single: 'One response per wake word, then back to listening for “Hey Dashie”.',
+        }[agentMode] || '';
+
+        // When Live, the AI-model dropdown becomes the Live-model picker (bound to
+        // voice.conversationModel — the Live engine reads it). 2 honest options.
+        const liveSel = String(d['voice.conversationModel'] || this.CONVERSATION_MODELS[0][0]);
+        const liveOpts = this.CONVERSATION_MODELS.map(([v, l]) =>
+            `<option value="${this._escape(v)}" ${v === liveSel ? 'selected' : ''}>${this._escape(l)}</option>`).join('');
+        const liveModelPicker = isLive ? `
+                <div style="margin-top: 14px;">
+                    <label class="form-label">AI model</label>
+                    <select class="form-select" onchange="VoiceAiPage.saveDefault('voice.conversationModel', this.value)">${liveOpts}</select>
+                </div>
                 <div style="margin-top: 10px; font-size: 12px; color: var(--text-secondary); line-height: 1.5;">
-                    ⚡ Realtime conversation (beta). Speaks in a Google voice for now; billed per audio token (see usage).
+                    ⚡ Live (beta). Speaks in a Google voice for now; billed per audio token (see usage).
                 </div>` : '';
+
         return `
             <div class="card" style="margin-bottom: 16px;"><div class="card-body">
-                <label class="form-label">Conversation mode (Live · beta)</label>
-                <select class="form-select" onchange="VoiceAiPage.saveDefault('voice.conversationModel', this.value)">${opts}</select>
-                ${alwaysToggle}
-                ${note}
+                <label class="form-label">Conversation Agent Mode</label>
+                <select class="form-select" onchange="VoiceAiPage.setAgentMode(this.value)">${modeOpts}</select>
+                <div style="margin-top: 8px; font-size: 12px; color: var(--text-muted); line-height: 1.5;">${desc}</div>
+                ${liveModelPicker}
             </div></div>`;
+    },
+
+    /** Set the agent mode; when switching to Live, seed a default Live model so the
+     *  Live engine always has one (the AI-model dropdown then shows the picker). */
+    async setAgentMode(mode) {
+        await this.saveDefault('voice.agentMode', mode);
+        if (mode === 'live' && !String(this._defaults['voice.conversationModel'] || '')) {
+            await this.saveDefault('voice.conversationModel', this.CONVERSATION_MODELS[0][0]);
+        }
     },
 
     /** Cloud-vs-local key, shown above the pipeline cards when customize is on. */

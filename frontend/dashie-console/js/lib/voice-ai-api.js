@@ -22,6 +22,7 @@ const VoiceAiApi = {
     AI_DEFAULT_KEYS: [
         ['ai', 'model'],
         ['voice', 'controlMethod'],
+        ['voice', 'agentMode'],
         ['voice', 'conversationModel'],
         ['voice', 'conversationAlways'],
         ['voice', 'customizePipeline'],
