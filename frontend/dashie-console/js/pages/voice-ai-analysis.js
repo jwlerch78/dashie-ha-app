@@ -49,7 +49,7 @@ const VoiceAiAnalysis = {
             // retain comes from get_intelligence_log itself (the authoritative
             // user_settings.retain_transcripts column) — NOT the clobberable
             // settings blob, which the tablet resets. See _TECHNICAL_DEBT.md.
-            const log = await DashieAuth.dbRequest('get_intelligence_log', { limit: 50, tz: this._tz() });
+            const log = await DashieAuth.dbRequest('get_intelligence_log', { limit: 500, tz: this._tz() });
             const interactions = log?.interactions || [];
             await this._mergeLocalTranscripts(interactions);
             this._interactions = interactions;
