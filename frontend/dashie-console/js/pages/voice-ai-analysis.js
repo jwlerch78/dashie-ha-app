@@ -62,7 +62,7 @@ const VoiceAiAnalysis = {
         }
     },
 
-    refresh() { this._loaded = false; this._interactions = []; this.load(); },
+    refresh() { this._loaded = false; this._interactions = []; return this.load(); },
 
     // ── actions ──────────────────────────────────────────────
 
@@ -232,7 +232,8 @@ const VoiceAiAnalysis = {
     _renderRealtimeInteraction(intr, open, time) {
         const turns = intr.turns || [];
         const badge = `<span style="background: var(--surface-muted, #f3f4f6); color: var(--text-secondary); font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.4px; padding: 2px 6px; border-radius: 4px;">Conversation</span>`;
-        const meta = `${turns.length} turn${turns.length === 1 ? '' : 's'} · ${this._fmtTokens(intr.total_tokens)} tokens`;
+        const cost = (intr.total_cost > 0) ? ` · ${this._fmtCost(intr.total_cost)}` : '';
+        const meta = `${turns.length} turn${turns.length === 1 ? '' : 's'} · ${this._fmtTokens(intr.total_tokens)} tokens${cost}`;
         const shown = open ? turns : turns.slice(0, 1);
         const thread = shown.map((t, i) => this._renderTurn(t, i === shown.length - 1)).join('');
         const more = turns.length > 1
@@ -263,7 +264,7 @@ const VoiceAiAnalysis = {
      *  `last` drops the divider so the thread doesn't end with a dangling rule. */
     _renderTurn(t, last) {
         const lat = (t.latency_ms > 0)
-            ? `<span style="color: var(--text-muted); font-size: 10px; margin-left: 6px; letter-spacing: 0;">${this._escape(this._fmtMs(t.latency_ms))} to respond</span>`
+            ? `<span style="color: var(--text-muted); font-size: 10px; margin-left: 6px; letter-spacing: 0;">(${this._escape(this._fmtMs(t.latency_ms))})</span>`
             : '';
         const dashie = t.response ? `
             <div style="margin: 0 0 4px;">
@@ -328,6 +329,12 @@ const VoiceAiAnalysis = {
         const v = Number(n) || 0;
         if (v >= 1000) return `${(v / 1000).toFixed(1)}K`;
         return String(v);
+    },
+    _fmtCost(amount) {
+        const n = Number(amount);
+        if (!isFinite(n) || n <= 0) return '$0.00';
+        if (n < 0.01) return '<$0.01';
+        return '$' + n.toFixed(2);
     },
     _escape(s) {
         return String(s == null ? '' : s)

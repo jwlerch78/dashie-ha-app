@@ -319,6 +319,16 @@
         // Perplexity API (for future)
         perplexity: {
           perQuery: 0.005           // Estimated similar to Brave
+        },
+    
+        // Serper Image Search API (Google Images) — credit-based, ~$1.00/1000 at
+        // low volume down to ~$0.30/1000 at high volume. Seeded conservative
+        // ($1.00/1000) so we never under-cost; drop perQuery as volume grows.
+        // Top-100 results doubles the credit cost; we request <=10 → 1 credit/query.
+        serper: {
+          perQuery: 0.001,          // $1 per 1000 queries = $0.001 per query
+          per1000Queries: 1.00,
+          freeQueries: 2500         // 2,500 free credits on signup
         }
       },
     

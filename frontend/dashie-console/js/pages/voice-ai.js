@@ -146,7 +146,15 @@ const VoiceAiPage = {
 
     onNavigateTo() { this._fetch(); },
 
-    async refresh() { await this._fetch(); },
+    async refresh() {
+        // The top-bar refresh must reload whatever sub-tab is showing, not just the
+        // Settings data. The Analysis tab owns its own server fetch (the intelligence
+        // log) — delegate to it so a click pulls fresh interactions.
+        if (this._activeTab === 'analysis' && typeof VoiceAiAnalysis !== 'undefined') {
+            return VoiceAiAnalysis.refresh();
+        }
+        await this._fetch();
+    },
 
     _registerSyncOnce() {
         if (this._syncRegistered || !window.SettingsSync) return;
