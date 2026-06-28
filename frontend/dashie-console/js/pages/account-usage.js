@@ -222,15 +222,15 @@ const AccountUsage = {
 
     /** "ai" → "AI Models", etc. */
     _serviceLabel(svc) {
-        return { ai: 'AI Models', tts: 'Speech (TTS)', stt: 'Speech (STT)', web_search: 'Tools' }[svc] || svc;
+        return { ai: 'AI Models', tts: 'Speech (TTS)', stt: 'Speech (STT)', web_search: 'Tools', image_search: 'Image Search' }[svc] || svc;
     },
 
     /** Display name for a summary line. Web-search rows read as the tool name —
      *  "Tavily (web search)" — so the Tools group is human-readable as we add more. */
     _summaryItemName(r) {
-        if (r.service === 'web_search') {
-            const p = r.provider ? r.provider.charAt(0).toUpperCase() + r.provider.slice(1) : 'Web';
-            return `${p} (web search)`;
+        if (r.service === 'web_search' || r.service === 'image_search') {
+            const p = r.provider ? r.provider.charAt(0).toUpperCase() + r.provider.slice(1) : (r.service === 'image_search' ? 'Image' : 'Web');
+            return `${p} (${r.service === 'image_search' ? 'image' : 'web'} search)`;
         }
         return r.model || r.provider || '—';
     },
@@ -475,7 +475,7 @@ const AccountUsage = {
             g.push(r);
             groups.set(r.service, g);
         }
-        const order = ['ai', 'tts', 'stt', 'web_search'];
+        const order = ['ai', 'tts', 'stt', 'web_search', 'image_search'];
         const sections = order.filter(s => groups.has(s)).map(svc => {
             const items = groups.get(svc);
             const total = items.reduce((sum, r) => sum + this._costForRow(r), 0);
@@ -512,7 +512,7 @@ const AccountUsage = {
         const cost = this._costForRow(r);
         const subtitle = r.service === 'ai'
             ? `${this._fmtCount(r.input_tokens)} in / ${this._fmtCount(r.output_tokens)} out`
-            : r.service === 'web_search'
+            : (r.service === 'web_search' || r.service === 'image_search')
                 ? `${this._fmtCount(r.call_count)} searches`
                 : `${this._fmtCount(r.call_count)} calls`;
         return `
@@ -582,7 +582,7 @@ const AccountUsage = {
      *  (tts/stt → speech) and folds web_search → tools. Bound for UsageChart. */
     _chartBucketFn(r) {
         const g = AccountUsage._svcGroup(r.service);
-        return g === 'web_search' ? 'tools' : g;
+        return (g === 'web_search' || g === 'image_search') ? 'tools' : g;
     },
     _chartCostFn(r) { return AccountUsage._costForRow(r); },
 
@@ -699,8 +699,8 @@ const AccountUsage = {
 
     // TTS + STT are both "Speech"; group them so the breakdown reads naturally.
     _svcGroup(svc) { return (svc === 'tts' || svc === 'stt') ? 'speech' : svc; },
-    _svcLabel(svc) { return { ai: 'AI', speech: 'Speech', tts: 'Speech', stt: 'Speech', web_search: 'Search' }[svc] || svc; },
-    _SVC_ORDER: { ai: 0, speech: 1, web_search: 2 },
+    _svcLabel(svc) { return { ai: 'AI', speech: 'Speech', tts: 'Speech', stt: 'Speech', web_search: 'Search', image_search: 'Images' }[svc] || svc; },
+    _SVC_ORDER: { ai: 0, speech: 1, web_search: 2, image_search: 3 },
 
     _dayServicePills(rows) {
         const byService = new Map();
@@ -731,7 +731,7 @@ const AccountUsage = {
             if (!rates) return 0;
             return ((c.input_tokens || 0) * rates[0] + (c.output_tokens || 0) * rates[1]) / 1_000_000;
         }
-        if (c.service === 'web_search') {
+        if (c.service === 'web_search' || c.service === 'image_search') {
             return C.searchCost({ provider: c.provider, count: 1 });
         }
         return 0;
@@ -792,10 +792,13 @@ const AccountUsage = {
             inTok: a.inTok + (c.input_tokens || 0),
             outTok: a.outTok + (c.output_tokens || 0),
         }), { cost: 0, inTok: 0, outTok: 0 });
-        const voice = roll(c => !isText(c.model));
-        const text = roll(c => isText(c.model));
+        // Voice/Text rollup covers only the AI token rows. Tool calls (image/web
+        // search) are discrete — render each as its own row, like a normal turn.
+        const voice = roll(c => c.service === 'ai' && !isText(c.model));
+        const text = roll(c => c.service === 'ai' && isText(c.model));
+        const toolItems = items.filter(c => c.service !== 'ai');
         const turns = intr.turns || [];
-        const turnCount = turns.length || items.filter(c => !isText(c.model)).length;
+        const turnCount = turns.length || items.filter(c => c.service === 'ai' && !isText(c.model)).length;
         const mix = `Conversation · ${turnCount} turn${turnCount === 1 ? '' : 's'}`;
         const rollupRow = (label, g) => `
             <tr>
@@ -810,6 +813,7 @@ const AccountUsage = {
                  <table style="width: 100%; border-collapse: collapse; font-size: 12px; margin: 0 0 6px;"><tbody>
                     ${has(voice) ? rollupRow('Voice', voice) : ''}
                     ${has(text) ? rollupRow('Text', text) : ''}
+                    ${toolItems.map(c => this._renderCallRow(c)).join('')}
                  </tbody></table>
                </div>`
             : '';
@@ -868,7 +872,9 @@ const AccountUsage = {
             ? `${this._escape(c.model || '—')} (${this._fmtCount(c.input_tokens)} in / ${this._fmtCount(c.output_tokens)} out)`
             : c.service === 'web_search'
                 ? `${this._escape(c.provider || '')} (${this._fmtCount(c.result_count || 0)} results)`
-                : `${this._escape(c.provider || '')} ${c.service}`;
+                : c.service === 'image_search'
+                    ? `${this._escape(c.provider || '')} (${this._fmtCount(c.result_count || 0)} images)`
+                    : `${this._escape(c.provider || '')} ${c.service}`;
         return `
             <tr>
                 <td style="padding: 4px 0; color: var(--text-muted); width: 60px; text-transform: uppercase; font-size: 10px; letter-spacing: 0.5px;">${this._escape(this._svcLabel(c.service))}</td>
