@@ -9,6 +9,7 @@ const DevicesCard = {
     _sliderOpen: null,
     _screenshotTs: {},  // per-device cache-bust ts; bumped on manual refresh / post-toggle
     _cameraFailed: {},  // `${deviceId}:${ts}` → true when the camera frame 404'd (collapse the column)
+    _ssMeta: {},        // deviceId → { updated: iso|null, at: ms } — screenshot capture time (for the "Nm ago" badge)
     _initialTs: Date.now(),
     _screenshotModal: null,
     _historyOpen: null,
@@ -379,8 +380,9 @@ const DevicesCard = {
                </div>`
             : screenshotSrc
                 ? `<div style="${panelOuter} cursor: zoom-in;" onclick="event.stopPropagation(); DevicesCard.openScreenshotModal('${idAttr}')">
-                       <img src="${screenshotSrc}" alt="screenshot" style="${imgStyle}" onerror="this.style.display='none'; this.parentElement.querySelector('.placeholder-fallback').style.display='flex';">
+                       <img src="${screenshotSrc}" alt="screenshot" style="${imgStyle}" onload="DevicesCard.markScreenshotTime('${idAttr}')" onerror="this.style.display='none'; this.parentElement.querySelector('.placeholder-fallback').style.display='flex';">
                        <span class="placeholder-fallback" style="display: none; position: absolute; inset: 0; align-items: center; justify-content: center; font-size: 11px; color: var(--text-muted);">no screenshot</span>
+                       <span data-ss-age="${idAttr}" style="position: absolute; bottom: 4px; left: 4px; background: rgba(0,0,0,0.6); color: #fff; font-size: 10px; line-height: 1; padding: 2px 5px; border-radius: 4px; pointer-events: none;"></span>
                        ${overlay}
                    </div>`
                 : `<div style="${panelEmpty}">screenshot</div>`;
@@ -591,6 +593,41 @@ const DevicesCard = {
         if (this._cameraFailed[key]) return;
         this._cameraFailed[key] = true;
         App.renderPage();
+    },
+
+    /** Stamp the screenshot's age ("Nm ago") onto its badge once the <img> loads.
+     *  A device may return a STALE cached frame (the integration serves the last
+     *  good capture on a failed/timed-out request), so the badge — read from the
+     *  image entity's capture time — tells the user how old the frame actually is.
+     *  Capture time is cached ~15s so rapid re-renders don't refetch. */
+    async markScreenshotTime(deviceId) {
+        if (typeof DashieAuth === 'undefined' || !DashieAuth.isAddonMode) return;
+        let meta = this._ssMeta[deviceId];
+        if (!meta || (Date.now() - meta.at) > 15000) {
+            try {
+                const r = await fetch(DashieAuth._addonUrl(`/api/ha/image/${encodeURIComponent(deviceId)}/screenshot/updated`));
+                const j = r.ok ? await r.json().catch(() => null) : null;
+                meta = this._ssMeta[deviceId] = { updated: j?.updated || null, at: Date.now() };
+            } catch (_) {
+                meta = this._ssMeta[deviceId] = { updated: null, at: Date.now() };
+            }
+        }
+        const badge = document.querySelector(`[data-ss-age="${deviceId}"]`);
+        if (badge) badge.textContent = this._relativeAge(meta.updated);
+    },
+
+    /** ISO timestamp → "just now" / "5m ago" / "2h ago" / "3d ago". '' if unknown. */
+    _relativeAge(iso) {
+        if (!iso) return '';
+        const t = Date.parse(iso);
+        if (!isFinite(t)) return '';
+        const sec = Math.max(0, Math.round((Date.now() - t) / 1000));
+        if (sec < 45) return 'just now';
+        const min = Math.round(sec / 60);
+        if (min < 60) return `${min}m ago`;
+        const hr = Math.round(min / 60);
+        if (hr < 24) return `${hr}h ago`;
+        return `${Math.round(hr / 24)}d ago`;
     },
 
     /**
