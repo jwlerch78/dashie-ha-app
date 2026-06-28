@@ -181,20 +181,26 @@ const CalendarEditPanel = {
                         const isAssigned = Array.isArray(m.assigned_calendars) && m.assigned_calendars.includes(cal.prefixed_id);
                         const bg = m.assigned_color || '#9ca3af';
                         const initial = (m.full_name || '?').charAt(0).toUpperCase();
-                        const ring = isAssigned
-                            ? 'box-shadow: 0 0 0 3px var(--accent, #ff9500);'
-                            : 'box-shadow: 0 0 0 1px var(--border, #e5e7eb);';
+                        const name = this._escape(m.full_name || '');
+                        // Selected = a shaded box with an accent border (+ ring + ✓ badge +
+                        // accent bold name) so it's unmistakable which members are assigned.
+                        const boxStyle = isAssigned
+                            ? 'background: var(--bg-muted, #f3f4f6); border: 2px solid var(--accent, #ff9500);'
+                            : 'background: transparent; border: 2px solid transparent;';
+                        const ring = isAssigned ? 'box-shadow: 0 0 0 2px var(--accent, #ff9500);' : '';
                         return `
                             <button onclick="CalendarEditPanel.toggleMember('${id}', '${this._escape(m.id)}')"
-                                    title="${this._escape(m.full_name || '')}"
-                                    style="display: flex; flex-direction: column; align-items: center; gap: 4px;
-                                           background: none; border: none; cursor: pointer; padding: 0;">
-                                <div style="width: 40px; height: 40px; border-radius: 50%; background: ${this._escape(bg)};
+                                    title="${name}"
+                                    style="display: flex; flex-direction: column; align-items: center; gap: 6px;
+                                           cursor: pointer; padding: 8px 10px; border-radius: 10px; ${boxStyle}
+                                           transition: background 120ms ease, border-color 120ms ease;">
+                                <div style="position: relative; width: 40px; height: 40px; border-radius: 50%; background: ${this._escape(bg)};
                                             display: flex; align-items: center; justify-content: center;
                                             color: white; font-weight: 600; font-size: 16px; ${ring}">
-                                    ${initial}${isAssigned ? '<span style="position: absolute; transform: translate(14px, -14px); background: var(--accent, #ff9500); color: white; border-radius: 50%; width: 16px; height: 16px; font-size: 10px; display: flex; align-items: center; justify-content: center; border: 2px solid var(--bg-card, #fff);">✓</span>' : ''}
+                                    ${initial}
+                                    ${isAssigned ? '<span style="position: absolute; top: -4px; right: -4px; background: var(--accent, #ff9500); color: white; border-radius: 50%; width: 16px; height: 16px; font-size: 10px; line-height: 1; display: flex; align-items: center; justify-content: center; border: 2px solid var(--bg-card, #fff);">✓</span>' : ''}
                                 </div>
-                                <span style="font-size: 11px; color: var(--text-secondary); max-width: 60px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${this._escape(m.full_name || '')}</span>
+                                <span style="font-size: 11px; font-weight: ${isAssigned ? '600' : '400'}; color: ${isAssigned ? 'var(--accent, #ff9500)' : 'var(--text-secondary)'}; max-width: 64px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${name}</span>
                             </button>
                         `;
                     }).join('')}

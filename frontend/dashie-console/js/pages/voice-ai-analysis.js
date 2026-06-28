@@ -219,6 +219,7 @@ const VoiceAiAnalysis = {
         const open = this._expandedDays.has(ds);
         const caret = open ? '▾' : '▸';
         const n = dayItems.length;
+        const cost = dayItems.reduce((s, it) => s + (it.total_cost || 0), 0);
         const detail = open ? dayItems.map(i => this._renderInteraction(i)).join('') : '';
         return `
             <div style="border-bottom: 1px solid var(--border, #e5e7eb);">
@@ -226,7 +227,7 @@ const VoiceAiAnalysis = {
                     style="display:flex; align-items:center; gap:12px; padding:10px 16px; cursor:pointer;">
                     <span style="color:var(--text-muted); width:12px;">${caret}</span>
                     <span style="font-size:13px; font-weight:600; min-width:150px;">${this._escape(this._fmtDay(ds))}</span>
-                    <span style="flex:1; font-size:12px; color:var(--text-muted);">${n} interaction${n === 1 ? '' : 's'}</span>
+                    <span style="flex:1; font-size:12px; color:var(--text-muted);">${n} interaction${n === 1 ? '' : 's'} (${this._fmtCost(cost)})</span>
                 </div>
                 ${detail}
             </div>`;
@@ -236,6 +237,7 @@ const VoiceAiAnalysis = {
         const open = this._expandedMonths.has(ym);
         const caret = open ? '▾' : '▸';
         const n = monthDays.reduce((s, ds) => s + (byDay.get(ds)?.length || 0), 0);
+        const cost = monthDays.reduce((s, ds) => s + (byDay.get(ds) || []).reduce((a, it) => a + (it.total_cost || 0), 0), 0);
         const detail = open ? monthDays.map(ds => this._renderDayGroup(ds, byDay.get(ds))).join('') : '';
         return `
             <div style="border-bottom: 1px solid var(--border, #e5e7eb);">
@@ -243,7 +245,7 @@ const VoiceAiAnalysis = {
                     style="display:flex; align-items:center; gap:12px; padding:10px 16px; cursor:pointer; background:var(--surface-muted,#fafafa);">
                     <span style="color:var(--text-muted); width:12px;">${caret}</span>
                     <span style="font-size:13px; font-weight:600; min-width:150px;">${this._escape(this._fmtMonthLong(ym))}</span>
-                    <span style="flex:1; font-size:12px; color:var(--text-muted);">${n} interaction${n === 1 ? '' : 's'}</span>
+                    <span style="flex:1; font-size:12px; color:var(--text-muted);">${n} interaction${n === 1 ? '' : 's'} (${this._fmtCost(cost)})</span>
                 </div>
                 ${detail}
             </div>`;

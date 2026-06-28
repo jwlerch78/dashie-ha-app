@@ -712,7 +712,7 @@ const AccountUsage = {
         return Array.from(byService.entries())
             .filter(([_, c]) => c > 0)
             .sort((a, b) => (this._SVC_ORDER[a[0]] ?? 9) - (this._SVC_ORDER[b[0]] ?? 9))
-            .map(([svc, c]) => `${this._svcLabel(svc)} ${this._fmtCost(c)}`)
+            .map(([svc, c]) => `${this._svcLabel(svc)} ${this._fmtCostTotal(c)}`)
             .join(' · ');
     },
 
@@ -776,7 +776,7 @@ const AccountUsage = {
                     <span style="color: var(--text-muted); width: 12px; font-size: 11px;">${caret}</span>
                     <span style="color: var(--text-muted); width: 76px; font-size: 12px;">${this._escape(time)}</span>
                     <span style="flex: 1; font-size: 12px;">${this._escape(mix)} · ${items.length} call${items.length === 1 ? '' : 's'}</span>
-                    <span style="font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; font-weight: 600;">${this._fmtCost(total)}</span>
+                    <span style="font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; font-weight: 600;">${this._fmtCostTotal(total)}</span>
                 </div>
                 ${body}
             </div>`;
@@ -804,7 +804,7 @@ const AccountUsage = {
             <tr>
                 <td style="padding: 4px 0; color: var(--text-muted); width: 60px; text-transform: uppercase; font-size: 10px; letter-spacing: 0.5px;">${label}</td>
                 <td style="padding: 4px 8px;">${this._fmtCount(g.inTok)} in / ${this._fmtCount(g.outTok)} out</td>
-                <td style="padding: 4px 0; text-align: right; font-family: ui-monospace, SFMono-Regular, Menlo, monospace;">${this._fmtCost(g.cost)}</td>
+                <td style="padding: 4px 0; text-align: right; font-family: ui-monospace, SFMono-Regular, Menlo, monospace;">${this._fmtCostTotal(g.cost)}</td>
             </tr>`;
         const has = (g) => g.cost || g.inTok || g.outTok;
         const body = open
@@ -824,7 +824,7 @@ const AccountUsage = {
                     <span style="color: var(--text-muted); width: 12px; font-size: 11px;">${caret}</span>
                     <span style="color: var(--text-muted); width: 76px; font-size: 12px;">${this._escape(time)}</span>
                     <span style="flex: 1; font-size: 12px;">${this._escape(mix)}</span>
-                    <span style="font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; font-weight: 600;">${this._fmtCost(total)}</span>
+                    <span style="font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; font-weight: 600;">${this._fmtCostTotal(total)}</span>
                 </div>
                 ${body}
             </div>`;
@@ -879,7 +879,7 @@ const AccountUsage = {
             <tr>
                 <td style="padding: 4px 0; color: var(--text-muted); width: 60px; text-transform: uppercase; font-size: 10px; letter-spacing: 0.5px;">${this._escape(this._svcLabel(c.service))}</td>
                 <td style="padding: 4px 8px;">${desc}</td>
-                <td style="padding: 4px 0; text-align: right; font-family: ui-monospace, SFMono-Regular, Menlo, monospace;">${this._fmtCost(cost)}</td>
+                <td style="padding: 4px 0; text-align: right; font-family: ui-monospace, SFMono-Regular, Menlo, monospace;">${this._fmtCostTotal(cost)}</td>
             </tr>`;
     },
 

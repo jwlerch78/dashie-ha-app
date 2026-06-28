@@ -30,7 +30,7 @@ const VoiceAiPage = {
     _expandedCards: new Set(), // expanded component cards (model/stt/tts/search)
 
     setTab(tab) {
-        if (tab !== 'settings' && tab !== 'personalities' && tab !== 'chat' && tab !== 'analysis') return;
+        if (tab !== 'settings' && tab !== 'personalities' && tab !== 'chat' && tab !== 'analysis' && tab !== 'benchmark') return;
         this._activeTab = tab;
         if (tab === 'chat' && typeof VoiceAiChat !== 'undefined' && !VoiceAiChat._open) {
             VoiceAiChat.open();
@@ -101,6 +101,13 @@ const VoiceAiPage = {
             return `${tabBar}${html}${editorHtml}`;
         }
 
+        if (this._activeTab === 'benchmark') {
+            const html = (typeof VoiceAiBenchmark !== 'undefined')
+                ? VoiceAiBenchmark.render()
+                : `<div style="color: var(--text-muted); padding: 40px 0; text-align: center;">Benchmark unavailable.</div>`;
+            return `${tabBar}${html}${editorHtml}`;
+        }
+
         if (!this._defaults && !this._loading && !this._error) {
             this._fetch();
             return `${tabBar}${this._renderLoading()}${editorHtml}`;
@@ -134,6 +141,7 @@ const VoiceAiPage = {
                 ${tab('personalities', 'Personalities')}
                 ${tab('chat', 'AI Chat Interface')}
                 ${tab('analysis', 'History')}
+                ${tab('benchmark', 'Benchmark')}
             </div>`;
     },
 
@@ -152,6 +160,9 @@ const VoiceAiPage = {
         // log) — delegate to it so a click pulls fresh interactions.
         if (this._activeTab === 'analysis' && typeof VoiceAiAnalysis !== 'undefined') {
             return VoiceAiAnalysis.refresh();
+        }
+        if (this._activeTab === 'benchmark' && typeof VoiceAiBenchmark !== 'undefined') {
+            return VoiceAiBenchmark.refresh();
         }
         await this._fetch();
     },

@@ -54,6 +54,14 @@ const DevicesEvents = {
         if (msg.type !== 'state' || !msg.device_id || !msg.role) return;
         DevicesPage._applyLiveOverride(msg);
 
+        // Only touch the DOM when the Devices page is actually mounted. The SSE
+        // stays connected after navigating away, so without this guard a device
+        // event would re-render whatever page the user is on — e.g. wiping a
+        // half-typed edit on the Family page (the bug this prevents). The live
+        // override above is still recorded, so Devices shows fresh state the
+        // moment it's reopened.
+        if (typeof App !== 'undefined' && App._currentPage !== 'devices') return;
+
         // Motion / face fire frequently. Update just the affected icon's DOM
         // in place — no full re-render, so all other <img>s on the page stay
         // intact (no thumbnail flash on every detection event).
