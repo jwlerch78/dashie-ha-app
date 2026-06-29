@@ -34,8 +34,13 @@ const DevicesPage = {
     // every 5s for no visible change, which caused the visible "flashing".
     AUTO_REFRESH_MS: 30 * 1000,
     LIST_DEVICES_REFRESH_MS: 5 * 60 * 1000,  // Supabase list_devices (settings, structural)
+    // Periodic screenshot re-capture. The status poll keeps the screenshot
+    // cache-bust stable (so it doesn't flash); this is the only thing that
+    // pulls a genuinely fresh frame from each device on a schedule.
+    SCREENSHOT_REFRESH_MS: 30 * 1000,
 
     _pollTimer: null,
+    _ssTimer: null,
     _lastListDevicesAt: 0,
     /** Live overrides: device_id → { role: { state, attrs } } applied over the
      *  worker's freshDevices metrics. Updated by SSE state_changed events. */
@@ -181,6 +186,7 @@ const DevicesPage = {
             this._devices = devicesResult.devices || devicesResult.data || [];
             this._loading = false;
             this._startAutoRefresh();
+            this._startScreenshotRefresh();
             DevicesEvents.start();
             App.renderPage();
             // If the add-on just restarted (e.g. after a version bump) the
@@ -205,12 +211,52 @@ const DevicesPage = {
         }, this.AUTO_REFRESH_MS);
     },
 
+    /** Background screenshot re-capture every SCREENSHOT_REFRESH_MS while
+     *  the page is visible. Only addon mode serves screenshots. */
+    _startScreenshotRefresh() {
+        if (this._ssTimer || !DashieAuth.isAddonMode) return;
+        this._ssTimer = setInterval(() => {
+            if (document.visibilityState === 'hidden') return;
+            const ids = (this._devices || []).filter(d => this._isLive(d)).map(d => d.device_id);
+            this.refreshScreenshots(ids);
+        }, this.SCREENSHOT_REFRESH_MS);
+    },
+
+    /**
+     * Pull a genuinely fresh frame from each given device, flicker-free: preload
+     * the new-cache-bust image off-screen, and only once it's decoded swap the
+     * card's cache-bust to it (the visible <img> then loads from cache instantly,
+     * with no blank gap). Re-renders once after the batch settles.
+     *
+     * Skipped per-device while its screenshot/camera modal is open (the modal owns
+     * a fresh frame already, and a re-render would churn the open <video>).
+     */
+    refreshScreenshots(deviceIds) {
+        if (!DashieAuth.isAddonMode || !deviceIds || !deviceIds.length) return;
+        if (typeof DevicesCamera !== 'undefined' && DevicesCamera._open) return;
+        const ts = Date.now();
+        let pending = deviceIds.length;
+        let anyLoaded = false;
+        const settle = (id, ok) => {
+            if (ok) { DevicesCard._screenshotTs[id] = ts; anyLoaded = true; }
+            if (--pending === 0 && anyLoaded) App.renderPage();
+        };
+        deviceIds.forEach(id => {
+            const img = new Image();
+            img.onload = () => settle(id, true);
+            img.onerror = () => settle(id, false);
+            img.src = DashieAuth._addonUrl(
+                `/api/ha/image/${encodeURIComponent(id)}/screenshot?t=${ts}`);
+        });
+    },
+
     /** Stop every background poller this page started. Called on sign-out
      *  (App._showLogin) so timers don't keep hitting unauthenticated
      *  endpoints — or, before the renderPage() auth guard, repaint the
      *  dashboard over the login screen. */
     _stopPollers() {
         if (this._pollTimer) { clearInterval(this._pollTimer); this._pollTimer = null; }
+        if (this._ssTimer) { clearInterval(this._ssTimer); this._ssTimer = null; }
         this._pollersStopped = true;  // halts the recursive _pollUntilFreshDevices chain
     },
 
@@ -272,15 +318,12 @@ const DevicesPage = {
         } catch { return ''; }
     },
 
-    /** Manual refresh (title-bar icon): re-poll + bump every screenshot
-     *  cache-bust. App.refreshCurrentPage() owns the spin state + re-render,
-     *  so no local busy flag is needed here. */
+    /** Manual refresh (title-bar icon): re-poll status AND pull a fresh frame
+     *  from every device (flicker-free preload, same path as the periodic
+     *  refresh). App.refreshCurrentPage() owns the spin state + re-render. */
     async refresh() {
-        const now = Date.now();
-        for (const d of (this._devices || [])) {
-            DevicesCard._screenshotTs[d.device_id] = now;
-        }
         await this._refreshSilent();
+        this.refreshScreenshots((this._devices || []).map(d => d.device_id));
     },
 
     /**

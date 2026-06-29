@@ -786,12 +786,18 @@ const DevicesCard = {
     openScreenshotModal(deviceId) {
         if (!DashieAuth.isAddonMode) return;
         // Always use a fresh timestamp here so the modal grabs the latest frame.
-        const src = DashieAuth._addonUrl(`/api/ha/image/${encodeURIComponent(deviceId)}/screenshot?t=${Date.now()}`);
-        this._screenshotModal = { deviceId, src };
+        const ts = Date.now();
+        const src = DashieAuth._addonUrl(`/api/ha/image/${encodeURIComponent(deviceId)}/screenshot?t=${ts}`);
+        this._screenshotModal = { deviceId, src, ts };
         App.renderPage();
     },
 
     closeScreenshotModal() {
+        // Hand the card the fresh frame the modal just loaded — same cache-bust ts,
+        // so the browser already has it cached and the thumbnail updates instantly
+        // (no extra device capture, no stale-until-next-refresh gap).
+        const m = this._screenshotModal;
+        if (m) this._screenshotTs[m.deviceId] = m.ts;
         this._screenshotModal = null;
         App.renderPage();
     },
