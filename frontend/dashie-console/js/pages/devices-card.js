@@ -616,13 +616,13 @@ const DevicesCard = {
         if (badge) badge.textContent = this._relativeAge(meta.updated);
     },
 
-    /** ISO timestamp → "just now" / "5m ago" / "2h ago" / "3d ago". '' if unknown. */
+    /** ISO timestamp → "now" / "5m ago" / "2h ago" / "3d ago". '' if unknown. */
     _relativeAge(iso) {
         if (!iso) return '';
         const t = Date.parse(iso);
         if (!isFinite(t)) return '';
         const sec = Math.max(0, Math.round((Date.now() - t) / 1000));
-        if (sec < 45) return 'just now';
+        if (sec < 45) return 'now';
         const min = Math.round(sec / 60);
         if (min < 60) return `${min}m ago`;
         const hr = Math.round(min / 60);

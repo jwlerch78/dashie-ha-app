@@ -27,17 +27,19 @@ const VideoFeedsPage = {
 
     render() {
         const editorHtml = (typeof VideoFeedsEdit !== 'undefined') ? VideoFeedsEdit.render() : '';
+        const discoverHtml = (typeof VideoFeedsDiscover !== 'undefined') ? VideoFeedsDiscover.render() : '';
+        const modals = editorHtml + discoverHtml;
 
         if (!DashieAuth.isAddonMode) return this._renderCloudMode();
 
         if (!this._feeds && !this._loading && !this._error) {
             this._fetch();
-            return this._renderLoading() + editorHtml;
+            return this._renderLoading() + modals;
         }
-        if (this._loading && !this._feeds) return this._renderLoading() + editorHtml;
-        if (this._error && !this._feeds) return this._renderError() + editorHtml;
+        if (this._loading && !this._feeds) return this._renderLoading() + modals;
+        if (this._error && !this._feeds) return this._renderError() + modals;
 
-        return this._renderList() + editorHtml;
+        return this._renderList() + modals;
     },
 
     topBarTitle() { return 'Video Feeds'; },
@@ -50,7 +52,10 @@ const VideoFeedsPage = {
 
     topBarActions() {
         if (!DashieAuth.isAddonMode) return '';
-        return `<button class="btn btn-primary" onclick="VideoFeedsEdit.open(null)">+ Add Feed</button>`;
+        return `
+            <button class="btn btn-secondary" onclick="VideoFeedsDiscover.open()">🔍 Discover cameras</button>
+            <button class="btn btn-primary" onclick="VideoFeedsEdit.open(null)">+ Add Feed</button>
+        `;
     },
 
     /** Called by App.navigate — refresh so we pick up edits tablets made. */
@@ -147,7 +152,10 @@ const VideoFeedsPage = {
                         Add a camera feed once and every Dashie device in the household
                         can show it — on demand or automatically when a sensor triggers.
                     </div>
-                    <button class="btn btn-primary" onclick="VideoFeedsEdit.open(null)">+ Add Feed</button>
+                    <div style="display: flex; gap: 8px; justify-content: center;">
+                        <button class="btn btn-primary" onclick="VideoFeedsDiscover.open()">🔍 Discover cameras</button>
+                        <button class="btn btn-secondary" onclick="VideoFeedsEdit.open(null)">+ Add manually</button>
+                    </div>
                 </div>
             `;
         }

@@ -51,4 +51,11 @@ const FeedsApi = {
     async entities() {
         return this._request('/api/feeds/meta/entities');
     },
+
+    /** Returns {cameras: [{entity_id, label, source, frigate_camera,
+     *  snapshot_url}]} — cameras the household could add as feeds (HA +
+     *  Frigate), minus ones already added and ones that can't stream now. */
+    async discover() {
+        return this._request('/api/feeds/meta/discover');
+    },
 };

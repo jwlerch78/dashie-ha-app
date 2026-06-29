@@ -48,6 +48,12 @@ const ScheduledActionsPage = {
         this._ensureRealtimeSub();
     },
 
+    // Title-bar refresh icon — app.js renders it left of the title for any page
+    // that exposes a refresh() hook.
+    refresh() {
+        return this._fetch();
+    },
+
     // =========================================================
 
     async _fetch() {
