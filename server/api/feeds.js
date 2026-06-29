@@ -97,6 +97,18 @@ router.get('/meta/frigate-cameras', requireSignedIn, async (req, res) => {
     } catch (e) { handleError(res, e, 'frigate-cameras'); }
 });
 
+/** GET /api/feeds/meta/discover — addable camera candidates (HA + Frigate,
+ *  minus existing feeds, minus cameras that can't stream right now). 502 from
+ *  the integration softens to an empty list so the picker shows "nothing to
+ *  add" rather than an error. */
+router.get('/meta/discover', requireSignedIn, async (req, res) => {
+    try {
+        const result = await haFetchJson('/api/dashie/feeds/discover');
+        if (!result.ok) return res.json({ cameras: [] });
+        res.json({ cameras: result.body?.cameras || [] });
+    } catch (e) { handleError(res, e, 'discover'); }
+});
+
 /** GET /api/feeds/meta/entities — camera + trigger entity catalogs for the
  *  feed editor pickers. Cameras feed the source picker; binary_sensor +
  *  input_boolean feed the trigger picker (mirrors the Kotlin editor's
