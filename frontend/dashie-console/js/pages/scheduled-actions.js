@@ -1,20 +1,22 @@
 /* ============================================================
    Scheduled Actions Page
 
-   Lists the household's reminders (mirrored from the device's
-   AlarmManager into Supabase) and lets you edit the text / fire
-   time / vernacular or delete them. Each row is collapsible with
-   an inline edit form (mirrors the Family page).
+   Two collapsible sections — Active (scheduled) and Completed
+   (fired, collapsed by default). Each row: a type icon on the
+   left (bell = single reminder; a recurring badge by the title
+   for recurring actions), the ALL-CAPS text, and a quick delete
+   on the right. Expand a row to edit (text / fire time / type)
+   and see its created/edited timestamp.
 
-   Reminders are CREATED by voice on a device ("Hey Dashie, remind
-   me…"); this page only manages existing ones. After an edit/delete
-   we broadcast `reminder-changed` so the owning device re-arms or
-   cancels its alarm (see js/core/reminders/reminder-sync.js).
+   Reminders are CREATED by voice on a device; this page manages
+   them. Edit/delete broadcast `reminder-changed` so the owning
+   device re-arms or cancels (see js/core/reminders/reminder-sync.js).
    ============================================================ */
 
 const ScheduledActionsPage = {
     _actions: null,
     _expandedIds: null,
+    _collapsed: null,          // { active: false, completed: true }
     _savingId: null,
     _deletingId: null,
     _loading: false,
@@ -30,19 +32,23 @@ const ScheduledActionsPage = {
         }
         if (this._loading && !this._actions) return this._renderLoading();
         if (this._error && !this._actions) return this._renderError();
-        if (!this._expandedIds) this._expandedIds = new Set();
+        this._initState();
         return this._renderList();
+    },
+
+    _initState() {
+        if (!this._expandedIds) this._expandedIds = new Set();
+        if (!this._collapsed) this._collapsed = { active: false, completed: true };
     },
 
     topBarTitle() { return 'Scheduled Actions'; },
     topBarSubtitle() {
         if (!this._actions) return '';
         const n = this._actions.filter(a => a.status === 'scheduled').length;
-        return `${n} active reminder${n === 1 ? '' : 's'}`;
+        return `${n} active`;
     },
     topBarActions() { return ''; },
 
-    // Refetch + (re)subscribe each time the page is opened.
     onNavigateTo() {
         this._fetch();
         this._ensureRealtimeSub();
@@ -50,9 +56,7 @@ const ScheduledActionsPage = {
 
     // Title-bar refresh icon — app.js renders it left of the title for any page
     // that exposes a refresh() hook.
-    refresh() {
-        return this._fetch();
-    },
+    refresh() { return this._fetch(); },
 
     // =========================================================
 
@@ -76,7 +80,7 @@ const ScheduledActionsPage = {
         try {
             this._realtimeChannel = await DashieAuth.subscribeToChannel(
                 'scheduled-actions', 'reminder-changed',
-                () => this._fetch()  // a device (or another console) changed something → refresh
+                () => this._fetch()
             );
         } catch (e) {
             console.warn('[ScheduledActionsPage] realtime subscribe failed', e);
@@ -111,16 +115,15 @@ const ScheduledActionsPage = {
     _retry() {
         this._error = null;
         this._actions = null;
-        this._expandedIds = null;
         App.renderPage();
     },
 
     _renderList() {
-        const actions = this._actions || [];
-        if (actions.length === 0) {
+        const all = this._actions || [];
+        if (all.length === 0) {
             return `
                 <div class="empty-state">
-                    <div class="empty-state-icon">⏰</div>
+                    <div class="empty-state-icon"><img src="assets/icons/icon-bell.svg" alt="" style="width:44px;height:44px;opacity:0.35;"></div>
                     <div class="empty-state-text">No scheduled actions.</div>
                     <div style="color: var(--text-muted); font-size: var(--font-size-sm); margin-top: 8px;">
                         Say "Hey Dashie, remind me…" on a device to create one.
@@ -128,94 +131,105 @@ const ScheduledActionsPage = {
                 </div>
             `;
         }
-        const scheduled = actions.filter(a => a.status === 'scheduled');
-        const history = actions.filter(a => a.status !== 'scheduled');
-        let html = scheduled.map(a => this._renderRow(a)).join('');
-        if (history.length) {
-            html += `<div class="list-item-subtitle" style="margin: 20px 0 8px; text-transform: uppercase; letter-spacing: 0.04em;">History</div>`;
-            html += history.map(a => this._renderRow(a)).join('');
-        }
-        return html;
+        const active = all.filter(a => a.status === 'scheduled');
+        const completed = all.filter(a => a.status === 'fired');
+        return this._renderSection('active', 'Active', active, true)
+             + this._renderSection('completed', 'Completed', completed, false);
     },
 
-    _renderRow(action) {
+    _renderSection(key, label, items, editable) {
+        const collapsed = this._collapsed[key];
+        const chevron = collapsed ? '▸' : '▾';
+        const header = `
+            <div onclick="ScheduledActionsPage.toggleSection('${key}')"
+                 style="display:flex; align-items:center; gap:8px; cursor:pointer; padding:10px 4px; margin-top:8px;
+                        font-size:var(--font-size-sm); font-weight:600; text-transform:uppercase; letter-spacing:0.04em; color:var(--text-secondary);">
+                <span style="width:14px; text-align:center;">${chevron}</span>
+                <span>${label} (${items.length})</span>
+            </div>`;
+        if (collapsed) return header;
+        if (items.length === 0) {
+            return header + `<div style="color:var(--text-muted); font-size:var(--font-size-sm); padding:2px 0 8px 26px;">None.</div>`;
+        }
+        return header + items.map(a => this._renderRow(a, editable)).join('');
+    },
+
+    _renderRow(action, editable) {
         const id = this._escape(action.id);
-        const editable = action.status === 'scheduled';
-        const expanded = editable && this._expandedIds.has(action.id);
-        const chevron = editable ? (expanded ? '▾' : '▸') : '·';
-        const label = action.notify_text
-            ? this._escape(action.notify_text)
-            : `<span style="color: var(--text-muted); font-style: italic;">(no text)</span>`;
-        const when = this._fmtWhen(action.fire_at);
-        const statusBadge = action.status === 'scheduled'
-            ? ''
-            : `<span class="list-item-badge" style="background: var(--bg-muted, #f3f4f6); color: var(--text-secondary);">${this._capitalize(action.status)}</span>`;
+        const expanded = this._expandedIds.has(action.id);
+        const chevron = expanded ? '▾' : '▸';
+        const recurring = this._isRecurring(action);
+        const title = action.notify_text
+            ? this._escape(action.notify_text.toUpperCase())
+            : '<span style="color:var(--text-muted); font-style:italic;">(NO TEXT)</span>';
+        const recurBadge = recurring
+            ? `<img src="assets/icons/icon-reload.svg" alt="Recurring" title="Recurring" style="width:14px;height:14px;margin-left:8px;vertical-align:middle;opacity:0.7;">`
+            : '';
+        const deleting = this._deletingId === action.id;
 
         const header = `
-            <div class="account-header"
-                 ${editable ? `onclick="ScheduledActionsPage.toggleExpand('${id}')"` : ''}
-                 style="display: flex; align-items: center; gap: 12px; padding: 12px 16px; ${editable ? 'cursor: pointer;' : ''} background: var(--bg-card, #fff);">
-                <span style="font-size: 24px; line-height: 1; color: var(--text-muted); width: 20px; text-align: center; flex-shrink: 0;">${chevron}</span>
-                <div style="flex: 1; min-width: 0;">
-                    <div class="list-item-title">${label}</div>
-                    <div class="list-item-subtitle">${this._capitalize(action.vernacular || 'reminder')} · ${when}</div>
+            <div style="display:flex; align-items:center; gap:10px; padding:12px 14px; background:var(--bg-card,#fff);">
+                <span onclick="ScheduledActionsPage.toggleExpand('${id}')" style="cursor:pointer; font-size:20px; color:var(--text-muted); width:16px; text-align:center; flex-shrink:0;">${chevron}</span>
+                <img src="assets/icons/icon-bell.svg" alt="" style="width:22px;height:22px;flex-shrink:0;opacity:0.8;">
+                <div onclick="ScheduledActionsPage.toggleExpand('${id}')" style="flex:1; min-width:0; cursor:pointer;">
+                    <div class="list-item-title">${title}${recurBadge}</div>
+                    <div class="list-item-subtitle">${this._capitalize(action.vernacular || 'reminder')} · ${this._fmtWhen(action.fire_at)}</div>
                 </div>
-                ${statusBadge}
+                <button class="btn btn-danger btn-sm" onclick="ScheduledActionsPage._delete('${id}')" ${deleting ? 'disabled' : ''}
+                        title="Delete" style="flex-shrink:0; min-width:34px;">${deleting ? '…' : '✕'}</button>
             </div>`;
 
         const body = expanded
-            ? `<div style="border-top: 1px solid var(--border, #e5e7eb); padding: 16px 20px;">${this._renderEditForm(action)}</div>`
+            ? `<div style="border-top:1px solid var(--border,#e5e7eb); padding:16px 20px;">${this._renderDetail(action, editable)}</div>`
             : '';
 
         return `
-            <div class="account-group" style="border: 1px solid var(--border, #e5e7eb); border-radius: 8px; margin-bottom: 12px; overflow: hidden; ${editable ? '' : 'opacity: 0.7;'}">
-                ${header}
-                ${body}
-            </div>
-        `;
+            <div class="account-group" style="border:1px solid var(--border,#e5e7eb); border-radius:8px; margin-bottom:10px; overflow:hidden; ${editable ? '' : 'opacity:0.75;'}">
+                ${header}${body}
+            </div>`;
     },
 
-    _renderEditForm(action) {
+    _renderDetail(action, editable) {
         const id = this._escape(action.id);
+        const ts = `<div style="color:var(--text-muted); font-size:var(--font-size-sm); margin-top:${editable ? '10px' : '0'};">${this._timestampLabel(action)}</div>`;
+        if (!editable) return ts; // Completed: read-only, just the timestamp.
+
         const saving = this._savingId === action.id;
-        const deleting = this._deletingId === action.id;
         return `
             <div class="form-grid">
                 <div class="form-group">
                     <label class="form-label">Reminder text</label>
-                    <input class="form-input" type="text" id="sa-${id}-text"
-                        value="${this._escape(action.notify_text || '')}"
-                        placeholder="What to remind you">
+                    <input class="form-input" type="text" id="sa-${id}-text" value="${this._escape(action.notify_text || '')}" placeholder="What to remind you">
                 </div>
                 <div class="form-group">
                     <label class="form-label">Fires at</label>
-                    <input class="form-input" type="datetime-local" id="sa-${id}-time"
-                        value="${this._toLocalInput(action.fire_at)}">
+                    <input class="form-input" type="datetime-local" id="sa-${id}-time" value="${this._toLocalInput(action.fire_at)}">
                 </div>
                 <div class="form-group">
                     <label class="form-label">Type</label>
                     <select class="form-select" id="sa-${id}-vern">
-                        ${this.VERNACULARS.map(v => `
-                            <option value="${v}" ${v === (action.vernacular || 'reminder') ? 'selected' : ''}>
-                                ${this._capitalize(v)}
-                            </option>
-                        `).join('')}
+                        ${this.VERNACULARS.map(v => `<option value="${v}" ${v === (action.vernacular || 'reminder') ? 'selected' : ''}>${this._capitalize(v)}</option>`).join('')}
                     </select>
                 </div>
             </div>
+            ${ts}
+            <div class="edit-panel-actions" style="margin-top:14px;">
+                <button class="btn btn-primary" onclick="ScheduledActionsPage._save('${id}')" ${saving ? 'disabled' : ''}>${saving ? 'Saving…' : 'Save Changes'}</button>
+                <button class="btn btn-ghost" onclick="ScheduledActionsPage.toggleExpand('${id}')" ${saving ? 'disabled' : ''}>Cancel</button>
+            </div>`;
+    },
 
-            <div class="edit-panel-actions" style="margin-top: 16px;">
-                <button class="btn btn-primary" onclick="ScheduledActionsPage._save('${id}')" ${saving ? 'disabled' : ''}>
-                    ${saving ? 'Saving…' : 'Save Changes'}
-                </button>
-                <button class="btn btn-ghost" onclick="ScheduledActionsPage.toggleExpand('${id}')" ${saving ? 'disabled' : ''}>
-                    Cancel
-                </button>
-                <button class="btn btn-danger btn-sm" onclick="ScheduledActionsPage._delete('${id}')" ${saving || deleting ? 'disabled' : ''}>
-                    ${deleting ? 'Deleting…' : 'Delete'}
-                </button>
-            </div>
-        `;
+    toggleSection(key) {
+        this._initState();
+        this._collapsed[key] = !this._collapsed[key];
+        App.renderPage();
+    },
+
+    toggleExpand(id) {
+        this._initState();
+        if (this._expandedIds.has(id)) this._expandedIds.delete(id);
+        else this._expandedIds.add(id);
+        App.renderPage();
     },
 
     async _save(id) {
@@ -240,7 +254,6 @@ const ScheduledActionsPage = {
             const idx = this._actions.findIndex(a => a.id === id);
             if (idx >= 0) this._actions[idx] = updated;
             this._expandedIds.delete(id);
-            // Tell the owning device to re-arm at the new time.
             DashieAuth.broadcast('scheduled-actions', 'reminder-changed', { action: 'updated', row: updated })
                 .catch(e => console.warn('[ScheduledActionsPage] broadcast failed', e));
         } catch (e) {
@@ -270,7 +283,6 @@ const ScheduledActionsPage = {
             const cancelled = result.action || result.data;
             this._actions = this._actions.filter(a => a.id !== id);
             this._expandedIds.delete(id);
-            // Tell the owning device to cancel its alarm (carry the row so it can match).
             DashieAuth.broadcast('scheduled-actions', 'reminder-changed', {
                 action: 'cancelled',
                 row: cancelled || (action ? { ...action, status: 'cancelled' } : null),
@@ -284,25 +296,35 @@ const ScheduledActionsPage = {
         }
     },
 
-    toggleExpand(id) {
-        if (!this._expandedIds) this._expandedIds = new Set();
-        if (this._expandedIds.has(id)) this._expandedIds.delete(id);
-        else this._expandedIds.add(id);
-        App.renderPage();
+    // =========================================================
+
+    // Phase 1 actions are one-shot. When recurring lands, detect it here
+    // (e.g. action.trigger_type === 'every'); for now everything is single.
+    _isRecurring(action) {
+        return action.trigger_type === 'every' || action.recurring === true;
     },
 
-    // =========================================================
+    _timestampLabel(action) {
+        const created = action.created_at ? new Date(action.created_at) : null;
+        const updated = action.updated_at ? new Date(action.updated_at) : null;
+        if (created && updated && (updated.getTime() - created.getTime()) > 5000) {
+            return `Edited ${this._fmtTimestamp(updated)}`;
+        }
+        return created ? `Created ${this._fmtTimestamp(created)}` : '';
+    },
+
+    _fmtTimestamp(d) {
+        if (!d || isNaN(d.getTime())) return '';
+        return d.toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+    },
 
     _fmtWhen(iso) {
         if (!iso) return '';
         const d = new Date(iso);
         if (isNaN(d.getTime())) return this._escape(iso);
-        return d.toLocaleString([], {
-            weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit',
-        });
+        return d.toLocaleString([], { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
     },
 
-    // ISO (UTC) → 'YYYY-MM-DDTHH:mm' in local time for <input type="datetime-local">
     _toLocalInput(iso) {
         const d = new Date(iso);
         if (isNaN(d.getTime())) return '';
@@ -310,7 +332,6 @@ const ScheduledActionsPage = {
         return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
     },
 
-    // local 'YYYY-MM-DDTHH:mm' → ISO (UTC); null if invalid
     _fromLocalInput(val) {
         if (!val) return null;
         const d = new Date(val);
