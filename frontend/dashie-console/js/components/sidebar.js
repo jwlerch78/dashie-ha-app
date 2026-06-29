@@ -42,6 +42,7 @@ const Sidebar = {
                 ${this._gatedNavItem('calendar', 'Calendar', 'icon-calendar', activePage)}
                 ${this._gatedNavItem('chores', 'Chores', 'icon-tasks', activePage)}
                 ${this._gatedNavItem('rewards', 'Rewards', 'icon-star', activePage)}
+                ${this._gatedNavItem('scheduled-actions', 'Scheduled Actions', 'icon-tasks', activePage)}
                 ${this._gatedNavItem('locations', 'Locations', 'icon-location-pin', activePage)}
                 ${this._gatedNavItem('photos', 'Photos', 'icon-photos', activePage)}
             </div>

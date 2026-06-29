@@ -95,6 +95,10 @@ const FeatureGate = {
         // Cloud product. Mirrors the dashboard's feature_access catalog.
         chores:     'alpha-only',
         rewards:    'alpha-only',
+
+        // Scheduled Actions (voice reminders) — alpha-only, mirrors the
+        // dashboard's feature_access 'scheduled_actions' catalog entry.
+        scheduledActions: 'alpha-only',
     },
 
     shouldShow(key) {
@@ -119,6 +123,7 @@ const FeatureGate = {
         'locations':   'locations',
         'chores':      'chores',
         'rewards':     'rewards',
+        'scheduled-actions': 'scheduledActions',
     },
 
     /**

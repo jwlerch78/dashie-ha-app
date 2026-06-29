@@ -276,7 +276,7 @@ const VoiceAiPage = {
      *  the 'local' model stores ai.model='local' (the route); the endpoint + model
      *  live in their own voice.* keys, saved via the inline config fields. */
     selectOption(stageKey, id) {
-        const KEY = { model: 'ai.model', stt: 'voice.sttProvider', tts: 'voice.ttsProvider', search: 'voice.searchSource', sports: 'voice.sportsSource' };
+        const KEY = { model: 'ai.model', liveModel: 'voice.conversationModel', stt: 'voice.sttProvider', tts: 'voice.ttsProvider', search: 'voice.searchSource', sports: 'voice.sportsSource' };
         const key = KEY[stageKey];
         if (!key) return;
         this._expandedCards.delete(stageKey);   // collapse back to the chosen option
@@ -395,6 +395,9 @@ const VoiceAiPage = {
         const isLive = isDashieIntelligence && agentMode === 'live';
         const customPipeline = d['voice.customizePipeline'] === true;
         const showPipeline = isDashieIntelligence && customPipeline && !isLive;
+        // Gemini cascade models search via native Google grounding (not Tavily) → the
+        // Web-search-source card shows "Google" instead. Applies in dialog/single.
+        const isGeminiAiModel = String(d['ai.model'] || '').startsWith('gemini-');
         const searchOn = d['ai.webSearchEnabled'] === true;
         const cfg = k => d[k];
         const card = (title, stageKey, options, selectedId) => VoiceAiCards.render({
@@ -408,12 +411,14 @@ const VoiceAiPage = {
             ${this._renderControlMethodRow(d, customPipeline, isDashieIntelligence && !isLive)}
             ${isDashieIntelligence ? this._renderAgentModeRow(d, agentMode, isLive) : ''}
 
-            ${!isLive ? this._renderLocalityLegend() : ''}
-            ${!isLive ? card('AI Model', 'model', O.models(), String(d['ai.model'])) : ''}
+            ${this._renderLocalityLegend()}
+            ${isLive
+                ? card('AI Model', 'liveModel', this._liveModelOptions(), String(d['voice.conversationModel'] || this.CONVERSATION_MODELS[0][0]))
+                : card('AI Model', 'model', O.models(), String(d['ai.model']))}
 
             ${showPipeline ? card('Text-to-speech (Voice)', 'tts', this._haFilter(O.TTS), String(d['voice.ttsProvider'])) : ''}
             ${showPipeline ? card('Speech-to-text', 'stt', this._haFilter(O.STT), String(d['voice.sttProvider'])) : ''}
-            ${showPipeline ? card('Web search source', 'search', O.SEARCH, String(d['voice.searchSource'])) : ''}
+            ${showPipeline ? card('Web search source', 'search', isGeminiAiModel ? this._googleSearchOption() : O.SEARCH, isGeminiAiModel ? 'google' : String(d['voice.searchSource'])) : ''}
             ${showPipeline ? card('Sports source', 'sports', O.SPORTS, String(d['voice.sportsSource'])) : ''}
 
             ${this._sectionHeader('Tools', '')}
@@ -456,10 +461,10 @@ const VoiceAiPage = {
     },
 
     /** Conversation Agent Mode selector (Live / Dialog / Single Response) under
-     *  Dashie Intelligence. When Live, the AI-model dropdown below is replaced by a
-     *  Live-model picker (Gemini 3.1/2.5, bound to voice.conversationModel) and the
-     *  cascade pipeline cards are hidden. Dialog + Single keep the full model list +
-     *  pipeline. See 20260628_CASCADE_CONVERSATION_MODE.md. */
+     *  Dashie Intelligence. When Live, the AI-model card below uses the Live-model
+     *  options (bound to voice.conversationModel) and the cascade pipeline cards are
+     *  hidden. Dialog + Single keep the full model list + pipeline.
+     *  See 20260628_CASCADE_CONVERSATION_MODE.md. */
     _renderAgentModeRow(d, agentMode, isLive) {
         const modeOpts = this.AGENT_MODES.map(([v, l]) =>
             `<option value="${this._escape(v)}" ${v === agentMode ? 'selected' : ''}>${this._escape(l)}</option>`).join('');
@@ -468,27 +473,17 @@ const VoiceAiPage = {
             dialog: 'Continuous conversation: the mic stays open between turns so you can keep talking without the wake word.',
             single: 'One response per wake word, then back to listening for “Hey Dashie”.',
         }[agentMode] || '';
-
-        // When Live, the AI-model dropdown becomes the Live-model picker (bound to
-        // voice.conversationModel — the Live engine reads it). 2 honest options.
-        const liveSel = String(d['voice.conversationModel'] || this.CONVERSATION_MODELS[0][0]);
-        const liveOpts = this.CONVERSATION_MODELS.map(([v, l]) =>
-            `<option value="${this._escape(v)}" ${v === liveSel ? 'selected' : ''}>${this._escape(l)}</option>`).join('');
-        const liveModelPicker = isLive ? `
-                <div style="margin-top: 14px;">
-                    <label class="form-label">AI model</label>
-                    <select class="form-select" onchange="VoiceAiPage.saveDefault('voice.conversationModel', this.value)">${liveOpts}</select>
-                </div>
+        // Beta note for Live (the model itself is picked in the AI Model card below).
+        const liveNote = isLive ? `
                 <div style="margin-top: 10px; font-size: 12px; color: var(--text-secondary); line-height: 1.5;">
                     ⚡ Live (beta). Speaks in a Google voice for now; billed per audio token (see usage).
                 </div>` : '';
-
         return `
             <div class="card" style="margin-bottom: 16px;"><div class="card-body">
                 <label class="form-label">Conversation Agent Mode</label>
                 <select class="form-select" onchange="VoiceAiPage.setAgentMode(this.value)">${modeOpts}</select>
                 <div style="margin-top: 8px; font-size: 12px; color: var(--text-muted); line-height: 1.5;">${desc}</div>
-                ${liveModelPicker}
+                ${liveNote}
             </div></div>`;
     },
 
@@ -499,6 +494,29 @@ const VoiceAiPage = {
         if (mode === 'live' && !String(this._defaults['voice.conversationModel'] || '')) {
             await this.saveDefault('voice.conversationModel', this.CONVERSATION_MODELS[0][0]);
         }
+    },
+
+    /** Live S2S models in the same option shape as O.models() so the AI-model card
+     *  renders identically (orange CLOUD cards). Cost from the catalog. */
+    _liveModelOptions() {
+        const O = window.VoiceAiOptions, C = window.AiModelCatalog;
+        return this.CONVERSATION_MODELS.map(([id, label]) => {
+            const p = C?.pricingFor?.(id);   // [inPer1M, outPer1M] | null
+            return {
+                id, label, locality: 'cloud',
+                cost: p ? O._modelCost(p) : '',
+                description: id.startsWith('gemini-3.1') ? 'Fastest realtime voice.' : 'More capable realtime voice.',
+            };
+        });
+    },
+
+    /** Web-search "source" shown when a Gemini model is selected: native Google Search
+     *  grounding (the model searches Google directly — no Tavily). Fixed, single option. */
+    _googleSearchOption() {
+        return [{
+            id: 'google', label: 'Google', locality: 'cloud', cost: 'Included with Gemini',
+            description: 'Gemini searches Google directly and grounds its answer.',
+        }];
     },
 
     /** Cloud-vs-local key, shown above the pipeline cards when customize is on. */

@@ -18,6 +18,7 @@ const App = {
         calendar:      { page: CalendarPage },
         chores:        { page: ChoresPage },
         rewards:       { page: RewardsPage },
+        'scheduled-actions': { page: ScheduledActionsPage },
         locations:     { page: LocationsPage },
         photos:        { page: PhotosPage },
         account:       { page: AccountPage },
