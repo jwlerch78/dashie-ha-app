@@ -628,7 +628,11 @@ router.get('/image/:deviceId/:role', requireSignedIn, async (req, res) => {
         }
         const ctype = upstream.headers.get('content-type') || 'image/jpeg';
         res.set('Content-Type', ctype);
-        res.set('Cache-Control', 'no-cache, max-age=5');
+        // Cacheable for a few seconds (NOT no-cache) so the Console can preload a
+        // new-cache-bust frame off-screen and then swap the visible <img> to the
+        // same URL without a second device capture or a blank flash. Each logical
+        // refresh uses a new ?t=, so this never serves a stale frame across refreshes.
+        res.set('Cache-Control', 'private, max-age=5');
         const buf = Buffer.from(await upstream.arrayBuffer());
         res.send(buf);
     } catch (e) {
