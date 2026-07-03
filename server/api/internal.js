@@ -4,10 +4,12 @@
 // hassio Docker network. The add-on is ingress-only (no external ports), so these
 // are not reachable from outside HA.
 //
-// ⚠️ v1 SECURITY = network-trust only. Any component on the hassio network can call
-// this and obtain the account JWT. Acceptable for single-household dev; HARDEN before
-// wider use — a shared secret (config_flow option ↔ add-on option) or a short-lived
-// scoped token. Tracked in tech-debt.
+// 🔐 SECURITY (Lever 1): every call must carry the shared bridge secret
+// (X-Dashie-Bridge-Secret), checked by the router.use guard below via lib/bridge-auth.
+// The secret is provisioned to addon_config so only the Dashie integration can read it.
+// Enforced when the `bridge_auth_enforce` add-on option is on (observe-mode logs-but-allows
+// until then). Build plan 20260702_BRIDGE_AUTH_HARDENING.md. Follow-up (Lever 2, not built):
+// vend a scoped token instead of the raw account JWT.
 //
 // The account credential is only vended when the account holder has opted into
 // household-wide Dashie Cloud sharing (settings-store). When off, anonymous
@@ -17,8 +19,16 @@ const express = require('express');
 const auth = require('../auth');
 const settingsStore = require('../settings-store');
 const { getAccountVoiceConfig } = require('../account-config');
+const bridgeAuth = require('../lib/bridge-auth');
 
 const router = express.Router();
+
+// Authenticate every internal call with the shared bridge secret (Lever 1). Observe-mode by
+// default (logs would-reject, allows) until `bridge_auth_enforce` is flipped on; then rejects.
+// Build plan 20260702_BRIDGE_AUTH_HARDENING.md.
+router.use((req, res, next) => {
+    if (bridgeAuth.checkRequest(req, res)) next();
+});
 
 /**
  * GET /api/internal/sharing-status

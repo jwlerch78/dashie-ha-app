@@ -13,9 +13,13 @@ hassio_api: true                # Access to Supervisor (env: $SUPERVISOR_TOKEN)
 homeassistant_api: true         # Access to HA REST API
 homeassistant: "2024.1.0"       # Min HA version (any recent HA is fine)
 
-# Persistent storage for /data (JWT, service token, config cache)
+# Persistent storage for /data (JWT, service token, config cache).
+# addon_config:rw — the add-on's OWN private config folder, surfaced to HA Core at
+# /config/addon_configs/dashie/ (readable by the Dashie integration, NOT by other add-ons).
+# Used to hand the integration the internal-bridge secret. Build plan 20260702_BRIDGE_AUTH_HARDENING.md.
 map:
   - data:rw
+  - addon_config:rw
 
 # Ingress: HA serves the UI at /api/hassio_ingress/<token>/
 # The add-on listens on port 8099 internally; HA proxies external traffic to it.
@@ -39,6 +43,10 @@ ports: {}
 options:
   supabase_env: development
   log_level: info
+  bridge_auth_enforce: false
 schema:
   supabase_env: list(production|development)
   log_level: list(trace|debug|info|notice|warning|error|fatal)
+  # Reject internal add-on↔integration calls lacking the shared bridge secret. Keep OFF until
+  # both the add-on and integration are updated + the secret channel is verified, then flip ON.
+  bridge_auth_enforce: bool?

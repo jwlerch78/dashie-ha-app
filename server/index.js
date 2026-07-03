@@ -156,6 +156,9 @@ app.use((err, req, res, next) => {
 const server = app.listen(PORT, '0.0.0.0', () => {
     console.log(`[server] Dashie add-on listening on 0.0.0.0:${PORT}`);
     console.log('[server] Ready to accept requests from HA Ingress.');
+    // Generate + mirror the internal-bridge secret to addon_config so the integration can
+    // authenticate its /api/internal/* calls (build plan 20260702_BRIDGE_AUTH_HARDENING.md).
+    try { require('./lib/bridge-auth').provision(); } catch (e) { console.error('[bridge-auth] provision error:', e?.message || e); }
     haWorker.start();
     haRegistry.start();
 });
