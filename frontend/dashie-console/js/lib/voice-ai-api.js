@@ -104,6 +104,29 @@ const VoiceAiApi = {
         return value;
     },
 
+    // ── Voice response feedback (thumbs up/down) ─────────────
+
+    /** Submit a thumbs up/down on a recorded voice interaction → the
+     *  voice_feedback channel (database-operations). A down-vote carries a
+     *  reason + the transcript snapshot (the reviewer is explicitly flagging
+     *  their own retained transcript as an eval candidate — per-submission
+     *  consent). Thumbs-up sends rating only; the handler drops any snapshot
+     *  fields for an up-vote server-side. Keyed by session_id (+ turn_index
+     *  for realtime) so the eval exporter can reconstruct the turn. */
+    async submitFeedback({ sessionId, rating, reason = null, detail = null, promptText = null, responseText = null, turnIndex = null, model = null }) {
+        return DashieAuth.dbRequest('log_voice_feedback', {
+            platform: 'console',
+            session_id: sessionId || null,
+            rating: rating === 'down' ? 'down' : 'up',
+            reason,
+            detail,
+            prompt_text: promptText,
+            response_text: responseText,
+            turn_index: turnIndex,
+            model,
+        });
+    },
+
     // ── Personalities ────────────────────────────────────────
 
     /** Built-in template catalog (read-only, admin-managed). Returns the

@@ -304,8 +304,15 @@ const AccountPage = {
             : status === 'canceled' ? 'expires'
             : 'renews on';
         const sub = date ? `${verb} ${this._formatDate(date)}` : '';
-        const manageable = status === 'active' || status === 'trialing' || status === 'canceled';
-        const manageBtn = manageable
+        // A trialing (or no-subscription) user has no paid subscription to
+        // manage yet — offer a proactive "Subscribe" that converts them via
+        // subscribe.html, rather than "Manage subscription" (which opens an
+        // empty Stripe portal). Active/canceled users still get Manage.
+        const canSubscribe = status === 'trialing' || !status;
+        const manageable = status === 'active' || status === 'canceled';
+        const actionBtn = canSubscribe
+            ? `<button class="btn btn-primary btn-sm" onclick="AccountPage.subscribe()" style="flex-shrink:0;">Subscribe</button>`
+            : manageable
             ? `<button class="btn btn-primary btn-sm" onclick="AccountPage.openBillingPortal()" style="flex-shrink:0;">Manage subscription</button>`
             : '';
         return `
@@ -315,7 +322,7 @@ const AccountPage = {
                     <div class="stat-card-value">${this._escape(tier)}</div>
                     ${sub ? `<div class="stat-card-detail">${this._escape(sub)}</div>` : ''}
                 </div>
-                ${manageBtn}
+                ${actionBtn}
             </div>`;
     },
 

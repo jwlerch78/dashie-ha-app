@@ -1432,7 +1432,7 @@ Sports results (live from the sports provider):
 - location_events: query: {member_name: "Mary", location_name: "home", timeframe: "today|yesterday|last_night", event_type: "arrive|depart"} - Arrival/departure history
 - travel_time: query: {event_title: "game", member_name: "Jack"} - When to leave for an event
 - family_locations: query: {member_name: "Mary"} - Current GPS location ("where is X right now?")
-- weather_data: query: {show_overlay: true} - Weather forecast for family location
+- weather_data: query: {timeframe: "current|today|tonight|weekend|this_week|<weekday e.g. saturday>", location?: "city or place, ONLY if the user names one — omit for the family's home location"} - Current conditions or forecast. Use timeframe to capture what they asked ("right now" → current, "this weekend" → weekend, "will it rain today" → today)
 - home_assistant: query: {command_hint: "transcript"} - Smart home control (lights, thermostat, garage, etc.)
 - sports: query: {sport: "soccer|football|basketball|baseball|hockey", league: "nfl|nba|mlb|nhl|college-football|world-cup|premier-league|...", team: "team or country name", date: "YYYY-MM-DD (optional)", type: "score|schedule"} - Live game scores and schedules for a specific team/league (prefer over web_search for any game result, score, or upcoming game)`;
 

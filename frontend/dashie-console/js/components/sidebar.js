@@ -38,6 +38,7 @@ const Sidebar = {
 
             <div class="sidebar-section">
                 <div class="sidebar-section-label">Dashie Cloud</div>
+                ${this._purchaseNavItem()}
                 ${this._gatedNavItem('family', 'Family', 'icon-profile-round', activePage)}
                 ${this._gatedNavItem('calendar', 'Calendar', 'icon-calendar', activePage)}
                 ${this._gatedNavItem('chores', 'Chores', 'icon-tasks', activePage)}
@@ -55,6 +56,7 @@ const Sidebar = {
             </div>
 
             <div class="sidebar-footer">
+                ${this._renderTrialPill()}
                 ${showCredits ? `
                     <div class="sidebar-credits" onclick="App.navigate('account')"${lowBalance ? ' style="color: var(--status-error, #c00);" title="Low balance — buy credits"' : ''}>
                         <span class="sidebar-credits-amount">${balanceLabel}</span>
@@ -62,6 +64,52 @@ const Sidebar = {
                     </div>
                 ` : ''}
                 <div class="sidebar-version">v1.0.0</div>
+            </div>
+        `;
+    },
+
+    /**
+     * Trial/subscription status pill in the sidebar footer (above credits +
+     * version). Trial countdown + Subscribe while trialing; grace/past-due
+     * nudge otherwise; nothing for active/complimentary or before state loads.
+     * Re-renders with the sidebar whenever FeatureGate.setSubscriptionState
+     * fires App.renderPage().
+     */
+    _renderTrialPill() {
+        if (typeof SubscriptionStatus === 'undefined') return '';
+        const chip = SubscriptionStatus.chip();
+        if (!chip) return '';
+
+        const warn = chip.tone === 'warn';
+        const color = warn ? 'var(--status-warning, #b45309)' : 'var(--text-secondary, #555)';
+        const bg = warn ? 'rgba(180,83,9,0.10)' : 'var(--bg-subtle, #f1f3f5)';
+        const ctaStyle = 'display:block; width:100%; margin-top:6px; background: var(--accent, #ffaa00);'
+            + ' color:#fff; border:none; border-radius:6px; padding:5px 10px; font-size:12px;'
+            + ' font-weight:700; cursor:pointer;';
+        let cta = '';
+        if (chip.showSubscribe) {
+            cta = `<button onclick="AccountPage.subscribe && AccountPage.subscribe()" style="${ctaStyle}">Subscribe</button>`;
+        } else if (chip.showManage) {
+            cta = `<button onclick="AccountPage.openBillingPortal && AccountPage.openBillingPortal()" style="${ctaStyle}">Fix payment</button>`;
+        }
+        return `
+            <div class="sidebar-trial"
+                 style="margin-bottom:10px; padding:8px 10px; border-radius:8px; background:${bg};
+                        color:${color}; text-align:center;">
+                <div style="font-size:12px; font-weight:600;">${chip.label}</div>
+                ${cta}
+            </div>`;
+    },
+
+    /** "Purchase License" entry in the Dashie Cloud section, shown only when the
+     *  trial/subscription has expired (no entitlement) — a direct sidebar path
+     *  to buy. Goes to subscribe.html via AccountPage.subscribe(). */
+    _purchaseNavItem() {
+        if (typeof FeatureGate === 'undefined' || FeatureGate.hasEntitlement()) return '';
+        return `
+            <div class="sidebar-nav-item" onclick="AccountPage.subscribe && AccountPage.subscribe()">
+                <span class="nav-icon"><img src="assets/icons/icon-star.svg" alt="Purchase License"></span>
+                <span class="nav-label">Purchase License</span>
             </div>
         `;
     },

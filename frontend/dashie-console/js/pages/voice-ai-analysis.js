@@ -31,6 +31,9 @@ const VoiceAiAnalysis = {
     _expanded: new Set(),
     _expandedDays: new Set(),    // 'YYYY-MM-DD' day groups that are open
     _expandedMonths: new Set(),  // 'YYYY-MM' prior-month groups that are open
+    // Voice feedback UI state, keyed by interaction key (cascade) or
+    // `${key}::${turnIndex}` (realtime turn): { rating, submitting, done }.
+    _feedback: {},
 
     render() {
         if (!this._loaded && !this._loading && !this._error) {
@@ -293,12 +296,19 @@ const VoiceAiAnalysis = {
             : `<span style="background: var(--surface-muted, #f3f4f6); color: var(--text-muted); font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.4px; padding: 2px 6px; border-radius: 4px;">Simple</span>`;
         const meta = `${this._fmtMs(intr.total_latency_ms)} · ${this._fmtTokens(intr.total_tokens)} tokens`;
 
+        // Feedback thumbs sit in the UPPER-RIGHT of the transcript bubble; a
+        // down-vote's reason chips appear just below the bubble.
+        const hasTranscript = !!(intr.prompt || intr.response);
+        const fbThumbs = hasTranscript ? this._renderFeedbackThumbs(intr.key) : '';
+        const fbReason = hasTranscript ? this._renderFeedbackReason(intr.key) : '';
         const transcript = (intr.prompt || intr.response || intr.subtext) ? `
-            <div style="background: var(--surface-muted, #f7f7f8); border-radius: 8px; padding: 10px 12px; margin: 0 0 8px;">
+            <div style="position: relative; background: var(--surface-muted, #f7f7f8); border-radius: 8px; padding: 10px 12px;${fbThumbs ? ' padding-right: 64px;' : ''} margin: 0 0 8px;">
+                ${fbThumbs ? `<div style="position: absolute; top: 8px; right: 10px;">${fbThumbs}</div>` : ''}
                 ${intr.prompt ? this._line('You said', intr.prompt, 13) : ''}
                 ${intr.response ? this._line('Dashie said', intr.response, 13) : ''}
                 ${intr.subtext ? this._line('On-screen', intr.subtext, 12, true) : ''}
-            </div>` : `<div style="color: var(--text-muted); font-size: 12px; margin: 0 0 8px;">(transcript not saved for this turn)</div>`;
+            </div>
+            ${fbReason}` : `<div style="color: var(--text-muted); font-size: 12px; margin: 0 0 8px;">(transcript not saved for this turn)</div>`;
 
         const steps = open ? `
             <table style="width: 100%; border-collapse: collapse; font-size: 12px;"><tbody>
@@ -330,7 +340,7 @@ const VoiceAiAnalysis = {
         const cost = (intr.total_cost > 0) ? ` · ${this._fmtCost(intr.total_cost)}` : '';
         const meta = `${turns.length} turn${turns.length === 1 ? '' : 's'} · ${this._fmtTokens(intr.total_tokens)} tokens${cost}`;
         const shown = open ? turns : turns.slice(0, 1);
-        const thread = shown.map((t, i) => this._renderTurn(t, i === shown.length - 1)).join('');
+        const thread = shown.map((t, i) => this._renderTurn(t, i === shown.length - 1, intr.key, i)).join('');
         const more = turns.length > 1
             ? `<button onclick="event.stopPropagation(); VoiceAiAnalysis.toggleInteraction('${this._escape(intr.key)}')"
                     style="background: none; border: none; color: var(--accent, #4f46e5); font-size: 12px; font-weight: 600; cursor: pointer; padding: 8px 0 0;">
@@ -357,7 +367,7 @@ const VoiceAiAnalysis = {
     /** One conversation turn: You/Dashie lines, with the AI response latency
      *  (end-of-user-speech → response) shown on "Dashie said" when captured.
      *  `last` drops the divider so the thread doesn't end with a dangling rule. */
-    _renderTurn(t, last) {
+    _renderTurn(t, last, intrKey, turnIndex) {
         const lat = (t.latency_ms > 0)
             ? `<span style="color: var(--text-muted); font-size: 10px; margin-left: 6px; letter-spacing: 0;">(${this._escape(this._fmtMs(t.latency_ms))})</span>`
             : '';
@@ -366,11 +376,142 @@ const VoiceAiAnalysis = {
                 <span style="color: var(--text-muted); font-size: 10px; text-transform: uppercase; letter-spacing: 0.5px;">Dashie said</span>${lat}
                 <div style="font-size: 13px; line-height: 1.4;">${this._escape(t.response)}</div>
             </div>` : '';
+        const hasTranscript = (intrKey !== undefined && (t.prompt || t.response));
+        const fbKey = `${intrKey}::${turnIndex}`;
+        const fbThumbs = hasTranscript ? this._renderFeedbackThumbs(fbKey) : '';
+        const fbReason = hasTranscript ? this._renderFeedbackReason(fbKey) : '';
         return `
-            <div style="margin: 0 0 ${last ? '0' : '10px'}; padding: 0 0 ${last ? '0' : '10px'}; ${last ? '' : 'border-bottom: 1px dashed var(--border, #e5e7eb);'}">
+            <div style="position: relative; margin: 0 0 ${last ? '0' : '10px'}; padding: 0${fbThumbs ? ' 64px 0 0' : ''}; padding-bottom: ${last ? '0' : '10px'}; ${last ? '' : 'border-bottom: 1px dashed var(--border, #e5e7eb);'}">
+                ${fbThumbs ? `<div style="position: absolute; top: 0; right: 0;">${fbThumbs}</div>` : ''}
                 ${t.prompt ? this._line('You said', t.prompt, 13) : ''}
                 ${dashie}
+                ${fbReason}
             </div>`;
+    },
+
+    // ── Voice response feedback (thumbs up/down) ─────────────────
+    // Alpha-gated (this page is already alpha-only via FeatureGate; the check
+    // is belt-and-suspenders against the 'voice_feedback' feature_id). Shown
+    // only on rows with a retained transcript. A down-vote opens a reason
+    // picker and ships the transcript snapshot (per-submission consent).
+
+    /** Feather thumbs-up/down icon, matching the console's inline-SVG style. */
+    _thumbIcon(dir) {
+        const path = dir === 'up'
+            ? '<path d="M14 9V5a3 3 0 0 0-3-3l-4 9v11h11.28a2 2 0 0 0 2-1.7l1.38-9a2 2 0 0 0-2-2.3zM7 22H4a2 2 0 0 1-2-2v-7a2 2 0 0 1 2-2h3"/>'
+            : '<path d="M10 15v4a3 3 0 0 0 3 3l4-9V2H5.72a2 2 0 0 0-2 1.7l-1.38 9a2 2 0 0 0 2 2.3zm7-13h2.67A2.31 2.31 0 0 1 22 4v7a2.31 2.31 0 0 1-2.33 2H17"/>';
+        return `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${path}</svg>`;
+    },
+
+    /** Upper-right thumbs cluster inside the transcript bubble. Down stays
+     *  highlighted while its reason picker is open; collapses to "Thanks ✓" once sent. */
+    _renderFeedbackThumbs(fbKey) {
+        // Defensive gate — the page itself is beta-only (voice/AI moved alpha→beta
+        // 2026-07-03), but never offer feedback to a non-beta context if that changes.
+        if (typeof FeatureGate !== 'undefined' && FeatureGate.isBetaUser && !FeatureGate.isBetaUser()) return '';
+        const st = this._feedback[fbKey] || {};
+        const esc = this._escape(fbKey);
+        if (st.done) {
+            return `<span style="font-size: 11px; color: var(--text-muted); white-space: nowrap;">Thanks&nbsp;✓</span>`;
+        }
+        const downActive = st.rating === 'down';
+        const dis = st.submitting ? 'disabled' : '';
+        const cur = st.submitting ? 'default' : 'pointer';
+        return `<span style="display: inline-flex; align-items: center; gap: 2px;">
+            <button title="Good response" aria-label="Thumbs up" onclick="VoiceAiAnalysis.rateUp('${esc}')" ${dis}
+                style="background: none; border: none; cursor: ${cur}; color: var(--text-muted); padding: 3px; display: inline-flex; align-items: center; border-radius: 4px;">${this._thumbIcon('up')}</button>
+            <button title="Bad response" aria-label="Thumbs down" onclick="VoiceAiAnalysis.rateDown('${esc}')" ${dis}
+                style="background: none; border: none; cursor: ${cur}; color: ${downActive ? 'var(--accent, #4f46e5)' : 'var(--text-muted)'}; padding: 3px; display: inline-flex; align-items: center; border-radius: 4px;">${this._thumbIcon('down')}</button>
+        </span>`;
+    },
+
+    /** Down-vote reason chips, rendered below the transcript bubble (empty until
+     *  the user taps 👎, and after the feedback is sent). */
+    _renderFeedbackReason(fbKey) {
+        if (typeof FeatureGate !== 'undefined' && FeatureGate.isBetaUser && !FeatureGate.isBetaUser()) return '';
+        const st = this._feedback[fbKey] || {};
+        if (st.done || st.rating !== 'down') return '';
+        const esc = this._escape(fbKey);
+        const reasons = [
+            ['transcription_inaccurate', "Didn't transcribe what I said accurately"],
+            ['response_inaccurate', 'Inaccurate response'],
+            ['other', 'Other'],
+        ];
+        const chips = reasons.map(([r, label]) =>
+            `<button onclick="VoiceAiAnalysis.pickReason('${esc}', '${r}')" ${st.submitting ? 'disabled' : ''}
+                style="background: var(--surface-muted, #f3f4f6); border: 1px solid var(--border, #e5e7eb); color: var(--text-secondary); font-size: 12px; padding: 4px 10px; border-radius: 14px; cursor: ${st.submitting ? 'default' : 'pointer'};">${this._escape(label)}</button>`
+        ).join('');
+        return `<div style="padding: 0 0 8px;">
+            <div style="font-size: 12px; color: var(--text-muted); margin: 0 0 6px;">What was wrong with this interaction?</div>
+            <div style="display: flex; gap: 6px; flex-wrap: wrap;">${chips}</div>
+        </div>`;
+    },
+
+    /** Resolve a feedback key back to its interaction (+ turn for realtime). */
+    _resolveFb(fbKey) {
+        const [key, turnStr] = String(fbKey).split('::');
+        const intr = this._interactions.find(i => i.key === key);
+        if (!intr) return { intr: null, turn: null, turnIndex: null };
+        if (turnStr !== undefined) {
+            const idx = parseInt(turnStr, 10);
+            return { intr, turn: (intr.turns || [])[idx] || null, turnIndex: idx };
+        }
+        return { intr, turn: null, turnIndex: null };
+    },
+
+    /** Best-effort model label for a row (cascade: the AI step; realtime: row.model). */
+    _modelOf(intr) {
+        if (intr.model) return intr.model;
+        const ai = (intr.steps || []).find(s => s.kind === 'ai');
+        return ai ? ai.label : null;
+    },
+
+    async rateUp(fbKey) {
+        const { intr } = this._resolveFb(fbKey);
+        if (!intr) return;
+        this._feedback[fbKey] = { ...(this._feedback[fbKey] || {}), submitting: true };
+        App.renderPage();
+        try {
+            await VoiceAiApi.submitFeedback({ sessionId: intr.session_id, rating: 'up', model: this._modelOf(intr) });
+            this._feedback[fbKey] = { done: true };
+        } catch (e) {
+            this._feedback[fbKey] = {};
+            Toast.error(`Couldn't send feedback: ${e.message}`);
+        }
+        App.renderPage();
+    },
+
+    rateDown(fbKey) {
+        this._feedback[fbKey] = { ...(this._feedback[fbKey] || {}), rating: 'down' };
+        App.renderPage();
+    },
+
+    async pickReason(fbKey, reason) {
+        const { intr, turn, turnIndex } = this._resolveFb(fbKey);
+        if (!intr) return;
+        let detail = null;
+        if (reason === 'other') {
+            detail = (window.prompt('Anything to add? (optional)') || '').trim() || null;
+        }
+        this._feedback[fbKey] = { rating: 'down', submitting: true };
+        App.renderPage();
+        try {
+            await VoiceAiApi.submitFeedback({
+                sessionId: intr.session_id,
+                rating: 'down',
+                reason,
+                detail,
+                promptText: turn ? turn.prompt : intr.prompt,
+                responseText: turn ? turn.response : intr.response,
+                turnIndex: turn ? turnIndex : null,
+                model: this._modelOf(intr),
+            });
+            this._feedback[fbKey] = { done: true };
+        } catch (e) {
+            this._feedback[fbKey] = { rating: 'down' };
+            Toast.error(`Couldn't send feedback: ${e.message}`);
+        }
+        App.renderPage();
     },
 
     _renderStep(s) {

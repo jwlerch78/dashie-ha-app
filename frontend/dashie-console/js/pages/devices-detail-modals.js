@@ -280,13 +280,18 @@ const DevicesDetailModals = {
         const sleep = device.settings?.sleep || {};
         const display = device.settings?.display || {};
 
-        const enabled = sleep['sleep.enabled'] !== false;
-        const method = sleep['sleep.method'] || 'schedule';
+        // Keys MUST match the app's blob (SETTINGS_KEY_MAP.sleep): enabled,
+        // sleepMethod, sleepTime, wakeTime, resleepTimeout, inactivityTimeout,
+        // sleepShowClock, reduceBrightnessOnSleep, motionWakeForSleep. There is
+        // NO `sleep.*`-prefixed key and NO stored sleepMode — the mode is derived
+        // from enabled + sleepMethod (off / schedule / inactivity).
+        const enabled = sleep.enabled !== false;
+        const method = sleep.sleepMethod || 'schedule';
         const sleepMode = !enabled ? 'off' : method;
         const scheduleVisible = sleepMode === 'schedule';
         const inactivityVisible = sleepMode === 'inactivity';
         const optionsVisible = sleepMode !== 'off';
-        const screenOff = display['display.screenOffBehavior'] || display.screenOffBehavior || 'black_overlay';
+        const screenOff = display.screenOffBehavior || 'black_overlay';
         const notPowerOff = screenOff !== 'power_off';
 
         const D = DevicesDetail;
@@ -294,49 +299,51 @@ const DevicesDetailModals = {
             <div style="display: flex; flex-direction: column; gap: 14px;">
                 <div class="form-group">
                     <label class="form-label">Sleep Mode</label>
-                    ${D._settingSelectRaw(device, 'sleep', 'sleep.sleepMode', sleepMode, [
+                    ${D._settingSelectRaw(device, 'sleep', 'sleepMode', sleepMode, [
                         ['off', 'Off'], ['schedule', 'Schedule'], ['inactivity', 'Timeout']
                     ], 'DevicesDetailModals._onSleepModeChange(this.value)')}
                 </div>
                 ${scheduleVisible ? `
                     ${this._divider('Schedule')}
-                    ${D.settingSelect(device, 'sleep', 'sleep.timerStart',
-                        'Sleep Time', sleep['sleep.timerStart'] || '22:00', OptionCatalog.sleepTimes())}
-                    ${D.settingSelect(device, 'sleep', 'sleep.timerEnd',
-                        'Wake Time', sleep['sleep.timerEnd'] || '07:00', OptionCatalog.wakeTimes())}
-                    ${D.settingSelect(device, 'sleep', 'sleep.resleepTimeout',
-                        'Re-sleep Delay (min)', String(sleep['sleep.resleepTimeout'] ?? 15), OptionCatalog.resleepDelays())}
+                    ${D.settingSelect(device, 'sleep', 'sleepTime',
+                        'Sleep Time', sleep.sleepTime || '22:00', OptionCatalog.sleepTimes())}
+                    ${D.settingSelect(device, 'sleep', 'wakeTime',
+                        'Wake Time', sleep.wakeTime || '07:00', OptionCatalog.wakeTimes())}
+                    ${D.settingSelect(device, 'sleep', 'resleepTimeout',
+                        'Re-sleep Delay (min)', String(sleep.resleepTimeout ?? 15), OptionCatalog.resleepDelays())}
                 ` : ''}
                 ${inactivityVisible ? `
                     ${this._divider('Inactivity')}
-                    ${D.settingSelect(device, 'sleep', 'sleep.inactivityTimeout',
-                        'Sleep After (sec)', String(sleep['sleep.inactivityTimeout'] ?? 120), OptionCatalog.inactivityTimeouts())}
+                    ${D.settingSelect(device, 'sleep', 'inactivityTimeout',
+                        'Sleep After (sec)', String(sleep.inactivityTimeout ?? 120), OptionCatalog.inactivityTimeouts())}
                 ` : ''}
                 ${optionsVisible ? `
                     ${this._divider('Options')}
                     ${D._settingSelectRaw(device, 'display', 'screenOffBehavior', screenOff, this.SCREEN_OFF_BEHAVIORS)}
                     ${notPowerOff ? `
-                        ${D._settingToggleRow(device, 'sleep', 'sleep.sleepShowClock',
-                            'Show Clock During Sleep', sleep['sleep.sleepShowClock'] === true)}
-                        ${D._settingToggleRow(device, 'sleep', 'sleep.reduceBrightnessOnSleep',
-                            'Reduce Brightness While Asleep', sleep['sleep.reduceBrightnessOnSleep'] === true)}
+                        ${D._settingToggleRow(device, 'sleep', 'sleepShowClock',
+                            'Show Clock During Sleep', sleep.sleepShowClock === true)}
+                        ${D._settingToggleRow(device, 'sleep', 'reduceBrightnessOnSleep',
+                            'Reduce Brightness While Asleep', sleep.reduceBrightnessOnSleep === true)}
                     ` : ''}
-                    ${D._settingToggleRow(device, 'sleep', 'sleep.motionWakeForSleep',
-                        'Motion Wake', sleep['sleep.motionWakeForSleep'] === true)}
+                    ${D._settingToggleRow(device, 'sleep', 'motionWakeForSleep',
+                        'Motion Wake', sleep.motionWakeForSleep === true)}
                 ` : ''}
             </div>
         `;
-        return this._modal('Sleep / Wake', body, 'DevicesDetailModals.closeSleep()');
+        return this._modal('Sleep / Wake', body, 'DevicesDetailModals.closeSleep()', this._applyToAllFooter());
     },
 
     _onSleepModeChange(value) {
         const device = DevicesPage._findDevice(this._sleepDeviceId);
         if (!device) return;
         const enabled = value !== 'off';
-        const method = value === 'off' ? (device.settings?.sleep?.['sleep.method'] || 'schedule') : value;
-        DevicesPage._onSettingChange(device.device_id, 'sleep', 'sleep.enabled', enabled);
-        DevicesPage._onSettingChange(device.device_id, 'sleep', 'sleep.method', method);
-        DevicesPage._onSettingChange(device.device_id, 'sleep', 'sleep.sleepMode', value);
+        // Preserve the underlying schedule/inactivity method when turning sleep
+        // off, so re-enabling restores the prior mode. Only enabled + sleepMethod
+        // are persisted — sleepMode is a UI-only projection of those two.
+        const method = value === 'off' ? (device.settings?.sleep?.sleepMethod || 'schedule') : value;
+        DevicesPage._onSettingChange(device.device_id, 'sleep', 'enabled', enabled);
+        DevicesPage._onSettingChange(device.device_id, 'sleep', 'sleepMethod', method);
     },
 
     // ── Theme modal (family + dark mode) ──────────────────────
@@ -367,7 +374,7 @@ const DevicesDetailModals = {
                 </div>
             </div>
         `;
-        return this._modal('Theme', body, 'DevicesDetailModals.closeTheme()');
+        return this._modal('Theme', body, 'DevicesDetailModals.closeTheme()', this._applyToAllFooter());
     },
 
     // ── Generic single-picker modal ───────────────────────────
@@ -637,7 +644,116 @@ const DevicesDetailModals = {
                 Manage personalities (create, edit) on the <a href="#voice-ai" onclick="event.preventDefault(); App.navigate('voice-ai')">Voice & AI</a> page.
             </div>
         `;
-        return this._modal('Personality', body, 'DevicesDetailModals.closeVoicePersonality()');
+        return this._modal('Personality', body, 'DevicesDetailModals.closeVoicePersonality()', this._applyToAllFooter());
+    },
+
+    // ── Photos picker (device-level photos.sourceType + album) ────
+    // Source type is device-specific; albums are listable only for the Dashie
+    // Cloud (supabase) source via list_albums (account-level album catalog).
+    // Writes photos.sourceType, and photos.albumId + photos.albumName when a
+    // Dashie Cloud album is chosen — the keys applyDeviceSettings fans out to
+    // the photo widget on each device.
+
+    _photosOpen: false,
+    _photosDeviceId: null,
+    _photosSource: null,        // live source selection (drives album-picker visibility)
+    _photosAlbums: null,        // cached list_albums result this session
+
+    async openPhotos(deviceId) {
+        this._photosOpen = true;
+        this._photosDeviceId = deviceId;
+        const device = DevicesPage._findDevice(deviceId);
+        this._photosSource = device?.settings?.photos?.sourceType || 'unsplash';
+        App.renderPage();
+        if (this._photosSource === 'supabase') this._loadAlbums();
+    },
+
+    closePhotos() {
+        this._photosOpen = false;
+        this._photosDeviceId = null;
+        this._photosSource = null;
+        App.renderPage();
+    },
+
+    async _loadAlbums() {
+        if (this._photosAlbums || typeof DashieAuth === 'undefined') return;
+        try {
+            const res = await DashieAuth.dbRequest('list_albums', {});
+            this._photosAlbums = res.albums || res.data || [];
+        } catch { this._photosAlbums = []; }
+        App.renderPage();
+    },
+
+    // Source options mirror settings-photos-page.js. HA sources (Home Assistant,
+    // Immich) only make sense when the device runs HA, so gate them on the
+    // device's stored home_assistant.core.haEnabled. The console user is always
+    // logged in, so the cloud/drive sources are always offered.
+    _photoSourceOptions(device) {
+        const haEnabled = device?.settings?.home_assistant?.core?.haEnabled === true;
+        return [
+            ...(haEnabled ? [['ha_media', 'Home Assistant'], ['immich', 'Immich']] : []),
+            ['google_drive', 'Google Drive'],
+            ['supabase', 'Dashie Cloud'],
+            ['unsplash', 'Unsplash'],
+        ];
+    },
+
+    renderPhotosModal() {
+        if (!this._photosOpen) return '';
+        const device = DevicesPage._findDevice(this._photosDeviceId);
+        if (!device) return '';
+        const photos = device.settings?.photos || {};
+        const source = this._photosSource || photos.sourceType || 'unsplash';
+        const D = DevicesDetail;
+
+        let albumPicker = '';
+        if (source === 'supabase') {
+            if (this._photosAlbums === null) {
+                albumPicker = `<div style="font-size: var(--font-size-sm); color: var(--text-muted);">Loading albums…</div>`;
+            } else {
+                const albumOpts = [['', 'All photos'],
+                    ...this._photosAlbums.map(a => [String(a.id), a.name || 'Untitled album'])];
+                albumPicker = `
+                    <div class="form-group">
+                        <label class="form-label">Album</label>
+                        ${D._settingSelectRaw(device, 'photos', 'albumId', String(photos.albumId || ''),
+                            albumOpts, 'DevicesDetailModals._onPhotoAlbumChange(this.value)')}
+                    </div>`;
+            }
+        }
+
+        const body = `
+            <div style="display: flex; flex-direction: column; gap: 14px;">
+                <div class="form-group">
+                    <label class="form-label">Photo Source</label>
+                    ${D._settingSelectRaw(device, 'photos', 'sourceType', source,
+                        this._photoSourceOptions(device), 'DevicesDetailModals._onPhotoSourceChange(this.value)')}
+                </div>
+                ${albumPicker}
+                ${source !== 'supabase' ? `
+                    <div style="font-size: var(--font-size-sm); color: var(--text-muted);">
+                        Album selection is available for the Dashie Cloud source. Other sources
+                        use their own configuration on the device.
+                    </div>` : ''}
+            </div>
+        `;
+        return this._modal('Photos', body, 'DevicesDetailModals.closePhotos()', this._applyToAllFooter());
+    },
+
+    _onPhotoSourceChange(value) {
+        this._photosSource = value;
+        DevicesPage._onSettingChange(this._photosDeviceId, 'photos', 'sourceType', value);
+        if (value === 'supabase') this._loadAlbums();
+        App.renderPage();
+    },
+
+    _onPhotoAlbumChange(albumId) {
+        const album = (this._photosAlbums || []).find(a => String(a.id) === String(albumId));
+        const albumName = album ? (album.name || '') : '';
+        // albumId + albumName are written together — the widget keys off albumId
+        // but the card/summary shows albumName.
+        DevicesPage._onSettingChange(this._photosDeviceId, 'photos', 'albumId', albumId || '');
+        DevicesPage._onSettingChange(this._photosDeviceId, 'photos', 'albumName', albumName);
     },
 
     // ── PIN modal (set / change / clear) ──────────────────────
@@ -739,7 +855,7 @@ const DevicesDetailModals = {
 
     // ── Modal shell + helpers ─────────────────────────────────
 
-    _modal(title, bodyHtml, onClose) {
+    _modal(title, bodyHtml, onClose, footerHtml) {
         return `
             <div class="modal-backdrop" onclick="DevicesDetailModals._onBackdrop(event, '${onClose}')">
                 <div class="modal" style="max-width: 480px; width: 92vw;">
@@ -748,7 +864,26 @@ const DevicesDetailModals = {
                         <button class="modal-close" onclick="${onClose}">✕</button>
                     </div>
                     <div class="modal-body">${bodyHtml}</div>
+                    ${footerHtml || ''}
                 </div>
+            </div>
+        `;
+    },
+
+    /**
+     * "Apply to all devices" checkbox, rendered as a modal footer. When checked,
+     * DevicesPage._onSettingChange reads this at write time (by stable id) and
+     * fans the same (category, key, value) out to every active device instead of
+     * just the one being edited. Stateless — the checkbox IS the state, so there
+     * is nothing to reset on close (only one settings modal is open at a time).
+     */
+    _applyToAllFooter() {
+        return `
+            <div class="modal-footer" style="padding: 12px 16px; border-top: 1px solid var(--border, #e5e7eb);">
+                <label class="setting-row" style="cursor: pointer; margin: 0; display: flex; align-items: center; gap: 10px;">
+                    <input type="checkbox" id="device-apply-to-all">
+                    <span class="setting-row-label" style="font-size: var(--font-size-sm);">Apply to all devices</span>
+                </label>
             </div>
         `;
     },

@@ -31,6 +31,10 @@ const App = {
         // the rest of init takes time.
         this._consumeDeletedParam();
 
+        // Stash any `?next=` return intent (from subscribe.html) before auth,
+        // so it survives the Google OAuth round-trip. Honored once authed.
+        this._captureNextParam();
+
         // Kick off the dropdown-options catalog fetch. Fire-and-forget —
         // doesn't depend on auth (anon-key access), runs in parallel with
         // everything else. Bundled fallback values are used until the
@@ -61,7 +65,9 @@ const App = {
 
             // If init returned a promise (OAuth callback), it handled the redirect
             if (result === true) {
-                // OAuth callback was handled — JWT is now set
+                // OAuth callback was handled — JWT is now set.
+                // Honor a pending purchase return-intent before showing the app.
+                if (this._honorPostLoginNext()) return;
                 DashieAuth.loadUserProfile().then(() => this.renderPage()).catch(() => {});
                 this._showApp();
                 if (typeof SubscribeGate !== 'undefined') SubscribeGate.checkAndShow();
@@ -72,6 +78,8 @@ const App = {
         }
 
         if (DashieAuth.isAuthenticated) {
+            // Honor a pending purchase return-intent before showing the app.
+            if (this._honorPostLoginNext()) return;
             DashieAuth.loadUserProfile().then(() => this.renderPage()).catch(() => {});
             this._showApp();
             if (typeof SubscribeGate !== 'undefined') SubscribeGate.checkAndShow();
@@ -207,6 +215,38 @@ const App = {
         } catch (_) { /* non-fatal */ }
     },
 
+    // ── Post-login return intent (`?next=`) ──────────────────────────
+    // subscribe.html bounces unauthenticated buyers here so they can sign in
+    // with Google, passing `?next=<path>` (the checkout URL). We stash it
+    // before auth and, once authenticated, redirect there instead of showing
+    // the console — so "click Purchase → sign in → buy" has no dead end.
+
+    _NEXT_STORAGE_KEY: 'dashie-post-login-next',
+
+    /** Capture `?next=` into sessionStorage so it survives the OAuth round-trip.
+     *  Called from init() before auth bootstrap. */
+    _captureNextParam() {
+        try {
+            const next = new URLSearchParams(window.location.search).get('next');
+            if (next) sessionStorage.setItem(this._NEXT_STORAGE_KEY, next);
+        } catch (_) { /* non-fatal */ }
+    },
+
+    /** If a return intent is stashed, redirect to it and return true. Only
+     *  same-origin relative paths are honored (open-redirect guard). */
+    _honorPostLoginNext() {
+        let next;
+        try {
+            next = sessionStorage.getItem(this._NEXT_STORAGE_KEY);
+            if (next) sessionStorage.removeItem(this._NEXT_STORAGE_KEY);
+        } catch (_) { return false; }
+        if (typeof next === 'string' && next.startsWith('/') && !next.startsWith('//')) {
+            window.location.replace(next);
+            return true;
+        }
+        return false;
+    },
+
     /**
      * Wire SettingsSync to Console's Supabase client + the authenticated
      * user. Console-auth lazily creates a Supabase realtime client for
@@ -252,10 +292,27 @@ const App = {
         document.getElementById('top-bar').innerHTML = '';
         const addonMode = DashieAuth.isAddonMode;
         const onClick = addonMode ? 'App._handleAddonSignIn()' : 'DashieAuth.signIn()';
-        const title = addonMode ? 'Sign in to Dashie' : 'Welcome to Dashie Console';
+
+        // Purchase intent: the buyer was sent here from subscribe.html to sign
+        // in with the account they're buying a license for (see subscribe() +
+        // _captureNextParam). Tailor the copy so it's clear WHICH account to use.
+        let purchaseIntent = false;
+        try {
+            const n = sessionStorage.getItem(App._NEXT_STORAGE_KEY);
+            purchaseIntent = !!n && n.indexOf('subscribe.html') !== -1;
+        } catch (_) {}
+
+        const title = addonMode ? 'Sign in to Dashie'
+            : purchaseIntent ? 'Purchase a Dashie license'
+            : 'Welcome to Dashie Console';
         const subtitle = addonMode
             ? 'Connect your Home Assistant to your Dashie account.'
+            : purchaseIntent
+            ? 'Sign in to the Google account you wish to purchase a license for.'
             : 'Manage your devices, household, and account from any browser.';
+        const googleDesc = purchaseIntent
+            ? "The account you'll buy the license for"
+            : 'Use your Dashie account';
 
         document.getElementById('content').innerHTML = `
             <div class="dashie-login-overlay">
@@ -276,7 +333,7 @@ const App = {
                             </span>
                             <span class="dashie-path-text">
                                 <span class="dashie-path-label">Sign in with Google</span>
-                                <span class="dashie-path-desc">Use your Dashie account</span>
+                                <span class="dashie-path-desc">${googleDesc}</span>
                             </span>
                         </button>
 
@@ -516,6 +573,13 @@ const App = {
         // _showLogin(), so bailing here when signed out is always correct.
         if (!DashieAuth.isAuthenticated) return;
 
+        // Expired-trial branch: a user the server says has no console value
+        // (no HA, no registered devices) gets a focused purchase landing
+        // instead of an empty console. Fail-open — only lock when the server
+        // *explicitly* reports has_console_value:false, so an old edge fn (no
+        // field) or unloaded state never strands device/HA users.
+        if (this._expiredLockToPurchase()) { this._renderExpiredLanding(); return; }
+
         const entry = this.pages[this._currentPage];
         if (!entry) return;
 
@@ -546,9 +610,11 @@ const App = {
         // Content
         document.getElementById('content').innerHTML = pageObj.render();
 
-        // Global pending-deletion banner (persists on every page while scheduled).
+        // Global banner slot: pending-deletion takes priority; otherwise a
+        // persistent "trial/subscription ended — Subscribe" banner for expired
+        // users who still have console value (Devices/HA management stays usable).
         const _gb = document.getElementById('global-banner');
-        if (_gb) _gb.innerHTML = this._deletionBannerHtml();
+        if (_gb) _gb.innerHTML = this._deletionBannerHtml() || this._expiredBannerHtml();
         // No scroll reset here — `renderPage` is also called for in-place
         // state updates (e.g. toggling hide on a calendar row), and resetting
         // scroll mid-page is jarring. Navigation paths handle scroll reset
@@ -558,6 +624,90 @@ const App = {
     _resetContentScroll() {
         const el = document.getElementById('content');
         if (el) el.scrollTop = 0;
+    },
+
+    // ── Expired-trial branching (Part B3) ────────────────────────────
+    // The server (check-subscription) tells us whether an expired user still
+    // has console value via has_console_value (is_ha_user || has active
+    // device). We branch the expired UX on it rather than guessing.
+
+    /** True only when the user is confirmed expired AND the server explicitly
+     *  reports no console value → lock the console to a purchase landing.
+     *  Fail-open: missing field / unloaded state never locks. */
+    _expiredLockToPurchase() {
+        if (typeof FeatureGate === 'undefined') return false;
+        if (FeatureGate.hasEntitlement()) return false; // not expired (or unknown)
+        const st = FeatureGate._subscriptionState;
+        return !!st && st.has_console_value === false;
+    },
+
+    /** Session-scoped dismiss flag for the expired banner (resets on reload —
+     *  the pill + Purchase License nav item keep the CTA available). */
+    _expiredBannerDismissed: false,
+
+    /** Persistent "trial/subscription ended" banner for expired users who keep
+     *  console access (device/HA management). Dismissable for the session.
+     *  Empty otherwise. */
+    _expiredBannerHtml() {
+        if (typeof FeatureGate === 'undefined' || FeatureGate.hasEntitlement()) return '';
+        if (this._expiredBannerDismissed) return '';
+        const st = FeatureGate._subscriptionState || {};
+        const canceled = st.subscription_status === 'canceled';
+        const msg = canceled ? 'Your Dashie subscription has ended.' : 'Your Dashie trial has ended.';
+        return `
+            <div style="background: var(--accent, #ffaa00); color:#fff; padding:10px 16px; display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap;">
+                <div style="font-size:14px; font-weight:500;">${msg} Subscribe to restore calendar, photos, family &amp; more.</div>
+                <div style="display:flex; align-items:center; gap:8px; flex-shrink:0;">
+                    <button class="btn btn-sm" style="background:#fff; color:var(--accent,#ffaa00); font-weight:700; border:none;"
+                            onclick="SubscribeGate._goToSubscribe()">Subscribe</button>
+                    <button aria-label="Dismiss" title="Dismiss"
+                            style="background:none; border:none; color:#fff; font-size:18px; line-height:1; cursor:pointer; padding:4px 6px; opacity:0.9;"
+                            onclick="App._dismissExpiredBanner()">&times;</button>
+                </div>
+            </div>`;
+    },
+
+    /** Hide the expired banner for the rest of this session. */
+    _dismissExpiredBanner() {
+        this._expiredBannerDismissed = true;
+        const gb = document.getElementById('global-banner');
+        if (gb) gb.innerHTML = this._deletionBannerHtml() || '';
+    },
+
+    /** Full-content purchase landing for expired users with no console value.
+     *  Reuses the login-overlay/card styling; keeps the top-bar so Sign out /
+     *  Delete account remain reachable. */
+    _renderExpiredLanding() {
+        const sb = document.getElementById('sidebar');
+        if (sb) { sb.innerHTML = ''; sb.style.display = 'none'; }
+        const tb = document.getElementById('top-bar');
+        if (tb) tb.innerHTML = TopBar.render('Subscribe', '', false);
+        const _gb = document.getElementById('global-banner');
+        if (_gb) _gb.innerHTML = '';
+
+        const st = (typeof FeatureGate !== 'undefined' && FeatureGate._subscriptionState) || {};
+        const canceled = st.subscription_status === 'canceled';
+        const heading = canceled ? 'Your Dashie subscription has ended' : 'Your Dashie trial has ended';
+        const content = document.getElementById('content');
+        if (!content) return;
+        content.innerHTML = `
+            <div class="dashie-login-overlay">
+                <div class="dashie-login-card" style="max-width: 460px;">
+                    <img src="assets/dashie-logo-orange.png" alt="Dashie" class="dashie-login-logo">
+                    <div class="dashie-login-title">${heading}</div>
+                    <div class="dashie-login-subtitle">Subscribe to unlock the full Dashie experience:</div>
+                    <ul style="text-align:left; color: var(--text-secondary, #555); font-size:14px; line-height:1.7; margin: 4px auto 20px; max-width: 320px;">
+                        <li>Calendar sync across Google, Apple, Microsoft</li>
+                        <li>Photo library + slideshows on every screen</li>
+                        <li>Chores, rewards, and family sharing</li>
+                        <li>All your registered Dashie devices</li>
+                    </ul>
+                    <div class="dashie-login-buttons">
+                        <button class="btn btn-primary" style="width:100%;" onclick="SubscribeGate._goToSubscribe()">Subscribe to Dashie</button>
+                        <button class="btn btn-ghost btn-sm" style="margin-top:10px;" onclick="AccountPage.signOut()">Sign out</button>
+                    </div>
+                </div>
+            </div>`;
     },
 
     // Re-fetch the current page's data in place via its refresh() hook — keeps

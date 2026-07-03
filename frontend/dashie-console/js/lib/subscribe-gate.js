@@ -66,7 +66,11 @@ const SubscribeGate = {
             if (typeof FeatureGate !== 'undefined') FeatureGate.setSubscriptionState(data);
             if (this.isRequired(data)) {
                 this._shownThisSession = true;
-                this.showPrompt(data);
+                // Users with no console value get the full-page purchase landing
+                // (App._renderExpiredLanding) — don't stack this modal on top.
+                // Everyone else gets a one-time nudge; the persistent global
+                // banner keeps the CTA visible after dismiss.
+                if (data.has_console_value !== false) this.showPrompt(data);
             }
         } catch (e) {
             console.warn('[SubscribeGate] check-subscription failed:', e?.message || e);

@@ -127,35 +127,65 @@ const DevicesCard = {
         `;
     },
 
-    /** Simple settings summary: Theme · Sleep · AI Personality · Photos. */
+    /** Simple settings summary: Theme · Sleep · AI Personality · Photos.
+     *  Keys here MUST match what the app writes into user_devices.settings.<category>
+     *  via SETTINGS_KEY_MAP (device-settings-writer.js) — NOT dot-notated store paths.
+     *  Real blob shape (see a live row): display.{themeFamily,themeMode,darkMode},
+     *  sleep.{enabled,sleepTime,wakeTime}, aiVoice.personalityId, photos.{albumName,sourceType}. */
     _renderSimpleSettings(device, m) {
         const settings = device.settings || {};
         const display = settings.display || {};
         const sleep = settings.sleep || {};
         const aiVoice = settings.aiVoice || {};
-        const photos = settings.photos || settings.interface || {};
+        const photos = settings.photos || {};
 
-        const theme = this._prettify(display['preferences.theme'] || 'default');
-        const aiPersonality = this._prettify(aiVoice['aiVoice.personality'] || 'friendly');
-        const photoAlbum = photos['photos.albumName'] || photos['photoSourceType']
-            ? this._prettify(photos['photos.albumName'] || photos['photoSourceType'])
+        // Theme — themeFamily is the per-device family; append the light/dark mode
+        // when we can determine it. Blank on devices that never stored a theme
+        // (theme is otherwise an account-level default we don't have here).
+        let theme = 'Default';
+        if (display.themeFamily) {
+            theme = this._prettify(display.themeFamily);
+            const mode = display.themeMode
+                || (typeof display.darkMode === 'boolean' ? (display.darkMode ? 'dark' : 'light') : '');
+            if (mode) theme += ` · ${this._prettify(mode)}`;
+        } else if (typeof display.darkMode === 'boolean') {
+            theme = display.darkMode ? 'Dark' : 'Light';
+        }
+
+        // AI Personality — the device blob stores personalityId; built-in ids
+        // ('dashie', 'friendly', …) prettify to a readable name.
+        const aiPersonality = aiVoice.personalityId
+            ? this._prettify(aiVoice.personalityId)
             : 'Default';
-        const sleepSchedule = (sleep['sleep.timerStart'] && sleep['sleep.timerEnd'])
-            ? `${this._formatTime12(sleep['sleep.timerStart'])} – ${this._formatTime12(sleep['sleep.timerEnd'])}`
+
+        // Photos — prefer a named album, else the source type (immich, unsplash, …).
+        const photoAlbum = photos.albumName
+            ? this._prettify(photos.albumName)
+            : (photos.sourceType ? this._prettify(photos.sourceType) : 'Default');
+
+        // Sleep / Wake — only a live schedule when enabled and both times set.
+        const sleepSchedule = (sleep.enabled && sleep.sleepTime && sleep.wakeTime)
+            ? `${this._formatTime12(sleep.sleepTime)} – ${this._formatTime12(sleep.wakeTime)}`
             : 'Off';
 
-        const row = (label, value) => `
-            <div style="display: flex; justify-content: space-between; padding: 6px 0; font-size: var(--font-size-sm);">
+        // Each row opens the matching editor modal. stopPropagation keeps the
+        // card's click-to-detail navigation from also firing. The ‹edit› chevron
+        // signals the row is tappable.
+        const id = device.device_id;
+        const row = (label, value, openCall) => `
+            <div onclick="event.stopPropagation(); ${openCall}"
+                 style="display: flex; justify-content: space-between; align-items: center; padding: 6px 0; font-size: var(--font-size-sm); cursor: pointer;"
+                 onmouseover="this.style.opacity=0.65" onmouseout="this.style.opacity=1">
                 <span style="color: var(--text-secondary);">${label}</span>
-                <span style="font-weight: 500; color: var(--text-primary); text-align: right; max-width: 60%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${DevicesPage._escape(value)}</span>
+                <span style="font-weight: 500; color: var(--text-primary); text-align: right; max-width: 62%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${DevicesPage._escape(value)}<span style="color: var(--text-muted); margin-left: 6px;">›</span></span>
             </div>
         `;
         return `
             <div style="margin-top: 12px; border-top: 1px solid var(--border, #e5e7eb); padding-top: 4px;">
-                ${row('Theme', theme)}
-                ${row('Sleep / Wake', sleepSchedule)}
-                ${row('AI Personality', aiPersonality)}
-                ${row('Photos', photoAlbum)}
+                ${row('Theme', theme, `DevicesDetailModals.openTheme('${id}')`)}
+                ${row('Sleep / Wake', sleepSchedule, `DevicesDetailModals.openSleep('${id}')`)}
+                ${row('AI Personality', aiPersonality, `DevicesDetailModals.openVoicePersonality('${id}')`)}
+                ${row('Photos', photoAlbum, `DevicesDetailModals.openPhotos('${id}')`)}
             </div>
         `;
     },

@@ -5,21 +5,25 @@
 
    Rules (composable, per-feature key):
 
-   1. 'alpha-only' — runtime gate via user_profiles.special_access.
-      Visible only when DashieAuth.specialAccess === 'alpha'.
-      Hidden for default-beta users (i.e. fresh signups, the cohort that
-      gets the cloud beta without AI/voice/billing access). This is the
-      primary gate for cloud-beta hiding of voice/AI/credits.
+   Access ladder (2026-07-03 restructure): standard < beta < alpha.
 
-   2. 'addon'      — visible only inside the HA add-on (Ingress).
+   1. 'beta-only'  — visible when DashieAuth.specialAccess is 'beta' OR 'alpha'
+      (isBetaUser). The hand-selected cohort. Gates voice/AI, credits, video feeds.
+      Hidden for 'standard' (fresh-signup default) users.
+
+   2. 'alpha-only' — visible only when specialAccess === 'alpha' (isAlphaUser),
+      i.e. dev/innermost. Gates the least-ready features: chores, rewards,
+      locations, scheduled actions. Hidden for standard AND beta.
+
+   3. 'addon'      — visible only inside the HA add-on (Ingress).
       Used for features that depend on the HA integration runtime
       (HA media browser, etc.).
 
-   3. 'dev'        — visible only when talking to the dev Supabase
+   4. 'dev'        — visible only when talking to the dev Supabase
       project. Used for features still under active development that
       we don't want loose in prod.
 
-   4. true / false — hard show / hard hide.
+   5. true / false — hard show / hard hide.
 
    Usage:
        FeatureGate.shouldShow('voiceAi')   // boolean
@@ -69,35 +73,46 @@ const FeatureGate = {
     },
 
     /**
+     * Truthy when the user has BETA access or higher (the ladder is inclusive:
+     * standard < beta < alpha). Voice/AI + credits moved alpha→beta in the
+     * 2026-07-03 access-tier restructure — this gates the hand-selected cohort.
+     * Developer tier counts too.
+     */
+    isBetaUser() {
+        if (typeof DashieAuth === 'undefined') return false;
+        if (DashieAuth.tier === 'developer') return true;
+        const a = DashieAuth.specialAccess;
+        return a === 'beta' || a === 'alpha';
+    },
+
+    /**
      * Per-feature visibility rules.
      *   true              → always visible
      *   false             → always hidden (not ready for beta)
      *   'addon'           → visible only when isAddonMode()
      *   'dev'             → visible only when isDevEnv()
-     *   'alpha-only'      → visible only when isAlphaUser()
+     *   'beta-only'       → visible only when isBetaUser()  (beta OR alpha)
+     *   'alpha-only'      → visible only when isAlphaUser() (alpha / dev only)
      */
     FEATURE_RULES: {
-        // Voice / AI features depend on Dashie Cloud token spend, which
-        // beta users don't have. Alpha users (admin-promoted) see them.
-        voiceAi:    'alpha-only',
-        videoFeeds: 'alpha-only',
+        // Voice / AI features (Dashie Cloud token spend) — the hand-selected BETA
+        // cohort. Moved alpha→beta in the 2026-07-03 access-tier restructure.
+        voiceAi:    'beta-only',
+        videoFeeds: 'beta-only',
 
-        // Credits / token-bank / BYOK surfaces — same cohort gate as
-        // voice/AI. Beta users have a flat subscription; credits don't
-        // apply to them.
-        credits:    'alpha-only',
+        // Credits / token-bank / BYOK — the beta cohort meters cloud voice/AI and
+        // gets starter credits, so it's a beta gate now (was alpha).
+        credits:    'beta-only',
 
-        // Locations / GPS is alpha-only per the feature_access catalog —
-        // mirror that gate here so the Console matches the dashboard.
+        // Locations / GPS — STAYS alpha (dev/innermost only), mirroring the
+        // feature_access catalog (rollout='alpha').
         locations:  'alpha-only',
 
-        // Chores & rewards are alpha-only — they're not part of the beta
-        // Cloud product. Mirrors the dashboard's feature_access catalog.
+        // Chores & rewards — STAY alpha, mirroring the feature_access catalog.
         chores:     'alpha-only',
         rewards:    'alpha-only',
 
-        // Scheduled Actions (voice reminders) — alpha-only, mirrors the
-        // dashboard's feature_access 'scheduled_actions' catalog entry.
+        // Scheduled Actions (voice reminders) — STAYS alpha, mirrors feature_access.
         scheduledActions: 'alpha-only',
     },
 
@@ -108,6 +123,7 @@ const FeatureGate = {
         if (rule === false) return false;
         if (rule === 'addon')      return this.isAddonMode();
         if (rule === 'dev')        return this.isDevEnv();
+        if (rule === 'beta-only')  return this.isBetaUser();
         if (rule === 'alpha-only') return this.isAlphaUser();
         return true;
     },

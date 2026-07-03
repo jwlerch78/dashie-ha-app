@@ -628,6 +628,10 @@ const DevicesPage = {
             ${DevicesCard.renderScreenshotModal()}
             ${DevicesCard.renderHistoryModal()}
             ${DevicesCard.renderCameraModal()}
+            ${DevicesDetailModals.renderSleepModal()}
+            ${DevicesDetailModals.renderThemeModal()}
+            ${DevicesDetailModals.renderVoicePersonalityModal()}
+            ${DevicesDetailModals.renderPhotosModal()}
         `;
     },
 
@@ -797,17 +801,29 @@ const DevicesPage = {
     _renderDetail() { return DevicesDetail.render(this._findDevice(this._detailDeviceId)); },
 
     async _onSettingChange(deviceId, category, key, value) {
+        // "Apply to all devices" — when the checkbox in an open settings modal is
+        // ticked, fan the same (category, key, value) out to every active device
+        // instead of just the one being edited. Read from the DOM at call time so
+        // there's no flag to keep in sync (only one settings modal is open at a
+        // time, so at most one such checkbox exists). Uses the per-key-merge
+        // update_device_settings RPC per device — NOT sync_settings_to_all_devices,
+        // which is TV-only and whole-category-replace (would wipe sibling keys).
+        const applyAll = typeof document !== 'undefined'
+            && !!document.getElementById('device-apply-to-all')?.checked;
+        const targets = applyAll
+            ? (this._devices || []).filter(d => d.is_active !== false)
+            : [this._findDevice(deviceId)].filter(Boolean);
+
         const savingKey = `${deviceId}_${key}`;
         this._saving[savingKey] = true;
 
         try {
-            await DashieAuth.dbRequest('update_device_settings', {
-                device_id: deviceId,
-                settings_path: category,
-                settings_value: { [key]: value },
-            });
-            const device = this._findDevice(deviceId);
-            if (device) {
+            for (const device of targets) {
+                await DashieAuth.dbRequest('update_device_settings', {
+                    device_id: device.device_id,
+                    settings_path: category,
+                    settings_value: { [key]: value },
+                });
                 device.settings = device.settings || {};
                 device.settings[category] = device.settings[category] || {};
                 device.settings[category][key] = value;
@@ -837,7 +853,7 @@ const DevicesPage = {
         if (!M) return false;
         return !!(M._sleepOpen || M._displayOpen || M._themeOpen
             || M._pickerOpen || M._screensaverOpen || M._advancedDisplayOpen || M._personalityOpen
-            || M._wakeWordOpen || M._pinOpen);
+            || M._wakeWordOpen || M._pinOpen || M._photosOpen);
     },
 
     showDetail(deviceId) {
