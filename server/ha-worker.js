@@ -32,6 +32,8 @@ let queued = false;
 let lastRun = null;       // { at, devices, ok, error? }
 let started = false;
 let lastSkipReason = null;  // de-dupes noisy skip-log spam
+let lastSummaryKey = null;   // de-dupes the per-tick "Poll ok" heartbeat (5s spam)
+let lastUnmatchedNames = null;  // de-dupes the per-tick "Unmatched devices" line
 let slugByDashieId = {};    // dashie_device_id → HA entity slug (e.g. 'fire_tv', 'rk3576_u')
 // dashie_device_id → { role: actual entity_id }. Set on every poll so
 // /api/ha/control and the Console history chart can use the real
@@ -211,10 +213,22 @@ async function runPoll(reason = 'tick') {
             upsertResult,
             freshDevices,
         };
-        console.log(`[ha-worker] Poll ok (${reason}): ${devices.length} device(s), ${lastRun.live} live → ${updated} upserted, ${unmatched} unmatched, ${skippedNoId} no-id, ${lastRun.durationMs}ms`);
+        // Heartbeat de-spam: a 5s tick loop logged this every poll. Log only when something
+        // notable happens — a real upsert, a non-tick (on-demand) poll, or a change in the
+        // steady-state counts — so the log stays useful without a per-tick flood.
+        const summaryKey = `${devices.length}/${lastRun.live}/${updated}/${unmatched}/${skippedNoId}`;
+        if (updated > 0 || reason !== 'tick' || summaryKey !== lastSummaryKey) {
+            console.log(`[ha-worker] Poll ok (${reason}): ${devices.length} device(s), ${lastRun.live} live → ${updated} upserted, ${unmatched} unmatched, ${skippedNoId} no-id, ${lastRun.durationMs}ms`);
+            lastSummaryKey = summaryKey;
+        }
         if (unmatched > 0) {
             const names = upsertResult.unmatched.map(u => u.device_name).join(', ');
-            console.log(`[ha-worker] Unmatched devices (not claimed into this account): ${names}`);
+            if (names !== lastUnmatchedNames) {
+                console.log(`[ha-worker] Unmatched devices (not claimed into this account): ${names}`);
+                lastUnmatchedNames = names;
+            }
+        } else {
+            lastUnmatchedNames = null;  // reset so a later unmatched re-logs
         }
         lastSkipReason = null;  // reset so next skip (if any) re-logs
     } catch (e) {
