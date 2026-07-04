@@ -189,6 +189,10 @@ const DevicesPage = {
             this._startScreenshotRefresh();
             DevicesEvents.start();
             App.renderPage();
+            // Prefetch the personality catalog so card/detail summaries resolve
+            // personalityId → name on first paint (fire-and-forget; re-renders
+            // when it lands). Falls back to a prettified id until then.
+            DevicesDetailModals.loadPersonalityCatalog().then(() => App.renderPage());
             // If the add-on just restarted (e.g. after a version bump) the
             // worker hasn't completed its first poll yet — freshDevices is
             // empty and chips would be inert until the 30s auto-refresh.

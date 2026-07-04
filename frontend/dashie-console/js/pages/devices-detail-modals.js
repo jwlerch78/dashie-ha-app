@@ -522,22 +522,25 @@ const DevicesDetailModals = {
         return this._modal('Advanced Display Options', body, 'DevicesDetailModals.closeAdvancedDisplay()');
     },
 
-    // ── Wake Word modal (account-level user_settings.ai.wakeWord) ──
+    // ── Wake Word modal (DEVICE-level user_devices.aiVoice.wakeWord — D5) ──
+    // Per-device, mirroring the Personality picker. The device's WakeWordModelManager
+    // persists the selection and applies it on the NEXT restart, so the UI tells the user.
 
     _wakeWordOpen: false,
+    _wakeWordDeviceId: null,
     _wakeWordSaving: false,
     _wakeWordPending: null,  // value chosen but not yet persisted
 
-    openWakeWord() {
+    openWakeWord(deviceId) {
         this._wakeWordOpen = true;
+        this._wakeWordDeviceId = deviceId;
         this._wakeWordPending = null;
-        // Make sure cache is hot — needed for the picker's current value.
-        if (!this._accountSettings) this.ensureAccountSettings();
         App.renderPage();
     },
 
     closeWakeWord() {
         this._wakeWordOpen = false;
+        this._wakeWordDeviceId = null;
         this._wakeWordPending = null;
         App.renderPage();
     },
@@ -547,19 +550,15 @@ const DevicesDetailModals = {
     async submitWakeWord() {
         if (this._wakeWordSaving) return;
         const value = this._wakeWordPending;
-        if (!value) { this.closeWakeWord(); return; }
+        const deviceId = this._wakeWordDeviceId;
+        if (!value || !deviceId) { this.closeWakeWord(); return; }
         this._wakeWordSaving = true;
         App.renderPage();
         try {
-            // Round-trip the full user_settings JSON (same shape Preferences
-            // page uses). Refetch first to merge a fresh copy so we don't
-            // clobber a category another tab/device wrote between our cache
-            // load and this save.
-            const remote = (await DashieAuth.loadUserSettings()) || {};
-            const merged = { ...remote, ai: { ...(remote.ai || {}), wakeWord: value } };
-            await DashieAuth.saveUserSettings(merged);
-            this._accountSettings = merged;
-            Toast.success('Wake word updated');
+            // Per-device write: user_devices.aiVoice.wakeWord (the path the app reads +
+            // reports back). Same merge-per-key RPC the Personality/Theme pickers use.
+            await DevicesPage._onSettingChange(deviceId, 'aiVoice', 'wakeWord', value);
+            Toast.success('Wake word saved — restart the device to apply');
             this.closeWakeWord();
         } catch (e) {
             Toast.error(`Save failed: ${e?.message || e}`);
@@ -571,9 +570,10 @@ const DevicesDetailModals = {
 
     renderWakeWordModal() {
         if (!this._wakeWordOpen) return '';
+        const device = DevicesPage._findDevice(this._wakeWordDeviceId);
         const current = this._wakeWordPending != null
             ? this._wakeWordPending
-            : (this.getAccountWakeWord() || 'hey_dashie');
+            : (device?.settings?.aiVoice?.wakeWord || 'hey_dashie');
         const optionsHtml = this.WAKE_WORDS.map(([val, label]) =>
             `<option value="${this._escape(val)}" ${val === current ? 'selected' : ''}>${this._escape(label)}</option>`
         ).join('');
@@ -585,7 +585,7 @@ const DevicesDetailModals = {
                 </select>
             </div>
             <div style="font-size: var(--font-size-sm); color: var(--text-muted);">
-                Wake word is account-wide — changing it here applies to every device on your account.
+                This device's wake word. <strong>Applies after the device restarts.</strong>
             </div>
             <div style="display: flex; gap: 8px; justify-content: flex-end; margin-top: 12px;">
                 <button class="btn btn-secondary" onclick="DevicesDetailModals.closeWakeWord()" ${this._wakeWordSaving ? 'disabled' : ''}>Cancel</button>
@@ -595,35 +595,59 @@ const DevicesDetailModals = {
         return this._modal('Wake Word', body, 'DevicesDetailModals.closeWakeWord()');
     },
 
+    // ── Personality catalog (shared) ──────────────────────────────
+    // A device stores aiVoice.personalityId — a built-in template KEY
+    // ('dashie', 'pirate', …) or a custom personality UUID. The card/detail
+    // summaries and the picker all need to turn that id into a human name, so
+    // the catalog + resolver live here and are reused everywhere. Matches the
+    // app's own scheme (personality-service.js: template id === key, custom by
+    // uuid) and the Voice & AI page (_personalityRow: key for built-ins, id for
+    // custom). Cached for the session; prefetched by DevicesPage on load.
+
+    _personalityCatalog: null,  // [[id, name], …] templates (by key) + custom (by uuid)
+
+    async loadPersonalityCatalog() {
+        if (this._personalityCatalog || typeof VoiceAiApi === 'undefined') return this._personalityCatalog;
+        try {
+            const [templates, custom] = await Promise.all([
+                VoiceAiApi.listTemplates().catch(() => []),
+                VoiceAiApi.listCustom().catch(() => []),
+            ]);
+            const opts = [];
+            for (const t of templates || []) {
+                const key = t.key || t.id;
+                if (key) opts.push([String(key), t.name || DevicesDetail._titleCase(key)]);
+            }
+            for (const c of custom || []) {
+                if (c.id) opts.push([String(c.id), c.name || 'Custom personality']);
+            }
+            this._personalityCatalog = opts;
+        } catch { this._personalityCatalog = []; }
+        return this._personalityCatalog;
+    },
+
+    /** Resolve a stored personalityId → display name. Falls back to a prettified
+     *  id when the catalog hasn't loaded yet or the id is unknown (e.g. a custom
+     *  personality that was deleted). Returns 'Default' for an empty id. */
+    personalityName(id) {
+        if (!id) return 'Default';
+        const hit = (this._personalityCatalog || []).find(([v]) => v === String(id));
+        return hit ? hit[1] : DevicesDetail._titleCase(id);
+    },
+
     // ── Personality picker (device-level aiVoice.personalityId) ───
 
     _personalityOpen: false,
     _personalityDeviceId: null,
-    _personalityOptions: null,  // cached after first fetch this session
 
     async openVoicePersonality(deviceId) {
         this._personalityOpen = true;
         this._personalityDeviceId = deviceId;
         App.renderPage();
-        // Lazy-load the account's personality catalog if Voice & AI Settings
-        // page hasn't been visited this session. Same path that page uses.
-        if (!this._personalityOptions && typeof VoiceAiApi !== 'undefined') {
-            try {
-                const [templates, custom] = await Promise.all([
-                    VoiceAiApi.listTemplates().catch(() => []),
-                    VoiceAiApi.listCustom().catch(() => []),
-                ]);
-                const opts = [];
-                for (const t of templates || []) {
-                    const key = t.key || t.id;
-                    if (key) opts.push([String(key), t.name || DevicesDetail._titleCase(key)]);
-                }
-                for (const c of custom || []) {
-                    if (c.id) opts.push([String(c.id), c.name || 'Custom personality']);
-                }
-                this._personalityOptions = opts;
-                App.renderPage();
-            } catch { this._personalityOptions = []; }
+        // Lazy-load the account's personality catalog if it wasn't prefetched.
+        if (!this._personalityCatalog) {
+            await this.loadPersonalityCatalog();
+            App.renderPage();
         }
     },
 
@@ -633,8 +657,15 @@ const DevicesDetailModals = {
         if (!this._personalityOpen) return '';
         const device = DevicesPage._findDevice(this._personalityDeviceId);
         if (!device) return '';
-        const options = this._personalityOptions || [['dashie', 'Dashie']];
         const current = device.settings?.aiVoice?.personalityId || 'dashie';
+        // Ensure the currently-stored personality is always selectable, even if
+        // the catalog is still loading or the id is no longer in the catalog —
+        // otherwise the <select> would silently snap to the first option and a
+        // stray change-event could overwrite a valid value.
+        const catalog = this._personalityCatalog || [];
+        const options = catalog.some(([v]) => v === String(current))
+            ? catalog
+            : [[String(current), this.personalityName(current)], ...catalog];
         const body = `
             <div class="form-group">
                 <label class="form-label">Personality</label>
@@ -876,16 +907,34 @@ const DevicesDetailModals = {
      * fans the same (category, key, value) out to every active device instead of
      * just the one being edited. Stateless — the checkbox IS the state, so there
      * is nothing to reset on close (only one settings modal is open at a time).
+     * Checking it first asks for confirmation (see _confirmApplyToAll) so it
+     * can't be armed by accident.
      */
     _applyToAllFooter() {
         return `
             <div class="modal-footer" style="padding: 12px 16px; border-top: 1px solid var(--border, #e5e7eb);">
                 <label class="setting-row" style="cursor: pointer; margin: 0; display: flex; align-items: center; gap: 10px;">
-                    <input type="checkbox" id="device-apply-to-all">
+                    <input type="checkbox" id="device-apply-to-all"
+                           onchange="DevicesDetailModals._confirmApplyToAll(this)">
                     <span class="setting-row-label" style="font-size: var(--font-size-sm);">Apply to all devices</span>
                 </label>
             </div>
         `;
+    },
+
+    /** Guard on the "apply to all" toggle: checking it fans every subsequent
+     *  change in this dialog out to every active device, so confirm intent
+     *  before arming it. Unchecking never needs confirmation. Reverts the box
+     *  if the user cancels. */
+    async _confirmApplyToAll(checkbox) {
+        if (!checkbox.checked) return;
+        const count = (DevicesPage._devices || []).filter(d => d.is_active !== false).length;
+        const ok = await ConfirmModal.confirm({
+            title: 'Apply to all devices?',
+            message: `While this stays checked, every setting you change in this dialog is written to all ${count} devices — not just this one.`,
+            confirmLabel: 'Apply to all',
+        });
+        if (!ok) checkbox.checked = false;
     },
 
     _onBackdrop(event, onClose) {

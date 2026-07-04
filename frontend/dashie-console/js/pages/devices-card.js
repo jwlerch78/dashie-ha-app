@@ -152,11 +152,9 @@ const DevicesCard = {
             theme = display.darkMode ? 'Dark' : 'Light';
         }
 
-        // AI Personality — the device blob stores personalityId; built-in ids
-        // ('dashie', 'friendly', …) prettify to a readable name.
-        const aiPersonality = aiVoice.personalityId
-            ? this._prettify(aiVoice.personalityId)
-            : 'Default';
+        // AI Personality — the device blob stores personalityId (template key or
+        // custom uuid); resolve it to the catalog's display name.
+        const aiPersonality = DevicesDetailModals.personalityName(aiVoice.personalityId);
 
         // Photos — prefer a named album, else the source type (immich, unsplash, …).
         const photoAlbum = photos.albumName

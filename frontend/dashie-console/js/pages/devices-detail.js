@@ -623,26 +623,23 @@ const DevicesDetail = {
     // =========================================================
 
     /** Voice section parity with the standalone Voice & AI Settings page:
-     *  Enable Voice, Wake Word, Personality. Wake Word is account-level
-     *  (in device-keys-blocklist as ai.wakeWord) so we surface it as a
-     *  read-only summary with a link to Preferences — editing it here
-     *  would create a per-device override that nothing reads.
+     *  Enable Voice, Wake Word, Personality — all DEVICE-scoped.
      *
      *  Device-vs-account split (confirmed via blocklist + writer mapping):
-     *    Device: voice.enabled, aiVoice.personalityId, aiVoice.voiceKey,
-     *            aiVoice.model, voice.controlMethod/STT/TTS/...
-     *    Account: ai.wakeWord (and the rest of the Preferences page) */
+     *    Device: voice.enabled, aiVoice.personalityId, aiVoice.wakeWord,
+     *            aiVoice.voiceKey, voice.controlMethod/STT/TTS/...
+     *    Account: ai.model (and the rest of the Voice & AI page) */
     _renderVoiceSection(device, aiVoice, voice) {
         const idAttr = DevicesPage._escape(device.device_id);
         const voiceEnabled = voice['voice.enabled'] !== false;
         const personality = aiVoice.personalityId || aiVoice['aiVoice.personality'] || 'dashie';
-        const personalityLabel = this._titleCase(personality);
+        // Resolve id → catalog name (handles custom-personality uuids + multi-word
+        // built-in names); falls back to a prettified id until the catalog loads.
+        const personalityLabel = DevicesDetailModals.personalityName(personality);
 
-        // Wake word lives in user_settings.ai.wakeWord (account-wide).
-        // Trigger an async load so the row populates from '—' to the real
-        // value without the user having to click into the modal first.
-        DevicesDetailModals.ensureAccountSettings();
-        const wakeWordValue = DevicesDetailModals.getAccountWakeWord();
+        // Wake word is DEVICE-scoped (D5): user_devices.aiVoice.wakeWord, reported up
+        // from the device's WakeWordModelManager. '—' until the device has synced one.
+        const wakeWordValue = aiVoice.wakeWord || '';
         const wakeWordLabel = wakeWordValue
             ? (DevicesDetailModals.WAKE_WORDS.find(([v]) => v === wakeWordValue)?.[1] || wakeWordValue)
             : '—';
@@ -650,7 +647,7 @@ const DevicesDetail = {
         const rows = [
             DevicesDetailModals._toggleRow(device, 'voice', 'voice.enabled', 'Enable Voice', voiceEnabled),
             DevicesDetailModals._summaryRow('Wake Word', wakeWordLabel,
-                `DevicesDetailModals.openWakeWord()`),
+                `DevicesDetailModals.openWakeWord('${idAttr}')`),
             DevicesDetailModals._summaryRow('Personality', personalityLabel,
                 `DevicesDetailModals.openVoicePersonality('${idAttr}')`),
         ].join('');
@@ -658,8 +655,8 @@ const DevicesDetail = {
         return this._section('voice-ai', 'Voice & AI', `
             <div class="card"><div class="card-body" style="padding: 0;">${rows}</div></div>
             <div style="margin-top: 8px; font-size: var(--font-size-sm); color: var(--text-muted);">
-                Wake Word is account-wide — applies to all devices on your account.
-                AI model, voice, and pipeline live on the <a href="#voice-ai" onclick="event.preventDefault(); App.navigate('voice-ai')">Voice & AI</a> page.
+                Wake word changes apply after the device restarts.
+                AI model lives on the <a href="#voice-ai" onclick="event.preventDefault(); App.navigate('voice-ai')">Voice & AI</a> page.
             </div>
         `);
     },
