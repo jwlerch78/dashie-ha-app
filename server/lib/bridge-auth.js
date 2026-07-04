@@ -21,9 +21,12 @@ const path = require('path');
 const { DATA_DIR } = require('../config');
 
 const SECRET_FILE = path.join(DATA_DIR, 'bridge_secret.txt');
-// In-container mount point for the `addon_config:rw` map (HA surfaces it at
-// /config/addon_configs/<slug>/). Verified on-box before enforce is flipped.
-const ADDON_CONFIG_DIR = '/addon_config';
+// In-container mount point for the `addon_config:rw` map — HA has used BOTH `/config`
+// (modern) and `/addon_config` across versions, and it surfaces to HA Core at
+// /config/addon_configs/<slug>/. We write to whichever candidate actually exists so we
+// don't depend on the convention. Safe: this add-on maps ONLY data + addon_config, so an
+// in-container `/config` can only be the addon_config mount (no homeassistant_config here).
+const ADDON_CONFIG_CANDIDATES = ['/addon_config', '/config'];
 const OPTIONS_FILE = '/data/options.json';
 const HEADER = 'x-dashie-bridge-secret';
 
@@ -60,19 +63,23 @@ function loadOrCreateSecret() {
  */
 function provision() {
     const secret = loadOrCreateSecret();
-    try {
-        if (!fs.existsSync(ADDON_CONFIG_DIR)) {
-            console.warn(`[bridge-auth] ${ADDON_CONFIG_DIR} missing — is 'addon_config:rw' in config.yaml map? ` +
-                'Integration cannot read the secret; keep bridge_auth_enforce OFF until this is resolved.');
-            return;
+    let wrote = 0;
+    for (const dir of ADDON_CONFIG_CANDIDATES) {
+        try {
+            if (!fs.existsSync(dir) || !fs.statSync(dir).isDirectory()) continue;
+            const dst = path.join(dir, 'bridge_secret');
+            const tmp = dst + '.tmp';
+            fs.writeFileSync(tmp, secret, { mode: 0o600 });
+            fs.renameSync(tmp, dst);
+            console.log(`[bridge-auth] secret provisioned to ${dst} (surfaces to HA Core at /config/addon_configs/dashie/)`);
+            wrote++;
+        } catch (e) {
+            console.warn(`[bridge-auth] could not write ${dir}: ${e.message}`);
         }
-        const dst = path.join(ADDON_CONFIG_DIR, 'bridge_secret');
-        const tmp = dst + '.tmp';
-        fs.writeFileSync(tmp, secret, { mode: 0o600 });
-        fs.renameSync(tmp, dst);
-        console.log(`[bridge-auth] secret provisioned to ${dst} (readable by the integration via /config/addon_configs/dashie/)`);
-    } catch (e) {
-        console.error('[bridge-auth] provision failed:', e.message);
+    }
+    if (!wrote) {
+        console.warn(`[bridge-auth] no addon_config mount found (tried ${ADDON_CONFIG_CANDIDATES.join(', ')}) — ` +
+            "is 'addon_config:rw' in config.yaml map? Integration can't read the secret; keep bridge_auth_enforce OFF.");
     }
 }
 
