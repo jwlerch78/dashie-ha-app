@@ -113,7 +113,7 @@ const VoiceAiApi = {
      *  consent). Thumbs-up sends rating only; the handler drops any snapshot
      *  fields for an up-vote server-side. Keyed by session_id (+ turn_index
      *  for realtime) so the eval exporter can reconstruct the turn. */
-    async submitFeedback({ sessionId, rating, reason = null, detail = null, promptText = null, responseText = null, turnIndex = null, model = null }) {
+    async submitFeedback({ sessionId, rating, reason = null, detail = null, promptText = null, responseText = null, turnIndex = null, model = null, toolTrace = null }) {
         return DashieAuth.dbRequest('log_voice_feedback', {
             platform: 'console',
             session_id: sessionId || null,
@@ -124,6 +124,10 @@ const VoiceAiApi = {
             response_text: responseText,
             turn_index: turnIndex,
             model,
+            // Self-contained pipeline trace ({ mode, route, model, steps, totals }) so
+            // a down-row is an eval candidate without joining voice_turn_timing. The
+            // handler drops it for thumbs-up (transcript/trace only ship on a down-vote).
+            tool_trace: toolTrace,
         });
     },
 

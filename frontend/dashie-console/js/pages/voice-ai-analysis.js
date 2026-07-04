@@ -443,6 +443,44 @@ const VoiceAiAnalysis = {
         return ai ? ai.label : null;
     },
 
+    /** Primary route of a cascade turn (the tool it used), else 'direct'. Realtime
+     *  is fused S2S with no cascade route. */
+    _routeOf(intr) {
+        if (intr.realtime) return 'realtime';
+        const TOOL_KINDS = ['web_search', 'image_search', 'sports'];
+        const step = (intr.steps || []).find(s => TOOL_KINDS.includes(s.kind));
+        return step ? step.kind : 'direct';
+    },
+
+    /** Self-contained pipeline trace for a down-vote, built from data the row
+     *  already carries (no extra query): mode (cascade|realtime), route, model,
+     *  the per-stage steps (cascade) or turn latency (realtime), and totals.
+     *  Shaped so the voice-eval harness can reconstruct the turn from it. */
+    _toolTraceOf(intr, turn) {
+        const trace = {
+            mode: intr.realtime ? 'realtime' : 'cascade',
+            route: this._routeOf(intr),
+            model: this._modelOf(intr),
+            total_tokens: intr.total_tokens ?? null,
+            total_latency_ms: intr.total_latency_ms ?? null,
+        };
+        if (intr.total_cost != null) trace.total_cost = intr.total_cost;
+        if (intr.realtime) {
+            trace.turns = (intr.turns || []).length;
+            if (turn && turn.latency_ms != null) trace.turn_latency_ms = turn.latency_ms;
+        } else {
+            trace.steps = (intr.steps || []).map(s => ({
+                kind: s.kind,
+                label: s.label ?? null,
+                input_tokens: s.input_tokens ?? null,
+                output_tokens: s.output_tokens ?? null,
+                result_count: s.result_count ?? null,
+                latency_ms: s.latency_ms ?? null,
+            }));
+        }
+        return trace;
+    },
+
     /** Accept feedback exactly once — ignore clicks once submitted or in-flight. */
     _fbLocked(fbKey) {
         const st = this._feedback[fbKey];
@@ -486,6 +524,7 @@ const VoiceAiAnalysis = {
                 responseText,
                 turnIndex: turn ? turnIndex : null,
                 model: this._modelOf(intr),
+                toolTrace: this._toolTraceOf(intr, turn),
             });
             this._feedback[fbKey] = { rating: 'down', done: true };
         } catch (e) {
