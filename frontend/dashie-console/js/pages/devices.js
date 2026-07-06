@@ -173,10 +173,51 @@ const DevicesPage = {
         window.open('/', '_blank', 'noopener');
     },
 
+    /**
+     * Consume the 'device_settings' realtime kind (Phase 4.2 — this kind was
+     * emitted by the edge on every device-settings write but had NO consumer;
+     * the page relied on the 5-minute list_devices poll, so an open settings
+     * modal could hold stale values and its full-category live-push
+     * re-broadcast stale siblings). On signal: refetch list_devices so
+     * cards, detail view, and open modals re-render with fresh settings.
+     * Self-echoes of this console's own writes are filtered upstream via the
+     * source_client_id DashieAuth.dbRequest injects. Idempotent.
+     * @private
+     */
+    _registerSyncOnce() {
+        if (this._syncRegistered) return;
+        if (!window.SettingsSync || typeof window.SettingsSync.register !== 'function') return;
+        this._syncRegistered = true;
+        window.SettingsSync.register('device_settings', async () => {
+            if (typeof App !== 'undefined' && App._currentPage && App._currentPage !== 'devices') {
+                // Not mounted — drop the cache so the next visit refetches
+                // instead of painting stale settings first.
+                this._devices = null;
+                return;
+            }
+            try {
+                const result = await DashieAuth.dbRequest('list_devices', { tv_only: false, include_inactive: true });
+                const newList = result.devices || result.data || [];
+                const changed = JSON.stringify(newList) !== JSON.stringify(this._devices);
+                this._devices = newList;
+                this._lastListDevicesAt = Date.now();
+                // Camera modal owns a live <video> — don't churn it (same
+                // guard the poll path uses). Settings modals re-render from
+                // _devices, which is the point: they show the fresh values.
+                if (typeof DevicesCamera !== 'undefined' && DevicesCamera._open) return;
+                if (changed) App.renderPage();
+            } catch (e) {
+                console.warn('[DevicesPage] device_settings refresh failed:', e.message);
+            }
+        });
+        console.log('[DevicesPage] Registered device_settings SettingsSync consumer');
+    },
+
     async _fetchDevices() {
         this._loading = true;
         this._error = null;
         this._pollersStopped = false;  // re-arm pollers on a fresh (re-)load
+        this._registerSyncOnce();
         try {
             const [devicesResult] = await Promise.all([
                 DashieAuth.dbRequest('list_devices', { tv_only: false, include_inactive: true }),
@@ -831,6 +872,11 @@ const DevicesPage = {
                 device.settings = device.settings || {};
                 device.settings[category] = device.settings[category] || {};
                 device.settings[category][key] = value;
+                // Live-push to the device so it applies now (not only on next reload) and
+                // its readback can't revert us — send the FULL merged category. Q4 fix.
+                DashieAuth._broadcastDeviceSettingsChanged(
+                    device.device_id, category, device.settings[category]
+                ).catch(() => {});
             }
         } catch (e) {
             console.error('[DevicesPage] Save failed:', e);

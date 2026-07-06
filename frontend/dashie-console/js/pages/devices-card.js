@@ -156,10 +156,14 @@ const DevicesCard = {
         // custom uuid); resolve it to the catalog's display name.
         const aiPersonality = DevicesDetailModals.personalityName(aiVoice.personalityId);
 
-        // Photos — prefer a named album, else the source type (immich, unsplash, …).
-        const photoAlbum = photos.albumName
-            ? this._prettify(photos.albumName)
-            : (photos.sourceType ? this._prettify(photos.sourceType) : 'Default');
+        // Photos — show the album, not the source: Immich → its selected-album
+        // summary; Dashie Cloud → the named album; otherwise fall back to the
+        // source type (unsplash, google_drive, …) or 'Default'.
+        const photoAlbum = photos.sourceType === 'immich'
+            ? DevicesDetailModals.immichAlbumSummary(photos)
+            : (photos.albumName
+                ? this._prettify(photos.albumName)
+                : (photos.sourceType ? this._prettify(photos.sourceType) : 'Default'));
 
         // Sleep / Wake — only a live schedule when enabled and both times set.
         const sleepSchedule = (sleep.enabled && sleep.sleepTime && sleep.wakeTime)

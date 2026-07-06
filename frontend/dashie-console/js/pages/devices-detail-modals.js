@@ -751,8 +751,12 @@ const DevicesDetailModals = {
                             albumOpts, 'DevicesDetailModals._onPhotoAlbumChange(this.value)')}
                     </div>`;
             }
+        } else if (source === 'immich') {
+            albumPicker = this._renderImmichAlbums(photos);
         }
 
+        // Only sources with no album picker get the generic "configure on device" note.
+        const noPicker = source !== 'supabase' && source !== 'immich';
         const body = `
             <div style="display: flex; flex-direction: column; gap: 14px;">
                 <div class="form-group">
@@ -761,14 +765,89 @@ const DevicesDetailModals = {
                         this._photoSourceOptions(device), 'DevicesDetailModals._onPhotoSourceChange(this.value)')}
                 </div>
                 ${albumPicker}
-                ${source !== 'supabase' ? `
+                ${noPicker ? `
                     <div style="font-size: var(--font-size-sm); color: var(--text-muted);">
-                        Album selection is available for the Dashie Cloud source. Other sources
-                        use their own configuration on the device.
+                        Album selection is available for the Dashie Cloud and Immich sources. Other
+                        sources use their own configuration on the device.
                     </div>` : ''}
             </div>
         `;
         return this._modal('Photos', body, 'DevicesDetailModals.closePhotos()', this._applyToAllFooter());
+    },
+
+    // ── Immich albums (multi-select) ──────────────────────────────
+    // The device publishes its album catalog to photos.availableImmichAlbums
+    // ([{id, name}]) on each Immich sync (report-only — the Console never fetches
+    // Immich directly; it's self-hosted behind the user's HA/LAN). The selection
+    // lives in photos.immichSelectedAlbums (array of album ids; empty = all/random,
+    // matching Kotlin ScreensaverPreferences.immich_selected_albums). NOTE: the
+    // WRITE only reaches the device once the settings-clobber fix + a Kotlin
+    // setImmichSelectedAlbums adopt-path ship — see .reference/SETTINGS_CONSOLE_DEVICE_CLOBBER.md.
+
+    /** Album ids the device has selected (empty = all). Filters the "*" sentinel. */
+    _immichSelected(photos) {
+        const sel = photos?.immichSelectedAlbums;
+        return Array.isArray(sel) ? sel.map(String).filter(x => x && x !== '*') : [];
+    },
+
+    _renderImmichAlbums(photos) {
+        const available = Array.isArray(photos.availableImmichAlbums) ? photos.availableImmichAlbums : null;
+        if (!available || available.length === 0) {
+            return `<div class="form-group"><label class="form-label">Albums</label>
+                <div style="font-size: var(--font-size-sm); color: var(--text-muted);">
+                    This device hasn't published its Immich albums yet. Once it next syncs with
+                    Immich, its albums will appear here to choose from.
+                </div></div>`;
+        }
+        const selected = this._immichSelected(photos);
+        const allSelected = selected.length === 0;
+        const row = (checked, onChange, label, bold) => `
+            <label style="display: flex; align-items: center; gap: 8px; padding: 6px 0; cursor: pointer;">
+                <input type="checkbox" ${checked ? 'checked' : ''} onchange="${onChange}">
+                <span style="${bold ? 'font-weight: 500;' : ''}">${DevicesPage._escape(label)}</span>
+            </label>`;
+        const items = available.map(a => {
+            const id = String(a.id);
+            return row(selected.includes(id),
+                `DevicesDetailModals._onImmichAlbumToggle('${id}', this.checked)`,
+                a.name || 'Untitled album', false);
+        }).join('');
+        return `
+            <div class="form-group">
+                <label class="form-label">Albums</label>
+                <div style="border-bottom: 1px solid var(--border, #e5e7eb);">
+                    ${row(allSelected, 'DevicesDetailModals._onImmichAlbumAll(this.checked)', 'All albums', true)}
+                </div>
+                <div style="max-height: 220px; overflow-y: auto;">${items}</div>
+            </div>`;
+    },
+
+    /** Card summary of the Immich album selection. */
+    immichAlbumSummary(photos) {
+        const sel = this._immichSelected(photos);
+        if (!sel.length) return 'All albums';
+        const available = Array.isArray(photos.availableImmichAlbums) ? photos.availableImmichAlbums : [];
+        if (sel.length === 1) {
+            const hit = available.find(a => String(a.id) === sel[0]);
+            return hit ? (hit.name || '1 album') : '1 album';
+        }
+        return `${sel.length} albums`;
+    },
+
+    _onImmichAlbumAll(checked) {
+        // Checking "All albums" clears the selection (empty = all/random on device).
+        // Unchecking it is a no-op — pick a specific album to narrow instead.
+        if (!checked) { App.renderPage(); return; }
+        DevicesPage._onSettingChange(this._photosDeviceId, 'photos', 'immichSelectedAlbums', []);
+        App.renderPage();
+    },
+
+    _onImmichAlbumToggle(albumId, checked) {
+        const device = DevicesPage._findDevice(this._photosDeviceId);
+        let sel = this._immichSelected(device?.settings?.photos);
+        sel = checked ? [...new Set([...sel, albumId])] : sel.filter(id => id !== albumId);
+        DevicesPage._onSettingChange(this._photosDeviceId, 'photos', 'immichSelectedAlbums', sel);
+        App.renderPage();
     },
 
     _onPhotoSourceChange(value) {

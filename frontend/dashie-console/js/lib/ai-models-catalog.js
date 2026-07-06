@@ -286,10 +286,14 @@
           'neural2': 16.00          // $16 per 1M characters
         },
     
-        // ElevenLabs (per 1000 characters) - Typical API pricing (~$0.20 depending on plan)
+        // ElevenLabs (per 1000 characters) - Verified Jul 2026 against actual usage.
+        // ElevenLabs bills in CREDITS: eleven_flash_v2_5 / eleven_turbo_v2_5 = 0.5
+        // credits/char; Creator tier = $22/100k credits → $0.00022/credit →
+        // effective $0.11 per 1000 chars. (multilingual_v2 = 1 credit/char = $0.22/1k;
+        // Pro+ tiers ≈ $0.165/1k credits → $0.0825/1k chars on flash.)
         elevenlabs: {
-          per1000Chars: 0.18,       // $0.18 per 1000 characters (varies by plan: $0.18-$0.20)
-          per100Chars: 0.018        // $0.018 per 100 characters
+          per1000Chars: 0.11,       // $0.11 per 1000 characters (flash @ Creator tier)
+          per100Chars: 0.011        // $0.011 per 100 characters
         },
     
         // OpenAI TTS (per 1M characters)

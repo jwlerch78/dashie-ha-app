@@ -244,6 +244,45 @@ const DashieAuth = {
         });
     },
 
+    /** Live-push a per-device settings change to that device (Q4 fix).
+     *  The dashboard's DeviceSettingsSync subscribes to `device_settings_<userId>`
+     *  and applies a payload when `sourceDeviceId === its own device id`. Without this
+     *  the console only wrote the user_devices row — the tablet never got a live push,
+     *  so a change didn't land until the tablet's next reload, and for readback-backed
+     *  settings (the wake word) the tablet's own readback re-asserted the old value and
+     *  reverted the console edit. Broadcasting here makes the tablet apply immediately
+     *  (updating its native pref), so the readback then matches instead of stomping.
+     *
+     *  Payload shape mirrors the webapp's DeviceSettingsService.broadcastSettingsChange
+     *  exactly. Send the FULL category (not just the changed key) — applyDeviceSettings'
+     *  aiVoice branch defaults absent keys (personalityId||'dashie'), so a partial payload
+     *  would reset the sibling settings. `sourceDeviceId` = the TARGET device id (the
+     *  receiver applies when it matches its own id; other devices skip). The console holds
+     *  no persistent subscription to this topic, so a one-shot subscribe→send is safe (no
+     *  duplicate-topic hang). Fire-and-forget; never blocks the save. */
+    async _broadcastDeviceSettingsChanged(deviceId, settingsPath, settingsValue) {
+        const sb = this._getSupabaseClient();
+        if (!sb || !this.jwtUserId || !deviceId) return;
+        const channelName = `device_settings_${this.jwtUserId}`;
+        const ch = sb.channel(channelName, { config: { broadcast: { self: false, ack: false } } });
+        try {
+            await new Promise((resolve, reject) => {
+                const t = setTimeout(() => reject(new Error('timeout')), 5000);
+                ch.subscribe(status => {
+                    if (status === 'SUBSCRIBED') { clearTimeout(t); resolve(); }
+                    else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') { clearTimeout(t); reject(new Error(status)); }
+                });
+            });
+            await ch.send({
+                type: 'broadcast',
+                event: 'device-settings-changed',
+                payload: { settingsPath, sourceDeviceId: deviceId, settingsValue, timestamp: Date.now() },
+            });
+        } finally {
+            try { sb.removeChannel(ch); } catch (_) {}
+        }
+    },
+
     // =========================================================
     //  User profile (tier + special_access) — drives FeatureGate
     //

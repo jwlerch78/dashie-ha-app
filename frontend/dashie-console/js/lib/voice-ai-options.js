@@ -38,8 +38,9 @@ const VoiceAiOptions = {
     _PROVIDER_LABEL: { claude: 'Claude', openai: 'OpenAI', gemini: 'Google Gemini', bedrock: 'Amazon Bedrock' },
 
     /** Model options: every cloud catalog model (grouped by provider) plus the
-     *  local-LLM route. Cost comes from AiModelCatalog.pricingFor so it tracks
-     *  the catalog. */
+     *  local-LLM route. Cost prefers the live margined rate card (applyLiveRates)
+     *  — what the user actually pays — falling back to the bundled raw catalog
+     *  (AiModelCatalog.pricingFor) when the card hasn't loaded. */
     models() {
         const C = window.AiModelCatalog;
         const all = C?.AI_MODEL_CATALOG || [];
@@ -60,7 +61,8 @@ const VoiceAiOptions = {
         }];
         for (const prov of this._PROVIDER_ORDER) {
             for (const m of all.filter(x => x.provider === prov)) {
-                const p = C.pricingFor(m.id);   // [inPer1M, outPer1M] | null
+                const live = this._liveModelRates?.[m.id];   // margined, from rate card
+                const p = live ? [live.input, live.output] : C.pricingFor(m.id);   // [inPer1M, outPer1M] | null
                 out.push({
                     id: m.id,
                     label: m.name,
@@ -90,7 +92,9 @@ const VoiceAiOptions = {
     ],
 
     TTS: [
-        { id: 'dashie_cloud', label: 'Dashie Cloud (ElevenLabs)', locality: 'cloud', cost: '$0.18/1k chars · ~1–2¢/reply',
+        // cost is a fallback estimate — applyLiveRates() overwrites the rate from
+        // the server's margined rate card; the "~½–1¢/reply" estimate stays static.
+        { id: 'dashie_cloud', label: 'Dashie Cloud (ElevenLabs)', locality: 'cloud', cost: '$0.13/1k chars · ~½–1¢/reply',
           description: 'Premium character voices.' },
         { id: 'va_default', label: 'Home Assistant', locality: 'local', cost: 'Free', haOnly: true,
           description: "Your Home Assistant voice pipeline's text-to-speech." },
@@ -115,6 +119,43 @@ const VoiceAiOptions = {
         { id: 'espn', label: 'ESPN', locality: 'cloud', cost: 'Free — not billed',
           description: 'Live scores & schedules. Sports questions use ESPN, not web search.' },
     ],
+
+    // ── live rate card ───────────────────────────────────────
+
+    /** Overwrite the paid-provider rate strings with the server's rate card
+     *  (get_credit_rates), which returns amounts ALREADY MARGINED — what the
+     *  user actually pays. The hardcoded strings above are offline fallbacks
+     *  and the per-reply "~½–1¢" estimate is intentionally static. Best-effort:
+     *  rendering never blocks on failure, and repeat calls are no-ops. */
+    _liveRatesApplied: false,
+    _liveModelRates: null,   // { modelId: {input, output} } margined per 1M — read by models()
+    async applyLiveRates() {
+        if (this._liveRatesApplied) return;
+        try {
+            const res = await window.DashieAuth?.dbRequest('get_credit_rates', {});
+            if (res?.models && typeof res.models === 'object') {
+                this._liveModelRates = res.models;
+            }
+            const rates = res?.rates;
+            if (!Array.isArray(rates)) return;
+            const amt = (svc) => {
+                const r = rates.find(x => x.service === svc)?.rates?.[0]?.amount;
+                return (typeof r === 'number' && r > 0) ? r : null;
+            };
+            const tts = amt('tts');   // USD per 1,000 characters
+            if (tts) {
+                this.TTS.find(o => o.id === 'dashie_cloud').cost =
+                    `$${tts.toFixed(2)}/1k chars · ~½–1¢/reply`;
+            }
+            const search = amt('web_search');   // USD per search
+            if (search) {
+                this.SEARCH.find(o => o.id === 'dashie').cost = `${this._cents(search)}/search`;
+            }
+            this._liveRatesApplied = true;
+        } catch (e) {
+            console.warn('[VoiceAiOptions] rate card unavailable, keeping fallback estimates:', e?.message || e);
+        }
+    },
 
     // ── cost formatting ──────────────────────────────────────
 

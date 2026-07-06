@@ -108,6 +108,27 @@ const CalendarAddModal = {
                 });
                 const cals = calRes.calendars || [];
                 if (cals.length > 0) {
+                    // Mirror the discovered list to the server-side calendar
+                    // cache (user_calendar_metadata) so the calendars show up
+                    // in the Settings list immediately — same rows the
+                    // dashboard writes for caldav accounts. Non-fatal.
+                    try {
+                        await DashieAuth.dbRequest('cache_calendar_metadata', {
+                            provider: 'caldav',
+                            account_type: accountType,
+                            calendars: cals.map(c => ({
+                                calendar_id: this._encodeCaldavUrl(c.url),
+                                prefixed_id: `caldav-${accountType}-${this._encodeCaldavUrl(c.url)}`,
+                                summary: c.displayName || null,
+                                background_color: c.color || null,
+                                foreground_color: '#ffffff',
+                                is_primary: false,
+                                access_role: null,
+                            })),
+                        });
+                    } catch (e) {
+                        console.warn('[CalendarAddModal] CalDAV metadata cache failed (non-fatal):', e.message);
+                    }
                     // CalDAV has no native "primary" — first calendar (typically
                     // "Home" / "Calendar" on iCloud) is the safe default.
                     const primaryId = `caldav-${accountType}-${this._encodeCaldavUrl(cals[0].url)}`;
@@ -280,10 +301,34 @@ const CalendarAddModal = {
                 },
             });
 
-            // Auto-activate the new account's primary calendar so the user
-            // sees events on their dashboard immediately. Non-fatal on failure.
+            // Discover the account's calendars and mirror them to the
+            // server-side cache (user_calendar_metadata) — the same write the
+            // dashboard's getCalendars() → _cacheCalendarsServerSide() does.
+            // Without this, list_cached_calendars has no rows for the new
+            // account, so the Settings calendar list (console AND on-device)
+            // shows nothing until a dashboard session happens to run a full
+            // fetch (FB14). Also yields the real primary instead of a guess.
+            let primaryId = null;
             try {
-                const primaryId = await this._predictPrimaryPrefixedId(provider, accountType, user, tokens);
+                const calendars = await this._fetchProviderCalendars(provider, accountType, tokens);
+                if (calendars && calendars.length > 0) {
+                    await DashieAuth.dbRequest('cache_calendar_metadata', {
+                        provider,
+                        account_type: accountType,
+                        calendars,
+                    });
+                    const primary = calendars.find(c => c.is_primary) || calendars[0];
+                    primaryId = primary?.prefixed_id || null;
+                }
+            } catch (e) {
+                console.warn('[CalendarAddModal] calendar discovery failed (non-fatal):', e.message);
+            }
+
+            // Auto-activate the primary calendar so the user sees events on
+            // their dashboard immediately. Falls back to the predicted id
+            // when discovery failed. Non-fatal on failure.
+            try {
+                if (!primaryId) primaryId = await this._predictPrimaryPrefixedId(provider, accountType, user, tokens);
                 if (primaryId) await CalendarPage._addActiveCalendar(primaryId);
             } catch (e) {
                 console.warn('[CalendarAddModal] auto-activate primary failed:', e.message);
@@ -326,6 +371,54 @@ const CalendarAddModal = {
             const def = list.find(c => c.isDefaultCalendar) || list[0];
             if (!def?.id) return null;
             return `microsoft-${accountType}-${def.id}`;
+        }
+        return null;
+    },
+
+    /**
+     * Fetches the new account's full calendar list directly from the
+     * provider using the short-lived access token from the device-flow poll
+     * result, mapped to the cache_calendar_metadata payload shape.
+     *
+     * Field mapping mirrors the dashboard exactly (calendar-service.js
+     * getCalendars → _cacheCalendarsServerSide, _normalizeMicrosoftCalendar)
+     * so the rows we write match what the dashboard's next fetch would write
+     * — keeping the edge function's idempotency signature stable and
+     * avoiding a spurious calendar_metadata re-broadcast.
+     */
+    async _fetchProviderCalendars(provider, accountType, tokens) {
+        if (!tokens?.access_token) return null;
+        if (provider === 'google') {
+            const resp = await fetch('https://www.googleapis.com/calendar/v3/users/me/calendarList', {
+                headers: { 'Authorization': `Bearer ${tokens.access_token}` }
+            });
+            if (!resp.ok) throw new Error(`Google calendarList failed: ${resp.status}`);
+            const data = await resp.json();
+            return (data.items || []).map(cal => ({
+                calendar_id: cal.id,
+                prefixed_id: `${accountType}-${cal.id}`,
+                summary: cal.summary || null,
+                background_color: cal.backgroundColor || null,
+                foreground_color: cal.foregroundColor || null,
+                is_primary: !!cal.primary,
+                access_role: cal.accessRole || null,
+            }));
+        }
+        if (provider === 'microsoft') {
+            const resp = await fetch('https://graph.microsoft.com/v1.0/me/calendars', {
+                headers: { 'Authorization': `Bearer ${tokens.access_token}` }
+            });
+            if (!resp.ok) throw new Error(`MS Graph /calendars failed: ${resp.status}`);
+            const data = await resp.json();
+            return (Array.isArray(data.value) ? data.value : []).map(cal => ({
+                calendar_id: cal.id,
+                prefixed_id: `microsoft-${accountType}-${cal.id}`,
+                summary: cal.name || null,
+                background_color: cal.hexColor ? `#${cal.hexColor}` : '#1a73e8',
+                foreground_color: '#ffffff',
+                is_primary: !!cal.isDefaultCalendar,
+                access_role: cal.canEdit ? 'owner' : 'reader',
+            }));
         }
         return null;
     },

@@ -197,6 +197,9 @@ const VoiceAiPage = {
             const [defaults] = await Promise.all([
                 VoiceAiApi.loadAiDefaults(),
                 this._fetchPersonalities(),
+                // Live margined rate card for the TTS/Search cost strings —
+                // internally best-effort, falls back to the hardcoded estimates.
+                window.VoiceAiOptions?.applyLiveRates?.(),
             ]);
             this._defaults = defaults;
             // Household sharing opt-in lives in the add-on only — fetch it so the
@@ -497,11 +500,13 @@ const VoiceAiPage = {
     },
 
     /** Live S2S models in the same option shape as O.models() so the AI-model card
-     *  renders identically (orange CLOUD cards). Cost from the catalog. */
+     *  renders identically (orange CLOUD cards). Cost prefers the live margined
+     *  rate card (what the user pays), falling back to the bundled raw catalog. */
     _liveModelOptions() {
         const O = window.VoiceAiOptions, C = window.AiModelCatalog;
         return this.CONVERSATION_MODELS.map(([id, label]) => {
-            const p = C?.pricingFor?.(id);   // [inPer1M, outPer1M] | null
+            const live = O?._liveModelRates?.[id];
+            const p = live ? [live.input, live.output] : C?.pricingFor?.(id);   // [inPer1M, outPer1M] | null
             return {
                 id, label, locality: 'cloud',
                 cost: p ? O._modelCost(p) : '',
