@@ -1012,19 +1012,76 @@ const DevicesDetailModals = {
         `;
     },
 
+    // The keys each apply-to-all modal manages — used to retro-apply the open
+    // device's CURRENT values to all others the moment apply-to-all is armed,
+    // so "change the setting, THEN check apply to all" works (the common
+    // order). Without this, arming only affects FUTURE changes and the change
+    // the user already made never fanned out (2026-07-06 christmas repro).
+    _APPLY_ALL_KEYS: {
+        theme:       { idKey: '_themeDeviceId',       keys: [['display', 'themeFamily'], ['display', 'darkMode']] },
+        sleep:       { idKey: '_sleepDeviceId',       keys: [['sleep', 'enabled'], ['sleep', 'sleepMethod'], ['sleep', 'sleepTime'], ['sleep', 'wakeTime'], ['sleep', 'resleepTimeout'], ['sleep', 'inactivityTimeout']] },
+        personality: { idKey: '_personalityDeviceId', keys: [['aiVoice', 'personalityId'], ['aiVoice', 'voiceKey']] },
+        photos:      { idKey: '_photosDeviceId',      keys: [['photos', 'sourceType'], ['photos', 'albumId'], ['photos', 'albumName'], ['photos', 'transitionTime']] },
+    },
+
+    /** Which apply-to-all modal is currently open → its key spec. */
+    _openApplyAllSpec() {
+        if (this._themeOpen)       return this._APPLY_ALL_KEYS.theme;
+        if (this._sleepOpen)       return this._APPLY_ALL_KEYS.sleep;
+        if (this._personalityOpen) return this._APPLY_ALL_KEYS.personality;
+        if (this._photosOpen)      return this._APPLY_ALL_KEYS.photos;
+        return null;
+    },
+
+    /** Fan the open device's CURRENT values for the modal's managed keys out
+     *  to every other active device. Called on arm so the setting the user
+     *  already picked propagates immediately, not only on the next change. */
+    async _fanOutCurrentOnArm() {
+        const spec = this._openApplyAllSpec();
+        if (!spec) return;
+        const src = DevicesPage._findDevice(this[spec.idKey]);
+        if (!src) return;
+        const others = (DevicesPage._devices || [])
+            .filter(d => d.is_active !== false && d.device_id !== src.device_id);
+        // Group by category so we write each category once per device.
+        const byCat = {};
+        for (const [cat, key] of spec.keys) {
+            const val = src.settings?.[cat]?.[key];
+            if (val === undefined) continue;
+            (byCat[cat] = byCat[cat] || {})[key] = val;
+        }
+        for (const device of others) {
+            for (const [cat, vals] of Object.entries(byCat)) {
+                try {
+                    await DashieAuth.dbRequest('update_device_settings', {
+                        device_id: device.device_id, settings_path: cat, settings_value: vals,
+                    });
+                    device.settings = device.settings || {};
+                    device.settings[cat] = { ...(device.settings[cat] || {}), ...vals };
+                    DashieAuth._broadcastDeviceSettingsChanged(
+                        device.device_id, cat, device.settings[cat]).catch(() => {});
+                } catch (e) {
+                    console.warn('[DevicesDetailModals] apply-to-all arm fan-out failed:', e.message);
+                }
+            }
+        }
+    },
+
     /** Guard on the "apply to all" toggle: while armed, every change in this
      *  dialog fans out to all active devices. Confirm intent before arming;
-     *  unchecking never needs confirmation. */
+     *  on confirm we ALSO retro-apply the current values (so the change the
+     *  user just made propagates). Unchecking never needs confirmation. */
     async _confirmApplyToAll(checkbox) {
         if (!checkbox.checked) { this._applyAllArmed = false; return; }
         const count = (DevicesPage._devices || []).filter(d => d.is_active !== false).length;
         const ok = await ConfirmModal.confirm({
             title: 'Apply to all devices?',
-            message: `While this stays checked, every setting you change in this dialog is written to all ${count} devices — not just this one.`,
+            message: `This applies the current settings in this dialog to all ${count} devices, and keeps applying any further changes here while it stays checked.`,
             confirmLabel: 'Apply to all',
         });
         this._applyAllArmed = !!ok;
-        if (!ok) checkbox.checked = false;
+        if (!ok) { checkbox.checked = false; return; }
+        await this._fanOutCurrentOnArm();
     },
 
     _onBackdrop(event, onClose) {
