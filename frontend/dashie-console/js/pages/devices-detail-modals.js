@@ -270,7 +270,7 @@ const DevicesDetailModals = {
     _sleepOpen: false,
     _sleepDeviceId: null,
 
-    openSleep(deviceId) { this._sleepOpen = true; this._sleepDeviceId = deviceId; App.renderPage(); },
+    openSleep(deviceId) { this._applyAllArmed = false; this._sleepOpen = true; this._sleepDeviceId = deviceId; App.renderPage(); },
     closeSleep() { this._sleepOpen = false; this._sleepDeviceId = null; App.renderPage(); },
 
     renderSleepModal() {
@@ -351,7 +351,7 @@ const DevicesDetailModals = {
     _themeOpen: false,
     _themeDeviceId: null,
 
-    openTheme(deviceId) { this._themeOpen = true; this._themeDeviceId = deviceId; App.renderPage(); },
+    openTheme(deviceId) { this._applyAllArmed = false; this._themeOpen = true; this._themeDeviceId = deviceId; App.renderPage(); },
     closeTheme() { this._themeOpen = false; this._themeDeviceId = null; App.renderPage(); },
 
     renderThemeModal() {
@@ -360,7 +360,9 @@ const DevicesDetailModals = {
         if (!device) return '';
         const display = device.settings?.display || {};
         const D = DevicesDetail;
-        const darkMode = display.darkMode === true || display.themeMode === 'dark';
+        // Dark/Light mode is a SEPARATE control (the Quick Controls row on the
+        // device card), NOT part of the theme. Deliberately omitted here and
+        // from buildThemeSummary — theme = family only (2026-07-06, per user).
         const body = `
             <div style="display: flex; flex-direction: column; gap: 14px;">
                 <div class="form-group">
@@ -368,7 +370,6 @@ const DevicesDetailModals = {
                     ${D._settingSelectRaw(device, 'display', 'themeFamily',
                         display.themeFamily || 'default', this.THEME_FAMILIES)}
                 </div>
-                ${D._settingToggleRow(device, 'display', 'darkMode', 'Dark Mode', darkMode)}
                 <div style="font-size: var(--font-size-sm); color: var(--text-muted);">
                     Seasonal themes (Halloween, Christmas) auto-activate during their respective months.
                 </div>
@@ -641,6 +642,7 @@ const DevicesDetailModals = {
     _personalityDeviceId: null,
 
     async openVoicePersonality(deviceId) {
+        this._applyAllArmed = false;
         this._personalityOpen = true;
         this._personalityDeviceId = deviceId;
         App.renderPage();
@@ -691,6 +693,7 @@ const DevicesDetailModals = {
     _photosAlbums: null,        // cached list_albums result this session
 
     async openPhotos(deviceId) {
+        this._applyAllArmed = false;
         this._photosOpen = true;
         this._photosDeviceId = deviceId;
         const device = DevicesPage._findDevice(deviceId);
@@ -989,11 +992,19 @@ const DevicesDetailModals = {
      * Checking it first asks for confirmation (see _confirmApplyToAll) so it
      * can't be armed by accident.
      */
+    // Module-state, NOT the DOM checkbox (2026-07-06 fix): a background
+    // re-render (the device_settings realtime consumer) rebuilt the modal and
+    // reset a checkbox-only flag, so the fan-out silently wrote to only the
+    // open device. Render the box from this flag; read the flag at write
+    // time (DevicesPage._onSettingChange). Reset to false whenever an
+    // apply-to-all modal opens so it never leaks across devices/dialogs.
+    _applyAllArmed: false,
+
     _applyToAllFooter() {
         return `
             <div class="modal-footer" style="padding: 12px 16px; border-top: 1px solid var(--border, #e5e7eb);">
                 <label class="setting-row" style="cursor: pointer; margin: 0; display: flex; align-items: center; gap: 10px;">
-                    <input type="checkbox" id="device-apply-to-all"
+                    <input type="checkbox" id="device-apply-to-all" ${this._applyAllArmed ? 'checked' : ''}
                            onchange="DevicesDetailModals._confirmApplyToAll(this)">
                     <span class="setting-row-label" style="font-size: var(--font-size-sm);">Apply to all devices</span>
                 </label>
@@ -1001,18 +1012,18 @@ const DevicesDetailModals = {
         `;
     },
 
-    /** Guard on the "apply to all" toggle: checking it fans every subsequent
-     *  change in this dialog out to every active device, so confirm intent
-     *  before arming it. Unchecking never needs confirmation. Reverts the box
-     *  if the user cancels. */
+    /** Guard on the "apply to all" toggle: while armed, every change in this
+     *  dialog fans out to all active devices. Confirm intent before arming;
+     *  unchecking never needs confirmation. */
     async _confirmApplyToAll(checkbox) {
-        if (!checkbox.checked) return;
+        if (!checkbox.checked) { this._applyAllArmed = false; return; }
         const count = (DevicesPage._devices || []).filter(d => d.is_active !== false).length;
         const ok = await ConfirmModal.confirm({
             title: 'Apply to all devices?',
             message: `While this stays checked, every setting you change in this dialog is written to all ${count} devices — not just this one.`,
             confirmLabel: 'Apply to all',
         });
+        this._applyAllArmed = !!ok;
         if (!ok) checkbox.checked = false;
     },
 

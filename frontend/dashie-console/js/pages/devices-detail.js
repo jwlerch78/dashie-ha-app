@@ -677,30 +677,36 @@ const DevicesDetail = {
     //  Home Assistant
     // =========================================================
 
-    /** HA Dashboard URL row. The text input writes to home_assistant.dashboardPath
-     *  on user_devices.settings; Kotlin's ConnectionPreferences reads it on
-     *  apply. Keep this minimal — the full HA configuration flow lives in
-     *  the dashboard's Settings page on the tablet. */
+    /** HA Dashboard URL row — READ-ONLY. The device owns its HA connection
+     *  (Kotlin-canonical blob; a configured device refuses cloud→Kotlin HA
+     *  applies via the restore guard). The real value lives at
+     *  home_assistant.core.haUrl, kept fresh by the device's
+     *  ACTION_HA_CONFIG_CHANGED dispatch on native edits (plan 2B). */
     _renderHomeAssistantSection(device) {
         const ha = device.settings?.home_assistant || {};
-        const url = ha.dashboardPath || ha.dashboardUrl || ha.haUrl || '';
-        const idAttr = DevicesPage._escape(device.device_id);
-        const savingKey = `${device.device_id}_dashboardPath`;
-        const isSaving = DevicesPage._saving[savingKey];
+        // core.haUrl is the real field; the bare keys are legacy junk from the
+        // old (dead) dashboardPath editor — kept as last-resort fallbacks.
+        const url = ha.core?.haUrl || ha.dashboardPath || ha.dashboardUrl || ha.haUrl || '';
         return this._section('home-assistant', 'Home Assistant', `
             <div class="card"><div class="card-body">
                 <div class="form-group">
-                    <label class="form-label">Dashboard URL ${isSaving ? '<span style="color: var(--text-muted); font-weight: 400; text-transform: none; font-size: 10px;">saving…</span>' : ''}</label>
-                    <input class="form-input" type="text" value="${DevicesPage._escape(url)}"
-                        placeholder="https://homeassistant.local:8123/lovelace"
-                        ${isSaving ? 'disabled' : ''}
-                        onchange="DevicesPage._onSettingChange('${idAttr}', 'home_assistant', 'dashboardPath', this.value.trim())">
+                    <label class="form-label">Dashboard URL</label>
+                    <input class="form-input" type="text" value="${DevicesPage._escape(url)}" readonly
+                        style="opacity: 0.7; cursor: default;"
+                        placeholder="(not configured)">
                 </div>
                 <div style="font-size: var(--font-size-sm); color: var(--text-muted);">
-                    The dashboard the tablet opens when launching Home Assistant. Leave blank to use the default.
+                    Read-only — the device owns its Home Assistant connection. Change it on the
+                    tablet under Settings → Home Assistant; the value updates here within seconds.
                 </div>
             </div></div>
         `, { defaultExpanded: false });
+        // NOTE (2026-07-06): this field used to be editable but was a write-only
+        // trap — it wrote home_assistant.dashboardPath (a key nothing reads), and
+        // a configured device refuses cloud→Kotlin HA applies anyway (the restore
+        // guard in applyDeviceSettings). Remote HA-URL editing as a real feature
+        // is tracked in .reference/_TECHNICAL_DEBT.md ("Console Cannot Remotely
+        // Edit a Configured Device's HA Dashboard URL").
     },
 
     _titleCase(s) {
@@ -922,14 +928,19 @@ const DevicesDetail = {
     settingSelect(device, category, key, label, currentValue, options) {
         const savingKey = `${device.device_id}_${key}`;
         const isSaving = DevicesPage._saving[savingKey];
+        // Numeric-option coercion — same reasoning as _settingSelectRaw:
+        // string values into Int bridge setters arrive as 0 on the tablet.
+        const numeric = options.length > 0 &&
+            options.every(([val]) => /^-?\d+(\.\d+)?$/.test(String(val)));
+        const valueExpr = numeric ? 'Number(this.value)' : 'this.value';
         const optionsHtml = options.map(([val, text]) =>
-            `<option value="${val}" ${val === currentValue ? 'selected' : ''}>${text}</option>`
+            `<option value="${val}" ${String(val) === String(currentValue) ? 'selected' : ''}>${text}</option>`
         ).join('');
         return `
             <div class="form-group">
                 <label class="form-label">${label} ${isSaving ? '<span style="color: var(--text-muted); font-weight: 400; text-transform: none; font-size: 10px;">saving…</span>' : ''}</label>
                 <select class="form-select"
-                    onchange="DevicesPage._onSettingChange('${device.device_id}', '${category}', '${key}', this.value)"
+                    onchange="DevicesPage._onSettingChange('${device.device_id}', '${category}', '${key}', ${valueExpr})"
                     ${isSaving ? 'disabled' : ''}>
                     ${optionsHtml}
                 </select>
@@ -947,10 +958,19 @@ const DevicesDetail = {
     /** Bare <select> WITHOUT the form-group wrapper. Used inside the
      *  sleep modal where the parent already laid out the .form-group. */
     _settingSelectRaw(device, category, key, currentValue, options, customOnChange) {
+        // DOM select values are ALWAYS strings, but numeric settings must be
+        // written as numbers: the tablet applies them via per-key Int bridge
+        // setters (setScreensaverTimeout, setWidgetZoom, …) and the Android
+        // JS bridge passes 0 when a string hits an Int parameter — a string
+        // "600" timeout DISABLED the screensaver (2026-07-06 incident).
+        // Detect numeric pickers by their option list and coerce on change.
+        const numeric = options.length > 0 &&
+            options.every(([val]) => /^-?\d+(\.\d+)?$/.test(String(val)));
+        const valueExpr = numeric ? 'Number(this.value)' : 'this.value';
         const onChange = customOnChange
-            || `DevicesPage._onSettingChange('${device.device_id}', '${category}', '${key}', this.value)`;
+            || `DevicesPage._onSettingChange('${device.device_id}', '${category}', '${key}', ${valueExpr})`;
         const optionsHtml = options.map(([val, text]) =>
-            `<option value="${val}" ${val === currentValue ? 'selected' : ''}>${text}</option>`
+            `<option value="${val}" ${String(val) === String(currentValue) ? 'selected' : ''}>${text}</option>`
         ).join('');
         return `<select class="form-select" onchange="${onChange}">${optionsHtml}</select>`;
     },

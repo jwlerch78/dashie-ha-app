@@ -205,6 +205,13 @@ const DevicesPage = {
                 // guard the poll path uses). Settings modals re-render from
                 // _devices, which is the point: they show the fresh values.
                 if (typeof DevicesCamera !== 'undefined' && DevicesCamera._open) return;
+                // Don't tear down an open settings modal (2026-07-06): a
+                // renderPage here rebuilds the modal DOM, which lost the
+                // "apply to all" checkbox state mid-edit and made the fan-out
+                // silently write to only the open device. The in-memory
+                // _devices is already fresh; the modal reads from it, and the
+                // summary rows repaint when the modal closes.
+                if (this._isAnyDetailModalOpen()) return;
                 if (changed) App.renderPage();
             } catch (e) {
                 console.warn('[DevicesPage] device_settings refresh failed:', e.message);
@@ -853,8 +860,15 @@ const DevicesPage = {
         // time, so at most one such checkbox exists). Uses the per-key-merge
         // update_device_settings RPC per device — NOT sync_settings_to_all_devices,
         // which is TV-only and whole-category-replace (would wipe sibling keys).
-        const applyAll = typeof document !== 'undefined'
-            && !!document.getElementById('device-apply-to-all')?.checked;
+        // Read the ARMED FLAG (module state), not the DOM checkbox — a
+        // background re-render can rebuild the modal and reset a DOM-only
+        // checkbox, which silently reduced the fan-out to just the open
+        // device (2026-07-06). Fall back to the DOM box if the modals module
+        // isn't present.
+        const applyAll = (typeof DevicesDetailModals !== 'undefined'
+            && DevicesDetailModals._applyAllArmed === true)
+            || (typeof document !== 'undefined'
+                && !!document.getElementById('device-apply-to-all')?.checked);
         const targets = applyAll
             ? (this._devices || []).filter(d => d.is_active !== false)
             : [this._findDevice(deviceId)].filter(Boolean);

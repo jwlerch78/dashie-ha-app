@@ -38,6 +38,9 @@ window.SettingsSync = (function () {
   var _lastSyntheticAll = 0;
   var _connected = false;
   var _wasConnectedBefore = false;
+  var _resubTimer = null;
+  var _resubAttempts = 0;
+  var _intentionalDisconnect = false;
 
   // ── Client ID ─────────────────────────────────────────────
   function generateUUID() {
@@ -111,15 +114,23 @@ window.SettingsSync = (function () {
     var channelName = 'user_settings_' + _userId;
     console.debug('[SettingsSync] Connecting to ' + channelName + ' as client ' + getClientId().substring(0, 8) + '…');
 
-    _channel = _supabase.channel(channelName);
-    _channel.on('broadcast', { event: 'settings-changed' }, function (msg) {
+    var ch = _supabase.channel(channelName);
+    _channel = ch;
+    ch.on('broadcast', { event: 'settings-changed' }, function (msg) {
+      if (_channel !== ch) return;  // stale channel after a resubscribe
       _handleBroadcast(msg.payload);
     });
-    _channel.subscribe(function (status) {
+    _intentionalDisconnect = false;
+    ch.subscribe(function (status) {
+      // Generation guard: the OLD channel's teardown fires CLOSED into this
+      // callback after a resubscribe — without the guard it re-scheduled
+      // forever (teardown cycle; see dashboard twin, 2026-07-06).
+      if (_channel !== ch) return;
       if (status === 'SUBSCRIBED') {
         var wasReconnect = _wasConnectedBefore;
         _wasConnectedBefore = true;
         _connected = true;
+        _resubAttempts = 0;
         if (wasReconnect) {
           _maybeFireSyntheticAll();
         } else {
@@ -127,12 +138,36 @@ window.SettingsSync = (function () {
         }
       } else if (status === 'CLOSED' || status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
         _connected = false;
-        console.debug('[SettingsSync] Channel status: ' + status);
+        console.warn('[SettingsSync] Channel ' + status + ' — scheduling resubscribe');
+        // A dead channel used to stay dead for the whole session: broadcast()
+        // silently no-oped and no kinded refreshes arrived (2026-07-06
+        // temperatureUnit fan-out incident on the dashboard twin). Rebuild
+        // with backoff; synthetic-all on re-SUBSCRIBE catches up.
+        _scheduleResubscribe();
       }
     });
   }
 
+  function _scheduleResubscribe() {
+    if (_intentionalDisconnect || _resubTimer) return;
+    var delay = Math.min(30000, 2000 * Math.pow(2, _resubAttempts++));
+    _resubTimer = setTimeout(function () {
+      _resubTimer = null;
+      if (_intentionalDisconnect || !_supabase || !_userId) return;
+      console.log('[SettingsSync] Resubscribing (attempt ' + _resubAttempts + ')');
+      // Null the ref BEFORE teardown so the old channel's CLOSED hits the
+      // generation guard instead of re-scheduling (teardown-cycle bug).
+      var old = _channel;
+      _channel = null;
+      try { if (old) old.unsubscribe(); } catch (_) {}
+      try { if (old && _supabase.removeChannel) _supabase.removeChannel(old); } catch (_) {}
+      connect();
+    }, delay);
+  }
+
   function disconnect() {
+    _intentionalDisconnect = true;
+    if (_resubTimer) { clearTimeout(_resubTimer); _resubTimer = null; }
     if (_channel) {
       try { _channel.unsubscribe(); } catch (_) {}
       _channel = null;

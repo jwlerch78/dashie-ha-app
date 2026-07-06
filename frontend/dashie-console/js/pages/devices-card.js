@@ -139,18 +139,10 @@ const DevicesCard = {
         const aiVoice = settings.aiVoice || {};
         const photos = settings.photos || {};
 
-        // Theme — themeFamily is the per-device family; append the light/dark mode
-        // when we can determine it. Blank on devices that never stored a theme
-        // (theme is otherwise an account-level default we don't have here).
-        let theme = 'Default';
-        if (display.themeFamily) {
-            theme = this._prettify(display.themeFamily);
-            const mode = display.themeMode
-                || (typeof display.darkMode === 'boolean' ? (display.darkMode ? 'dark' : 'light') : '');
-            if (mode) theme += ` · ${this._prettify(mode)}`;
-        } else if (typeof display.darkMode === 'boolean') {
-            theme = display.darkMode ? 'Dark' : 'Light';
-        }
+        // Theme — the FAMILY only. Dark/Light mode is a separate control (the
+        // Quick Controls light/dark pill), deliberately NOT folded into the
+        // theme name (2026-07-06, per user).
+        const theme = display.themeFamily ? this._prettify(display.themeFamily) : 'Default';
 
         // AI Personality — the device blob stores personalityId (template key or
         // custom uuid); resolve it to the catalog's display name.
