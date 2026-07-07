@@ -27,6 +27,14 @@ const DevicesDetailModals = {
         ['single_panel', 'Single Panel'],
         ['kiosk', 'Kiosk mode (HA-only)'],
     ],
+    // Kiosk is NOT console-settable — the Kotlin bridge setLayoutMode rejects
+    // anything but widgets/single_panel, so offering it made the write revert.
+    // Full LAYOUT_MODES stays for label lookup; the picker uses this subset. When
+    // a device is already in kiosk, the row renders read-only (see below).
+    WRITABLE_LAYOUT_MODES: [
+        ['widgets', 'Widgets'],
+        ['single_panel', 'Single Panel'],
+    ],
 
     ORIENTATION_MODES: [
         ['auto', 'Auto'],
@@ -151,8 +159,10 @@ const DevicesDetailModals = {
 
         return `
             ${this._subsectionCard('Dashboard', [
-                this._summaryRow('Layout', this._labelFor(this.LAYOUT_MODES, layoutMode),
-                    `DevicesDetailModals.openPicker('${idAttr}','display','layoutMode','Layout','LAYOUT_MODES','widgets')`),
+                layoutMode === 'kiosk'
+                    ? this._readonlyRow('Layout', this._labelFor(this.LAYOUT_MODES, 'kiosk'))
+                    : this._summaryRow('Layout', this._labelFor(this.LAYOUT_MODES, layoutMode),
+                        `DevicesDetailModals.openPicker('${idAttr}','display','layoutMode','Layout','WRITABLE_LAYOUT_MODES','widgets')`),
                 showOrientation ? this._summaryRow('Orientation',
                     this._labelFor(this.ORIENTATION_MODES, display.orientationLock || 'auto'),
                     `DevicesDetailModals.openPicker('${idAttr}','display','orientationLock','Orientation','ORIENTATION_MODES','auto')`) : '',
@@ -169,9 +179,10 @@ const DevicesDetailModals = {
                     `DevicesDetailModals.openSleep('${idAttr}')`),
                 this._summaryRow('Screensaver', this.buildScreensaverSummary(display, screensaver),
                     `DevicesDetailModals.openScreensaver('${idAttr}')`),
-                this._summaryRow('Wake Mode',
-                    this._labelFor(this.WAKE_MODES, display.motionWakeMode || 'disabled'),
-                    `DevicesDetailModals.openPicker('${idAttr}','display','motionWakeMode','Wake Mode','WAKE_MODES','disabled')`),
+                // Read-only: motionWakeMode is sync:'readback-only' (no cloud→Kotlin
+                // setter), so a console write silently reverts on the next readback.
+                this._readonlyRow('Wake Mode',
+                    this._labelFor(this.WAKE_MODES, display.motionWakeMode || 'disabled')),
                 // Granular Display Preferences (zooms, display/font size,
                 // sidebar icon size, screen-off, auto brightness) collapse
                 // into one row → modal. Summary text intentionally blank
@@ -203,6 +214,20 @@ const DevicesDetailModals = {
                     ${this._escape(summary)}
                     <span style="color: var(--text-muted); font-size: 14px;">›</span>
                 </span>
+            </div>
+        `;
+    },
+
+    // Read-only display row (no chevron / click). Use for device settings the
+    // console can SHOW but not CHANGE — e.g. readback-only keys that have no
+    // cloud→Kotlin setter (motionWakeMode, sidebarIconSize) or values the bridge
+    // rejects (layoutMode 'kiosk'). Rendering them as pickers made the write a
+    // silent no-op that the device readback then reverted.
+    _readonlyRow(label, summary) {
+        return `
+            <div style="display: flex; align-items: center; justify-content: space-between; padding: 12px 16px; gap: 12px; border-top: 1px solid var(--border-subtle);">
+                <span style="font-size: var(--font-size-sm); font-weight: 500;">${this._escape(label)}</span>
+                <span style="color: var(--text-muted); font-size: var(--font-size-sm); text-align: right;">${this._escape(summary)}</span>
             </div>
         `;
     },
@@ -512,8 +537,9 @@ const DevicesDetailModals = {
                 </div>
                 <div class="form-group">
                     <label class="form-label">Sidebar Icon Size</label>
-                    ${D._settingSelectRaw(device, 'display', 'sidebarIconSize',
-                        String(display.sidebarIconSize ?? '1'), this.SIDEBAR_ICON_SIZES)}
+                    <!-- Read-only: sidebarIconSize is sync:'readback-only' (no cloud→Kotlin
+                         setter), so a console write silently reverts on the next readback. -->
+                    <div style="padding: 8px 0; color: var(--text-muted); font-size: var(--font-size-sm);">${this._escape(this._labelFor(this.SIDEBAR_ICON_SIZES, String(display.sidebarIconSize ?? '1')))}</div>
                 </div>
                 <div class="form-group">
                     <label class="form-label">Screen Off Behavior</label>
@@ -1025,7 +1051,7 @@ const DevicesDetailModals = {
         theme:       { idKey: '_themeDeviceId',       keys: [['display', 'themeFamily'], ['display', 'darkMode']] },
         sleep:       { idKey: '_sleepDeviceId',       keys: [['sleep', 'enabled'], ['sleep', 'sleepMethod'], ['sleep', 'sleepTime'], ['sleep', 'wakeTime'], ['sleep', 'resleepTimeout'], ['sleep', 'inactivityTimeout']] },
         personality: { idKey: '_personalityDeviceId', keys: [['aiVoice', 'personalityId'], ['aiVoice', 'voiceKey']] },
-        photos:      { idKey: '_photosDeviceId',      keys: [['photos', 'sourceType'], ['photos', 'albumId'], ['photos', 'albumName'], ['photos', 'transitionTime']] },
+        photos:      { idKey: '_photosDeviceId',      keys: [['photos', 'sourceType'], ['photos', 'albumId'], ['photos', 'albumName'], ['photos', 'slideshowInterval']] },
     },
 
     /** Which apply-to-all modal is currently open → its key spec. */

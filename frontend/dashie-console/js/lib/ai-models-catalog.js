@@ -296,6 +296,14 @@
           per100Chars: 0.011        // $0.011 per 100 characters
         },
     
+        // Inworld TTS-2 (per 1M characters) - Added Jul 2026.
+        // On-demand $25/1M chars (→ $12.50 at the Growth tier). ~4.4x cheaper than
+        // ElevenLabs flash @ Creator tier. Priced per-1M like Google/OpenAI so the
+        // generic ttsCost tierKey path handles it (no special-case branch needed).
+        inworld: {
+          'inworld-tts-2': 25.00    // $25 per 1M characters (on-demand)
+        },
+    
         // OpenAI TTS (per 1M characters)
         openai: {
           'tts-1': 15.00,           // $15 per 1M characters

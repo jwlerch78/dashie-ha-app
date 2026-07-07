@@ -424,12 +424,15 @@ const VoiceAiPage = {
             ${showPipeline ? card('Web search source', 'search', isGeminiAiModel ? this._googleSearchOption() : O.SEARCH, isGeminiAiModel ? 'google' : String(d['voice.searchSource'])) : ''}
             ${showPipeline ? card('Sports source', 'sports', O.SPORTS, String(d['voice.sportsSource'])) : ''}
 
-            ${this._sectionHeader('Tools', '')}
+            ${this._sectionHeader('AI Tools & Settings', '')}
             <div class="card"><div class="card-body">
                 ${this._toggleRow('Web search', 'Let the assistant search the web for answers.', 'ai.webSearchEnabled', searchOn)}
                 ${this._toggleRow('Retrieve pictures', 'Let the assistant pull family photos into responses.', 'ai.retrievePicturesEnabled', d['ai.retrievePicturesEnabled'])}
                 ${this._toggleRow('Conversation memory', 'Remember the prior conversation for follow-ups.', 'ai.conversationContextEnabled', d['ai.conversationContextEnabled'])}
                 ${memoryOn ? this._selectRow('Memory duration', 'ai.conversationTimeout', this.MEMORY_OPTIONS, String(d['ai.conversationTimeout'])) : ''}
+                ${(isDashieIntelligence && agentMode !== 'single')
+                    ? this._toggleRow('Keep dialog open', 'After every command, keep listening for a follow-up without saying "Hey Dashie" again.', 'voice.alwaysOpenDialog', d['voice.alwaysOpenDialog'])
+                    : ''}
                 ${this._toggleRow('Always use AI for chores', 'Disable the fast path — routes all chore commands through AI (uses more tokens).', 'voice.alwaysUseAI', d['voice.alwaysUseAI'])}
             </div></div>
         `;

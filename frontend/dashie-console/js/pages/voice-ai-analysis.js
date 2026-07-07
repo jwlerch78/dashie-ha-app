@@ -296,17 +296,35 @@ const VoiceAiAnalysis = {
             : `<span style="background: var(--surface-muted, #f3f4f6); color: var(--text-muted); font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.4px; padding: 2px 6px; border-radius: 4px;">Simple</span>`;
         const meta = `${this._fmtMs(intr.total_latency_ms)} · ${this._fmtTokens(intr.total_tokens)} tokens`;
 
-        // Feedback thumbs sit in the UPPER-RIGHT of the transcript bubble; a
-        // down-vote's reason chips appear just below the bubble.
-        const hasTranscript = !!(intr.prompt || intr.response);
-        const fbThumbs = hasTranscript ? this._renderFeedbackThumbs(intr.key) : '';
-        const transcript = (intr.prompt || intr.response || intr.subtext) ? `
+        // DLG-3: a cascade DIALOG (multi-turn) threads every turn like a realtime
+        // conversation — but keeps the cascade complexity badge + steps table. When
+        // collapsed, show the first turn + a "show full conversation" toggle.
+        const dialogTurns = (!intr.realtime && intr.turns && intr.turns.length > 1) ? intr.turns : null;
+        let transcript;
+        if (dialogTurns) {
+            const shown = open ? dialogTurns : dialogTurns.slice(0, 1);
+            const thread = shown.map((t, i) => this._renderTurn(t, i === shown.length - 1, intr.key, i)).join('');
+            const more = `<button onclick="event.stopPropagation(); VoiceAiAnalysis.toggleInteraction('${this._escape(intr.key)}')"
+                    style="background: none; border: none; color: var(--accent, #4f46e5); font-size: 12px; font-weight: 600; cursor: pointer; padding: 8px 0 0;">
+                    ${open ? 'Show less ▴' : `Show full conversation (${dialogTurns.length - 1} more) ▾`}
+                </button>`;
+            transcript = `
+            <div style="background: var(--surface-muted, #f7f7f8); border-radius: 8px; padding: 10px 12px; margin: 0 0 8px;">
+                ${thread}
+            </div>${more}`;
+        } else {
+            // Feedback thumbs sit in the UPPER-RIGHT of the transcript bubble; a
+            // down-vote's reason chips appear just below the bubble.
+            const hasTranscript = !!(intr.prompt || intr.response);
+            const fbThumbs = hasTranscript ? this._renderFeedbackThumbs(intr.key) : '';
+            transcript = (intr.prompt || intr.response || intr.subtext) ? `
             <div style="position: relative; background: var(--surface-muted, #f7f7f8); border-radius: 8px; padding: 10px 12px;${fbThumbs ? ' padding-right: 64px;' : ''} margin: 0 0 8px;">
                 ${fbThumbs ? `<div style="position: absolute; top: 8px; right: 10px;">${fbThumbs}</div>` : ''}
                 ${intr.prompt ? this._line('You said', intr.prompt, 13) : ''}
                 ${intr.response ? this._line('Dashie said', intr.response, 13) : ''}
                 ${intr.subtext ? this._line('On-screen', intr.subtext, 12, true) : ''}
             </div>` : `<div style="color: var(--text-muted); font-size: 12px; margin: 0 0 8px;">(transcript not saved for this turn)</div>`;
+        }
 
         const steps = open ? `
             <table style="width: 100%; border-collapse: collapse; font-size: 12px;"><tbody>
@@ -374,6 +392,8 @@ const VoiceAiAnalysis = {
                 <span style="color: var(--text-muted); font-size: 10px; text-transform: uppercase; letter-spacing: 0.5px;">Dashie said</span>${lat}
                 <div style="font-size: 13px; line-height: 1.4;">${this._escape(t.response)}</div>
             </div>` : '';
+        // On-screen (written) elaboration — cascade turns carry it; realtime turns don't.
+        const subtext = t.subtext ? this._line('On-screen', t.subtext, 12, true) : '';
         const hasTranscript = (intrKey !== undefined && (t.prompt || t.response));
         const fbKey = `${intrKey}::${turnIndex}`;
         const fbThumbs = hasTranscript ? this._renderFeedbackThumbs(fbKey) : '';
@@ -382,6 +402,7 @@ const VoiceAiAnalysis = {
                 ${fbThumbs ? `<div style="position: absolute; top: 0; right: 0;">${fbThumbs}</div>` : ''}
                 ${t.prompt ? this._line('You said', t.prompt, 13) : ''}
                 ${dashie}
+                ${subtext}
             </div>`;
     },
 
