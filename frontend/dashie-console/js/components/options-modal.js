@@ -162,7 +162,18 @@ const OptionsModal = {
         App.renderPage();
 
         try {
-            const full = { ...(this._userSettings || {}) };
+            // Refetch the latest account settings immediately before save so we
+            // don't clobber changes made elsewhere since this modal opened: the
+            // server deep-merges but leaf-overwrites, so spreading the page-open
+            // snapshot reverts any account field changed in the meantime. Mirrors
+            // preferences.js. Falls back to the opened snapshot if the refetch fails.
+            let base = this._userSettings || {};
+            try {
+                const fresh = await DashieAuth.loadUserSettings();
+                if (fresh) base = fresh;
+            } catch (e) { /* keep the snapshot we opened with */ }
+
+            const full = { ...base };
             full.chores = {
                 ...(full.chores || {}),
                 enabled: f.choresEnabled,

@@ -16,20 +16,36 @@ const FamilyPage = {
     _loading: false,
     _error: null,
 
+    // Household name (family.familyName) lives in the account-level
+    // user_settings blob, NOT the family_members table — so it loads/saves
+    // through a separate path from the member list below.
+    _userSettings: null,       // full user_settings tree, lazy-loaded
+    _householdLoading: false,
+    _householdError: null,
+    _householdSaving: false,
+    _householdSaveTimer: null,
+
     // Preset palette from backend auto-assignment
     PALETTE: ['#FF6B6B', '#4ECDC4', '#45B7D1', '#FFA07A', '#98D8C8', '#F7DC6F', '#BB8FCE', '#85C1E2', '#F8B739', '#52B788'],
     RELATIONSHIPS: ['parent', 'child', 'guest'],
 
     render() {
+        // Household-name card always renders at the top, independent of the
+        // member-list load so a slow/failed user_settings fetch doesn't hide it.
+        if (!this._userSettings && !this._householdLoading && !this._householdError) {
+            this._fetchUserSettings();
+        }
+        const household = this._renderHouseholdCard();
+
         if (!this._members && !this._loading && !this._error) {
             this._fetchMembers();
-            return this._renderLoading();
+            return household + this._renderLoading();
         }
-        if (this._loading && !this._members) return this._renderLoading();
-        if (this._error && !this._members) return this._renderError();
+        if (this._loading && !this._members) return household + this._renderLoading();
+        if (this._error && !this._members) return household + this._renderError();
 
         if (!this._expandedIds) this._expandedIds = new Set();
-        return this._renderList();
+        return household + this._renderList();
     },
 
     topBarTitle() { return 'Family'; },
@@ -95,6 +111,104 @@ const FamilyPage = {
         this._members = null;
         this._expandedIds = null;
         App.renderPage();
+    },
+
+    // =========================================================
+    //  Household name (family.familyName → user_settings)
+    //
+    //  Account-level: the dashboard header renders it as
+    //  "The <name> Family" (formatting lives in the header widget), so we
+    //  store the raw base name here — the exact value the native Kotlin
+    //  "Edit Family Name" dialog writes to settingsStore.family.familyName.
+    // =========================================================
+
+    async _fetchUserSettings() {
+        this._householdLoading = true;
+        this._householdError = null;
+        try {
+            this._userSettings = (await DashieAuth.loadUserSettings()) || {};
+        } catch (e) {
+            console.error('[FamilyPage] user_settings fetch failed:', e);
+            this._householdError = e?.message || String(e);
+        } finally {
+            this._householdLoading = false;
+            App.renderPage();
+        }
+    },
+
+    _householdName() {
+        return this._userSettings?.family?.familyName ?? '';
+    },
+
+    _renderHouseholdCard() {
+        if (this._householdError) {
+            return `
+                <div class="card" style="margin-bottom: 16px;">
+                    <div class="card-body" style="color: var(--status-error, #c00);">
+                        Couldn't load household name: ${this._escape(this._householdError)}
+                        <button class="btn btn-secondary btn-sm" style="margin-left: 12px;" onclick="FamilyPage._fetchUserSettings()">Retry</button>
+                    </div>
+                </div>`;
+        }
+        const loading = this._householdLoading && !this._userSettings;
+        const name = this._householdName();
+        // Preview mirrors the header widget's formatFamilyName(): strip a
+        // leading "The " / trailing " Family" the user may have typed so we
+        // don't render "The The Smith Family Family".
+        const base = name.trim().replace(/^The\s+/i, '').replace(/\s+Family$/i, '');
+        const preview = base ? `The ${this._escape(base)} Family` : 'The Dashie Family';
+        return `
+            <div class="card" style="margin-bottom: 16px;">
+                <div class="card-body">
+                    <div class="section-header" style="font-weight: 600; padding: 0 4px 8px;">Household Name</div>
+                    <div class="setting-row">
+                        <span class="setting-row-label">Family Name</span>
+                        <input class="form-input" type="text"
+                            value="${this._escape(name)}"
+                            placeholder="e.g. Smith"
+                            style="max-width: 240px;"
+                            ${loading ? 'disabled' : ''}
+                            onchange="FamilyPage._setHouseholdName(this.value)">
+                    </div>
+                    <div style="color: var(--text-muted); font-size: var(--font-size-sm); padding: 4px 4px 0;">
+                        Shown on the dashboard as "${preview}".${this._householdSaving ? ' <span style="color: var(--text-secondary);">Saving…</span>' : ''}
+                    </div>
+                </div>
+            </div>`;
+    },
+
+    _setHouseholdName(value) {
+        if (!this._userSettings) this._userSettings = {};
+        if (!this._userSettings.family) this._userSettings.family = {};
+        this._userSettings.family.familyName = value.trim();
+        App.renderPage();          // reflect the trimmed value + preview now
+        if (this._householdSaveTimer) clearTimeout(this._householdSaveTimer);
+        this._householdSaveTimer = setTimeout(() => this._saveHousehold(), 300);
+    },
+
+    async _saveHousehold() {
+        this._householdSaveTimer = null;
+        if (!this._userSettings || this._householdSaving) return;
+        this._householdSaving = true;
+        App.renderPage();
+        try {
+            // Refetch + merge only the familyName key so we don't clobber
+            // temperatureUnit/zipCode/etc. that a Preferences edit or another
+            // device may have written between our load and this save.
+            const remote = (await DashieAuth.loadUserSettings()) || {};
+            const merged = {
+                ...remote,
+                family: { ...(remote.family || {}), familyName: this._userSettings.family.familyName },
+            };
+            await DashieAuth.saveUserSettings(merged);
+            this._userSettings = merged;
+        } catch (e) {
+            console.error('[FamilyPage] household save failed:', e);
+            Toast?.error?.(`Save failed: ${e?.message || e}`);
+        } finally {
+            this._householdSaving = false;
+            App.renderPage();
+        }
     },
 
     _renderList() {

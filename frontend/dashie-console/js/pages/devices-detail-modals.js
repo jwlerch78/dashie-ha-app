@@ -227,16 +227,20 @@ const DevicesDetailModals = {
 
     /** "22:00 / 07:00 (Black Overlay)" / "2 min timeout (Black Overlay)" / "Inactive" */
     buildSleepSummary(sleep, display) {
-        const enabled = sleep['sleep.enabled'] !== false && sleep['sleep.sleepMode'] !== 'off';
+        // Blob keys are UNPREFIXED (native-settings-listener.js writes enabled,
+        // sleepMethod, sleepTime, wakeTime, inactivityTimeout). Mode is derived:
+        // off when disabled, else the method. (Was reading sleep['sleep.enabled']
+        // etc. — always undefined, so the summary rendered defaults forever.)
+        const enabled = sleep.enabled !== false;
         if (!enabled) return 'Inactive';
-        const method = sleep['sleep.method'] || sleep['sleep.sleepMode'] || 'schedule';
+        const method = sleep.sleepMethod || 'schedule';
         let timeStr;
         if (method === 'inactivity') {
-            const seconds = Number(sleep['sleep.inactivityTimeout'] ?? 120);
+            const seconds = Number(sleep.inactivityTimeout ?? 120);
             timeStr = `${this._formatTimeout(seconds)} timeout`;
         } else {
-            const start = sleep['sleep.timerStart'] || sleep['sleep.sleepTime'] || '22:00';
-            const end = sleep['sleep.timerEnd'] || sleep['sleep.wakeTime'] || '07:00';
+            const start = sleep.sleepTime || '22:00';
+            const end = sleep.wakeTime || '07:00';
             timeStr = `${this._formatTime(start)} / ${this._formatTime(end)}`;
         }
         const screenOff = (display && (display.screenOffBehavior || display['display.screenOffBehavior'])) || 'black_overlay';

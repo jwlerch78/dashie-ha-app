@@ -217,10 +217,10 @@ const DevicesDetail = {
         // device.settings.display.screensaverTimeout != 0 if the control state
         // isn't broadcast.
         const settings = device.settings || {};
-        const displayCat = settings.display || {};
+        const screensaverCat = settings.screensaver || {};
         const screensaverOn = controls.screensaver !== undefined
             ? !!controls.screensaver
-            : (Number(displayCat.screensaverTimeout ?? 0) > 0);
+            : (Number(screensaverCat.timeout ?? 0) > 0);
         const screensaverBusy = !!DevicesCard._busyControl[`${device.device_id}:screensaver`];
         buttons.push(this._toggleBtn(idAttr, 'screensaver', screensaverOn, screensaverBusy,
             'icon-moon.svg',
@@ -631,7 +631,7 @@ const DevicesDetail = {
      *    Account: ai.model (and the rest of the Voice & AI page) */
     _renderVoiceSection(device, aiVoice, voice) {
         const idAttr = DevicesPage._escape(device.device_id);
-        const voiceEnabled = voice['voice.enabled'] !== false;
+        const voiceEnabled = voice.enabled !== false;
         const personality = aiVoice.personalityId || aiVoice['aiVoice.personality'] || 'dashie';
         // Resolve id → catalog name (handles custom-personality uuids + multi-word
         // built-in names); falls back to a prettified id until the catalog loads.
@@ -645,7 +645,7 @@ const DevicesDetail = {
             : '—';
 
         const rows = [
-            DevicesDetailModals._toggleRow(device, 'voice', 'voice.enabled', 'Enable Voice', voiceEnabled),
+            DevicesDetailModals._toggleRow(device, 'voice', 'enabled', 'Enable Voice', voiceEnabled),
             DevicesDetailModals._summaryRow('Wake Word', wakeWordLabel,
                 `DevicesDetailModals.openWakeWord('${idAttr}')`),
             DevicesDetailModals._summaryRow('Personality', personalityLabel,
