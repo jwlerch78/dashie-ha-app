@@ -365,6 +365,39 @@ async function callService(domain, service, entityId, serviceData = {}) {
     });
 }
 
+// ── Voice engine detection (STT/TTS engine-direct, no Assist pipeline) ──
+// HA exposes STT/TTS *engines* over WS, independent of any configured Assist
+// pipeline. These thin wrappers let the Console detect what the user's HA can
+// do (see api/voice-engines.js). The exact command names + response shapes have
+// drifted across HA releases (build plan §4.3) — callers must tolerate a reject
+// and the probe script (scripts/probe-voice-engines.js) captures raw shapes.
+
+/** List TTS engines. → { providers: [{ engine_id, supported_languages }] } (HA shape). */
+async function listTtsEngines() {
+    return _send({ type: 'tts/engine/list' });
+}
+
+/** Voices for one TTS engine in a language. → { voices: [{ voice_id, name }] }.
+ *  HA requires a language; Piper voices are language-specific. */
+async function getTtsVoices(engineId, language) {
+    return _send({ type: 'tts/engine/voices', engine_id: engineId, language });
+}
+
+/** Metadata for one TTS engine. → { provider: { engine_id, supported_languages } }. */
+async function getTtsEngine(engineId) {
+    return _send({ type: 'tts/engine/get', engine_id: engineId });
+}
+
+/** List STT engines. → { providers: [{ engine_id, supported_languages }] } (HA shape). */
+async function listSttEngines() {
+    return _send({ type: 'stt/engine/list' });
+}
+
+/** Metadata for one STT engine. → { provider: { engine_id, supported_languages } }. */
+async function getSttEngine(engineId) {
+    return _send({ type: 'stt/engine/get', engine_id: engineId });
+}
+
 /** Force a re-pull of the device registry (e.g., after we know HA changed). */
 function refresh() {
     registryCache = null;
@@ -437,5 +470,10 @@ module.exports = {
     subscribeStateChanged,
     renameDevice,
     callService,
+    listTtsEngines,
+    getTtsVoices,
+    getTtsEngine,
+    listSttEngines,
+    getSttEngine,
     refresh,
 };

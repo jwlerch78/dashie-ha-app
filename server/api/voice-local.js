@@ -15,6 +15,7 @@ const auth = require('../auth');
 const { getAccountVoiceConfig } = require('../account-config');
 const { createNodeIO } = require('../brain/node-io');
 const brain = require('../brain/voice-brain.bundle.js');
+const { detectVoiceEngines } = require('../voice-engines');
 
 const router = express.Router();
 
@@ -86,6 +87,26 @@ router.get('/local-status', async (req, res) => {
     model: acct.localLlmModel || ENV_MODEL,
     source: acct.localLlmUrl ? 'account' : 'env',
   });
+});
+
+// GET /api/voice/engines — which local STT/TTS engines does the user's HA have?
+//   ?refresh=1  bypass the 5-min cache (Console "Re-scan")
+//   ?debug=1    attach a `_debug` block with raw WS shapes (§4.3 validation)
+// No sign-in gate: this reads HA config only (no account credential), and the
+// Console needs it whether or not the add-on is signed into a Dashie account.
+router.get('/engines', async (req, res) => {
+  try {
+    const result = await detectVoiceEngines({
+      refresh: req.query.refresh === '1' || req.query.refresh === 'true',
+      debug: req.query.debug === '1' || req.query.debug === 'true',
+    });
+    res.json(result);
+  } catch (e) {
+    console.error('[voice-local] engine detection failed:', (e && e.stack) || e);
+    // Detection is best-effort — never 500 the picker; return an empty set so
+    // the Console falls back to URL-based local_* rows.
+    res.json({ available: false, tts: [], stt: [], kokoro: { installed: false, reason: 'error' }, error: (e && e.message) || String(e) });
+  }
 });
 
 module.exports = router;

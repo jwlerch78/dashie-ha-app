@@ -1,0 +1,168 @@
+// server/voice-engines.js — local voice engine detection for the Console picker.
+//
+// Answers "what local STT/TTS can the user's Home Assistant do, right now?" so
+// the Console can turn the Piper (TTS) / Whisper (STT) rows from static
+// "coming soon" stubs into detection-gated live rows with real voice dropdowns
+// (build plan 20260708_LOCAL_VOICE_STT_TTS_BUILD_PLAN.md §5).
+//
+// Three sources, all best-effort (a failure in one never fails the whole call):
+//   1. TTS engines  — WS tts/engine/list (+ tts/engine/voices per engine)
+//   2. STT engines  — WS stt/engine/list (+ stt/engine/get per engine)
+//   3. Kokoro add-on — Supervisor add-on list by slug (our optional own-box TTS)
+//
+// ⚠️ HA API drift (§4.3): the WS command names + response shapes have changed
+// across HA releases. Everything here tolerates a reject/odd shape and records
+// it in the `debug` block. scripts/probe-voice-engines.js dumps raw shapes for
+// validation against a real HA before the native clients depend on them.
+
+const haRegistry = require('./ha-registry');
+
+const CACHE_TTL_MS = 5 * 60 * 1000;   // engines change rarely; Re-scan bypasses
+let _cache = null;                    // { result, fetchedAt }
+
+/** Pick the language to enumerate voices in. English-first (Phase 1 is EN-only
+ *  households), else the engine's first supported language. */
+function _preferredLanguage(supportedLanguages) {
+    const langs = Array.isArray(supportedLanguages) ? supportedLanguages : [];
+    return langs.find(l => /^en\b|^en[-_]/i.test(String(l))) || langs[0] || 'en';
+}
+
+/** Normalize whatever tts/engine/list returned into a plain array of engines.
+ *  HA returns { providers: [...] }; tolerate a bare array too. */
+function _providers(listResult) {
+    if (!listResult) return [];
+    if (Array.isArray(listResult)) return listResult;
+    if (Array.isArray(listResult.providers)) return listResult.providers;
+    return [];
+}
+
+async function _detectTts(debug) {
+    let listResult;
+    try {
+        listResult = await haRegistry.listTtsEngines();
+    } catch (e) {
+        if (debug) debug.tts_list_error = e.message;
+        return [];
+    }
+    if (debug) debug.tts_list_raw = listResult;
+
+    const engines = [];
+    for (const p of _providers(listResult)) {
+        const engineId = p.engine_id || p.engineId;
+        if (!engineId) continue;
+        const languages = p.supported_languages || p.supportedLanguages || [];
+        const language = _preferredLanguage(languages);
+        let voices = [];
+        try {
+            const vres = await haRegistry.getTtsVoices(engineId, language);
+            if (debug && !debug.tts_voices_raw) debug.tts_voices_raw = { engineId, language, vres };
+            const arr = Array.isArray(vres?.voices) ? vres.voices : (Array.isArray(vres) ? vres : []);
+            voices = arr
+                .map(v => ({ voice_id: v.voice_id || v.voiceId || v.id, name: v.name || v.voice_id || v.id }))
+                .filter(v => v.voice_id);
+        } catch (e) {
+            if (debug) (debug.tts_voices_errors = debug.tts_voices_errors || {})[engineId] = e.message;
+        }
+        engines.push({ engine_id: engineId, name: p.name || engineId, languages, voices });
+    }
+    return engines;
+}
+
+async function _detectStt(debug) {
+    let listResult;
+    try {
+        listResult = await haRegistry.listSttEngines();
+    } catch (e) {
+        if (debug) debug.stt_list_error = e.message;
+        return [];
+    }
+    if (debug) debug.stt_list_raw = listResult;
+
+    const engines = [];
+    for (const p of _providers(listResult)) {
+        const engineId = p.engine_id || p.engineId;
+        if (!engineId) continue;
+        const languages = p.supported_languages || p.supportedLanguages || [];
+        // stt/engine/get carries formats/codecs the native POST needs (§4.2);
+        // fetch best-effort so the Console can show a language hint.
+        let meta = null;
+        try {
+            meta = await haRegistry.getSttEngine(engineId);
+            if (debug && !debug.stt_get_raw) debug.stt_get_raw = { engineId, meta };
+        } catch (e) {
+            if (debug) (debug.stt_get_errors = debug.stt_get_errors || {})[engineId] = e.message;
+        }
+        engines.push({ engine_id: engineId, name: p.name || engineId, languages, meta: meta?.provider || meta || null });
+    }
+    return engines;
+}
+
+/** Is our Kokoro add-on installed/running? Supervisor add-on list by slug
+ *  (slugs get a repo prefix, e.g. `local_dashie_kokoro`, so match by suffix).
+ *  Reachability/voice enumeration of the add-on is a later step (folding Kokoro
+ *  into the Dashie repo, §7) — for now report presence only. */
+async function _detectKokoro(debug) {
+    const token = process.env.SUPERVISOR_TOKEN;
+    if (!token) return { installed: false, reason: 'no_supervisor' };
+    try {
+        const resp = await fetch('http://supervisor/addons', {
+            headers: { Authorization: `Bearer ${token}` },
+        });
+        if (!resp.ok) {
+            if (debug) debug.kokoro_error = `addons HTTP ${resp.status}`;
+            return { installed: false, reason: `http_${resp.status}` };
+        }
+        const body = await resp.json();
+        const addons = body?.data?.addons || [];
+        const hit = addons.find(a =>
+            /(^|_)dashie_kokoro$/.test(String(a.slug || '')) ||
+            /kokoro/i.test(String(a.name || '')));
+        if (debug) debug.kokoro_match = hit || null;
+        if (!hit) return { installed: false };
+        return {
+            installed: true,
+            running: hit.state === 'started',
+            slug: hit.slug,
+            version: hit.version || null,
+            // URL + voices are filled once the add-on is folded in (§7); the box
+            // exposes Kokoro on 8880 but the host IP isn't known server-side yet.
+            url: null,
+            voices: [],
+        };
+    } catch (e) {
+        if (debug) debug.kokoro_error = e.message;
+        return { installed: false, reason: 'probe_failed' };
+    }
+}
+
+/**
+ * Detect local voice engines. Cached for CACHE_TTL_MS; `refresh` bypasses the
+ * cache (the Console's "Re-scan" affordance). `debug` attaches a `_debug` block
+ * with raw WS shapes for §4.3 validation (never cached).
+ *
+ * Returns: { available, tts: [...], stt: [...], kokoro: {...}, _debug? }
+ *   available=false means HA WS isn't reachable (no supervisor token / dev env);
+ *   the Console then falls back to URL-based local_* rows only.
+ */
+async function detectVoiceEngines({ refresh = false, debug = false } = {}) {
+    if (!haRegistry.isAvailable()) {
+        return { available: false, tts: [], stt: [], kokoro: { installed: false, reason: 'ha_unavailable' } };
+    }
+    if (!refresh && !debug && _cache && (Date.now() - _cache.fetchedAt) < CACHE_TTL_MS) {
+        return _cache.result;
+    }
+
+    const dbg = debug ? {} : null;
+    const [tts, stt, kokoro] = await Promise.all([
+        _detectTts(dbg),
+        _detectStt(dbg),
+        _detectKokoro(dbg),
+    ]);
+    const result = { available: true, tts, stt, kokoro };
+
+    // Cache only the clean (non-debug) result so a debug call never poisons it.
+    if (!debug) _cache = { result, fetchedAt: Date.now() };
+    return debug ? { ...result, _debug: dbg } : result;
+}
+
+module.exports = { detectVoiceEngines };
