@@ -83,10 +83,17 @@ router.get('/account-credential', async (req, res) => {
 router.get('/voice-config', async (req, res) => {
     try {
         const cfg = await getAccountVoiceConfig();
-        return res.json({ route: cfg.route, model_is_local: cfg.route === 'local' });
+        return res.json({
+            route: cfg.route,
+            model_is_local: cfg.route === 'local',
+            // Household conversation agent mode (live|dialog|single) for anonymous kiosks —
+            // the integration forwards it on /api/dashie/voice/status (Live-on-kiosk, 2026-07-09).
+            // '' = unset → the kiosk uses its default.
+            agent_mode: cfg.agentMode || '',
+        });
     } catch (e) {
         // Never block the gateway on this — default to cloud.
-        return res.json({ route: 'cloud', model_is_local: false });
+        return res.json({ route: 'cloud', model_is_local: false, agent_mode: '' });
     }
 });
 

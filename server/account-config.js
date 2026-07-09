@@ -15,7 +15,7 @@ const { SUPABASE } = require('./config');
 const TTL_MS = 30_000; // user_settings changes rarely; a short cache keeps converse latency low.
 let _cache = null; // { at, value }
 
-const SAFE_DEFAULT = { model: null, route: 'cloud', localLlmUrl: '', localLlmModel: '', retainTranscripts: false };
+const SAFE_DEFAULT = { model: null, route: 'cloud', localLlmUrl: '', localLlmModel: '', retainTranscripts: false, agentMode: '' };
 
 /**
  * Resolve the account's voice routing config.
@@ -47,6 +47,11 @@ async function getAccountVoiceConfig() {
           localLlmUrl: settings?.voice?.localLlmUrl || '',
           localLlmModel: settings?.voice?.localLlmModel || '',
           retainTranscripts: row.retain_transcripts === true,
+          // Household conversation agent mode (live|dialog|single) — the console's Voice & AI
+          // page writes user_settings.voice.agentMode (ACCOUNT_VOICE_KEYS). Carried to
+          // anonymous kiosks via the integration's /api/dashie/voice/status so they behave
+          // like the account chose (Live-on-kiosk, 2026-07-09). '' = unset → kiosk default.
+          agentMode: typeof settings?.voice?.agentMode === 'string' ? settings.voice.agentMode : '',
         };
       }
     }
