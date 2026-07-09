@@ -90,6 +90,9 @@ router.get('/voice-config', async (req, res) => {
             // the integration forwards it on /api/dashie/voice/status (Live-on-kiosk, 2026-07-09).
             // '' = unset → the kiosk uses its default.
             agent_mode: cfg.agentMode || '',
+            // ai.retrievePicturesEnabled for anonymous kiosks (relay image_search gate).
+            // Omitted when unset so the kiosk keeps its cached/default value.
+            ...(typeof cfg.retrievePictures === 'boolean' ? { retrieve_pictures: cfg.retrievePictures } : {}),
         });
     } catch (e) {
         // Never block the gateway on this — default to cloud.

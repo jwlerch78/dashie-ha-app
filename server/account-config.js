@@ -15,7 +15,7 @@ const { SUPABASE } = require('./config');
 const TTL_MS = 30_000; // user_settings changes rarely; a short cache keeps converse latency low.
 let _cache = null; // { at, value }
 
-const SAFE_DEFAULT = { model: null, route: 'cloud', localLlmUrl: '', localLlmModel: '', retainTranscripts: false, agentMode: '' };
+const SAFE_DEFAULT = { model: null, route: 'cloud', localLlmUrl: '', localLlmModel: '', retainTranscripts: false, agentMode: '', retrievePictures: null };
 
 /**
  * Resolve the account's voice routing config.
@@ -52,6 +52,10 @@ async function getAccountVoiceConfig() {
           // anonymous kiosks via the integration's /api/dashie/voice/status so they behave
           // like the account chose (Live-on-kiosk, 2026-07-09). '' = unset → kiosk default.
           agentMode: typeof settings?.voice?.agentMode === 'string' ? settings.voice.agentMode : '',
+          // ai.retrievePicturesEnabled — same anon-kiosk carry as agentMode (the relay
+          // omits the image_search tool when false/unset). null = unset.
+          retrievePictures: typeof settings?.ai?.retrievePicturesEnabled === 'boolean'
+            ? settings.ai.retrievePicturesEnabled : null,
         };
       }
     }
