@@ -1,52 +1,43 @@
 #!/usr/bin/env bash
-# Sync the dashie-console frontend into this add-on repo.
+# Vendor the dashie-console frontend into an add-on channel's frontend/ copy.
 #
-# The dashie-console repo is private, so we can't use git submodules (HAOS has no
-# credentials when it clones our add-on). Instead we vendor a copy of the console
-# files into frontend/dashie-console/ and commit them.
+# Exports the COMMITTED tree of a dashie-console branch via `git archive` — NOT a
+# working-tree checkout+rsync. Why:
+#   • no branch-switch on the console repo (won't disrupt a concurrent editor there)
+#   • no uncommitted-file contamination (a stray edit in the console repo can never
+#     leak into a release — only committed files are archived)
+#   • .git + gitignored node_modules are naturally excluded (not in the tree)
 #
-# Run this script from the repo root whenever the console is updated.
+# The console repo is private, so HAOS can't use a git submodule — we vendor a copy
+# into the add-on and commit it. Called by release.sh with the channel's branch + dir.
 #
-#   ./scripts/sync-console.sh [CONSOLE_PATH]
-#
-# CONSOLE_PATH defaults to ../dashie-console. Override if the console repo lives
-# elsewhere. The script pulls the latest main branch, rsyncs the files, and leaves
-# the staged changes for you to commit manually.
+# Usage:
+#   ./scripts/sync-console.sh <branch> <target-dir> [console-path]
+#     <branch>      dashie-console branch to vendor (e.g. main | prod)
+#     <target-dir>  absolute destination (e.g. .../dashie-console-dev/frontend/dashie-console)
+#     console-path  optional; defaults to ../../dashie-console
 
 set -euo pipefail
 
-CONSOLE_PATH="${1:-$(cd "$(dirname "$0")/../.." && pwd)/dashie-console}"
-ADDON_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-TARGET="${ADDON_ROOT}/frontend/dashie-console"
+BRANCH="${1:?usage: sync-console.sh <branch> <target-dir> [console-path]}"
+TARGET="${2:?usage: sync-console.sh <branch> <target-dir> [console-path]}"
+CONSOLE_PATH="${3:-$(cd "$(dirname "$0")/../.." && pwd)/dashie-console}"
 
 if [[ ! -d "$CONSOLE_PATH/.git" ]]; then
     echo "Error: $CONSOLE_PATH is not a git repository." >&2
-    echo "Pass the path to your local dashie-console clone as the first argument." >&2
+    echo "Pass the path to your local dashie-console clone as the third argument." >&2
     exit 1
 fi
 
-echo "==> Pulling latest dashie-console from $CONSOLE_PATH"
-git -C "$CONSOLE_PATH" fetch origin
-git -C "$CONSOLE_PATH" checkout main
-git -C "$CONSOLE_PATH" pull --ff-only origin main
-CONSOLE_SHA="$(git -C "$CONSOLE_PATH" rev-parse --short HEAD)"
+echo "==> Fetching dashie-console origin/$BRANCH" >&2
+git -C "$CONSOLE_PATH" fetch origin "$BRANCH" --quiet
+CONSOLE_SHA="$(git -C "$CONSOLE_PATH" rev-parse --short "origin/$BRANCH")"
 
-echo "==> Syncing files into $TARGET"
+echo "==> Vendoring origin/$BRANCH ($CONSOLE_SHA) → $TARGET" >&2
+rm -rf "$TARGET"
 mkdir -p "$TARGET"
-rsync -a --delete \
-    --exclude='.git' \
-    --exclude='node_modules' \
-    --exclude='*.log' \
-    "$CONSOLE_PATH/" "$TARGET/"
+git -C "$CONSOLE_PATH" archive "origin/$BRANCH" | tar -x -C "$TARGET"
 
-cd "$ADDON_ROOT"
-if git diff --quiet -- frontend/dashie-console; then
-    echo "==> No changes (console is already up-to-date at $CONSOLE_SHA)"
-else
-    echo "==> Console synced to $CONSOLE_SHA"
-    echo "==> Staged changes ready for commit:"
-    git status --short -- frontend/dashie-console | head -20
-    echo ""
-    echo "Suggested commit message:"
-    echo "  Sync dashie-console to $CONSOLE_SHA"
-fi
+echo "==> Synced to dashie-console origin/$BRANCH @ $CONSOLE_SHA" >&2
+# Emit ONLY the source SHA on stdout so callers (release.sh) can capture it.
+echo "$CONSOLE_SHA"
