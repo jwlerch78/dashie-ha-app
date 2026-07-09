@@ -1,5 +1,5 @@
 name: Dashie Console (Dev)
-version: "0.1.179"
+version: "0.1.180"
 slug: dashie_dev
 description: Dashie Console (Dev channel — tracks dashie-console main). For testing before a prod cut; install alongside the stable "Dashie Console" add-on.
 url: https://github.com/jwlerch78/dashie-ha-app
@@ -31,7 +31,7 @@ ingress_port: 8099
 # inside the SPA.
 # HAOS panel icons can only be Material Design Icons (mdi:...) — not custom images.
 # home-heart is the closest family-dashboard vibe available.
-panel_icon: mdi:home-heart-outline
+panel_icon: mdi:home-heart
 panel_title: Dashie Console (Dev)
 
 # No external ports exposed — everything flows through Ingress.
