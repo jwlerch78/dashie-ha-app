@@ -750,10 +750,6 @@ const AccountUsage = {
         if (intr.realtime || items.some(c => c.request_type === 'realtime')) {
             return this._renderRealtimeInteractionRow(intr, items, total, open, caret, time);
         }
-        // A multi-turn cascade dialog reads as a conversation ("N turns"), not "AI
-        // (complex)" — the multi-pass badge misfires when several turns share a session.
-        // Thread the turns (like the realtime path) instead of collapsing to turn 1.
-        const dialogTurns = (intr.turns && intr.turns.length > 1) ? intr.turns : null;
         const counts = {};
         for (const it of items) { const g = this._svcGroup(it.service); counts[g] = (counts[g] || 0) + 1; }
         const mix = Object.entries(counts)
@@ -765,12 +761,9 @@ const AccountUsage = {
                 return `${this._svcLabel(s)}${n > 1 ? ' ×' + n : ''}`;
             })
             .join(' · ');
-        const label = dialogTurns
-            ? `Conversation · ${dialogTurns.length} turns`
-            : `${mix} · ${items.length} call${items.length === 1 ? '' : 's'}`;
         const body = open
             ? `<div style="padding-left: 24px;">
-                 ${dialogTurns ? this._renderRealtimeTranscript(dialogTurns) : this._renderTranscript(intr)}
+                 ${this._renderTranscript(intr)}
                  <table style="width: 100%; border-collapse: collapse; font-size: 12px; margin: 0 0 6px;"><tbody>
                     ${items.map(c => this._renderCallRow(c)).join('')}
                  </tbody></table>
@@ -782,7 +775,7 @@ const AccountUsage = {
                     style="display: flex; align-items: center; gap: 10px; padding: 7px 0; cursor: pointer;">
                     <span style="color: var(--text-muted); width: 12px; font-size: 11px;">${caret}</span>
                     <span style="color: var(--text-muted); width: 76px; font-size: 12px;">${this._escape(time)}</span>
-                    <span style="flex: 1; font-size: 12px;">${this._escape(label)}</span>
+                    <span style="flex: 1; font-size: 12px;">${this._escape(mix)} · ${items.length} call${items.length === 1 ? '' : 's'}</span>
                     <span style="font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; font-weight: 600;">${this._fmtCostTotal(total)}</span>
                 </div>
                 ${body}
