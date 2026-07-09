@@ -28,10 +28,14 @@ const UsageChart = {
 
     // ── data shaping (cost/bucket logic injected by the caller) ──
 
-    /** Per-day buckets: [{label, ai, speech, tools, total}], date order preserved. */
+    /** Per-day buckets: [{label, day, month, ai, speech, tools, total}], date
+     *  order preserved. `day`/`month` drive the two-tier axis (day number on
+     *  every bar, one month label per month span). */
     dayBuckets(days, bucketFn, costFn) {
         return (days || []).map(d => ({
             label: this._dayLabel(d.date),
+            day: this._dayNum(d.date),
+            month: this._monthShort(d.date),
             ...this._sum(d.by_service, bucketFn, costFn),
         }));
     },
@@ -79,7 +83,10 @@ const UsageChart = {
         if (!buckets || !buckets.length) {
             return `<div style="padding:32px 16px; text-align:center; color:var(--text-muted); font-size:13px;">No usage in this range.</div>`;
         }
-        const H = 200, padTop = 12, padBottom = 26, padLeft = 50;
+        // Two-tier axis (day buckets): day number under every bar + one month
+        // label per month span. Month buckets keep the single sparse row.
+        const twoTier = buckets.every(b => b.day != null && b.month);
+        const H = twoTier ? 212 : 200, padTop = 12, padBottom = twoTier ? 38 : 26, padLeft = 50;
         const plotH = H - padTop - padBottom;
         const slot = 34, barW = 22;
         const width = Math.max(560, padLeft + buckets.length * slot + 14);
@@ -106,12 +113,28 @@ const UsageChart = {
             }
             // full-height transparent hit area so tiny bars are still hoverable
             segs += `<rect x="${x.toFixed(1)}" y="${padTop}" width="${barW}" height="${plotH}" fill="transparent" data-tip="${tip}"></rect>`;
-            const showLabel = (i % labelEvery === 0) || i === buckets.length - 1;
-            if (showLabel) {
-                segs += `<text x="${(x + barW / 2).toFixed(1)}" y="${H - 9}" text-anchor="middle" font-size="9" fill="var(--text-muted,#888)">${this._esc(b.label)}</text>`;
+            if (twoTier) {
+                segs += `<text x="${(x + barW / 2).toFixed(1)}" y="${H - 21}" text-anchor="middle" font-size="8.5" fill="var(--text-muted,#888)">${this._esc(b.day)}</text>`;
+            } else {
+                const showLabel = (i % labelEvery === 0) || i === buckets.length - 1;
+                if (showLabel) {
+                    segs += `<text x="${(x + barW / 2).toFixed(1)}" y="${H - 9}" text-anchor="middle" font-size="9" fill="var(--text-muted,#888)">${this._esc(b.label)}</text>`;
+                }
             }
             return segs;
         }).join('');
+
+        // Month row: one label centered under each month's span of bars.
+        let monthRow = '';
+        if (twoTier) {
+            for (let i = 0; i < buckets.length;) {
+                let j = i;
+                while (j < buckets.length && buckets[j].month === buckets[i].month) j++;
+                const cx = padLeft + ((i + j) / 2) * slot;
+                monthRow += `<text x="${cx.toFixed(1)}" y="${H - 6}" text-anchor="middle" font-size="9" font-weight="600" fill="var(--text-muted,#888)">${this._esc(buckets[i].month)}</text>`;
+                i = j;
+            }
+        }
 
         const legend = this.ORDER.map(k =>
             `<span style="display:inline-flex; align-items:center; gap:5px; font-size:11px; color:var(--text-muted);">
@@ -129,6 +152,7 @@ const UsageChart = {
                      onmousemove="UsageChart.onMove(event)" onmouseleave="UsageChart.hideTip()">
                     ${grid}
                     ${bars}
+                    ${monthRow}
                 </svg>
             </div>`;
     },
@@ -186,6 +210,16 @@ const UsageChart = {
         if (n < 0.01) return '$' + n.toFixed(3);
         if (n < 1) return '$' + n.toFixed(2);
         return '$' + n.toFixed(n < 10 ? 1 : 0);
+    },
+    _dayNum(dateStr) {
+        const n = Number(String(dateStr).slice(8, 10));
+        return isFinite(n) && n > 0 ? n : null;
+    },
+    _monthShort(dateStr) {
+        try {
+            const [y, m] = String(dateStr).split('-').map(Number);
+            return new Date(Date.UTC(y, m - 1, 1)).toLocaleDateString('en-US', { timeZone: 'UTC', month: 'short' });
+        } catch { return null; }
     },
     _dayLabel(dateStr) {
         try {

@@ -96,6 +96,11 @@ const VoiceAiCards = {
             ? `<span style="color: var(--text-muted); font-size: 13px;">▾</span>`
             : (!isStatic && selected ? `<span style="color: var(--accent); font-weight: 700;">✓</span>` : '');
         const config = (selected && x.configFields) ? this._config(x, getConfig) : '';
+        // One-line note under a selected local engine (e.g. "local voices don't
+        // change per personality"). Build plan §6.
+        const note = (selected && x.note)
+            ? `<div style="font-size: 11px; color: var(--text-muted); margin-top: 8px; line-height: 1.4;">${this._esc(x.note)}</div>`
+            : '';
         const topBorder = isFirst ? '' : 'border-top: 1px solid var(--border, #e5e7eb);';
         const onclick = isStatic ? ''
             : (mode === 'expand'
@@ -117,6 +122,7 @@ const VoiceAiCards = {
                 </div>
                 ${x.description ? `<div style="font-size: 12px; color: var(--text-muted); margin-top: 3px;">${this._esc(x.description)}</div>` : ''}
                 ${config}
+                ${note}
             </div>`;
     },
 
@@ -125,12 +131,33 @@ const VoiceAiCards = {
         const fields = x.configFields.map(f => `
             <label style="display:flex; flex-direction:column; gap: 3px; font-size: 11px; color: var(--text-muted);">
                 ${this._esc(f.label)}
-                <input type="text" value="${this._esc(get(f.key) || '')}" placeholder="${this._esc(f.placeholder || '')}"
-                    onchange="VoiceAiPage.saveLocalField('${f.key}', this.value)"
-                    style="padding: 7px 9px; border: 1px solid var(--border, #d1d5db); border-radius: 5px; font-size: 13px;">
+                ${this._field(f, get)}
             </label>`).join('');
         // stopPropagation so editing a field doesn't trigger the row's select/collapse.
         return `<div onclick="event.stopPropagation()" style="margin-top: 10px; display: grid; gap: 8px;">${fields}</div>`;
+    },
+
+    /** A single config-field control. `type:'select'` (detection-populated voice
+     *  dropdowns) renders a <select>; everything else is a free-text input. The
+     *  current value is pre-selected; if it isn't among the options (stale/hand-
+     *  entered), a leading "— pick —" keeps the field honest. */
+    _field(f, get) {
+        const cur = get(f.key) || '';
+        const inputStyle = 'padding: 7px 9px; border: 1px solid var(--border, #d1d5db); border-radius: 5px; font-size: 13px;';
+        if (f.type === 'select' && Array.isArray(f.options)) {
+            const known = f.options.some(o => (o.value ?? o) === cur);
+            const opts = [
+                `<option value="" ${cur ? '' : 'selected'} disabled>— pick a voice —</option>`,
+                ...f.options.map(o => {
+                    const v = o.value ?? o, l = o.label ?? o;
+                    return `<option value="${this._esc(v)}" ${v === cur ? 'selected' : ''}>${this._esc(l)}</option>`;
+                }),
+                (cur && !known) ? `<option value="${this._esc(cur)}" selected>${this._esc(cur)} (current)</option>` : '',
+            ].join('');
+            return `<select onchange="VoiceAiPage.saveLocalField('${f.key}', this.value)" style="${inputStyle}">${opts}</select>`;
+        }
+        return `<input type="text" value="${this._esc(cur)}" placeholder="${this._esc(f.placeholder || '')}"
+                    onchange="VoiceAiPage.saveLocalField('${f.key}', this.value)" style="${inputStyle}">`;
     },
 };
 

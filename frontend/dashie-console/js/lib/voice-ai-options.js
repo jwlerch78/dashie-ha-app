@@ -80,30 +80,122 @@ const VoiceAiOptions = {
     // dashie_cloud = fixed cloud vendor; va_default = the device's Home Assistant
     // voice pipeline; android_voice = on-device. `haOnly` options are hidden for
     // non-HA accounts (gated on DashieAuth.isHaUser by the page).
+    // Base STT rows that always exist regardless of detection. The detected
+    // engine-direct row (ha_engine, labeled "Whisper (Home Assistant)") is
+    // injected by sttOptions() when /api/voice/engines finds a Whisper engine.
     STT: [
         { id: 'dashie_cloud', label: 'Dashie Cloud (Deepgram)', locality: 'cloud', cost: '$0.0043/min · ~0.04¢/command',
           description: 'Streaming, premium accuracy.' },
+        { id: 'local_stt_url', label: 'Local Whisper (your box)', locality: 'local', cost: 'Free',
+          description: 'Whisper server on your own box (OpenAI-compatible, LAN, direct).',
+          configFields: [
+            { key: 'voice.localSttUrl', label: 'Whisper box URL', placeholder: 'http://192.168.1.50:8000' },
+          ] },
         { id: 'va_default', label: 'Home Assistant', locality: 'local', cost: 'Free', haOnly: true,
           description: "Your Home Assistant voice pipeline's speech-to-text." },
         { id: 'android_voice', label: 'Android voice', locality: 'local', cost: 'Free',
           description: 'Built-in Android / browser speech recognition.' },
-        { id: 'local-whisper', label: 'Local Whisper', locality: 'local', cost: 'Free', comingSoon: true,
-          description: 'On-device whisper.cpp — offline, nothing leaves the LAN.' },
     ],
 
+    // Base TTS rows that always exist. The detected engine-direct row (ha_engine,
+    // labeled "Piper (Home Assistant)") is injected by ttsOptions() when
+    // detection finds a Piper engine on HA.
     TTS: [
         // cost is a fallback estimate — applyLiveRates() overwrites the rate from
         // the server's margined rate card; the "~½–1¢/reply" estimate stays static.
         { id: 'dashie_cloud', label: 'Dashie Cloud (ElevenLabs)', locality: 'cloud', cost: '$0.13/1k chars · ~½–1¢/reply',
           description: 'Premium character voices.' },
+        { id: 'local_url', label: 'Local TTS (your box)', locality: 'local', cost: 'Free',
+          description: 'Kokoro / OpenAI-compatible TTS on your own box (LAN, direct).',
+          configFields: [
+            { key: 'voice.localTtsUrl', label: 'TTS box URL', placeholder: 'http://192.168.1.50:8880' },
+            { key: 'voice.localTtsVoiceId', label: 'Voice', placeholder: 'af_heart' },
+          ] },
         { id: 'va_default', label: 'Home Assistant', locality: 'local', cost: 'Free', haOnly: true,
           description: "Your Home Assistant voice pipeline's text-to-speech." },
         { id: 'android_voice', label: 'Android voice', locality: 'local', cost: 'Free',
           description: 'Built-in Android text-to-speech.' },
-        { id: 'piper', label: 'Piper', locality: 'local', cost: 'Free', haOnly: true, comingSoon: true,
-          description: 'Home Assistant Piper voice — offline.',
-          configFields: [{ key: 'voice.localTtsUrl', label: 'Piper endpoint (optional)', placeholder: 'http://homeassistant.local:10200' }] },
     ],
+
+    // ── detection-gated option builders ──────────────────────
+    // Turn the static base rows into the live option set for the picker, adding
+    // the engine-direct HA row (provider id `ha_engine`, transport-named — NOT
+    // engine-named; the engine itself is carried in haTtsEngineId/haSttEngineId)
+    // ONLY when detection found a matching engine, and upgrading free-text voice
+    // fields to dropdowns when detection returned a voice list. `detection` =
+    // GET /api/voice/engines ({ available, tts, stt, kokoro }) or null (no HA /
+    // cloud mode). See build plan 20260708 §5.2. Decision §11.1: a single
+    // canonical "…(Home Assistant)" row bound to the first matching engine; the
+    // label names the common engine (Piper/Whisper) for humans, the id is the
+    // transport so one native client serves any HA engine.
+
+    _matchEngine(list, re) {
+        if (!Array.isArray(list)) return null;
+        return list.find(e => re.test(String(e.engine_id || '')) || re.test(String(e.name || ''))) || null;
+    },
+
+    /** TTS option list in the §3 order: cloud, Piper (if detected), your-box, HA
+     *  pipeline, Android. */
+    ttsOptions(detection) {
+        const base = Object.fromEntries(this.TTS.map(o => [o.id, o]));
+        const out = [base.dashie_cloud, this._piperOption(detection), this._localUrlOption(base.local_url, detection),
+                     base.va_default, base.android_voice];
+        return out.filter(Boolean);
+    },
+
+    /** STT option list in the §3 order: cloud, Whisper (if detected), your-box,
+     *  HA pipeline, Android. */
+    sttOptions(detection) {
+        const base = Object.fromEntries(this.STT.map(o => [o.id, o]));
+        const out = [base.dashie_cloud, this._whisperOption(detection), base.local_stt_url,
+                     base.va_default, base.android_voice];
+        return out.filter(Boolean);
+    },
+
+    /** Piper (Home Assistant) engine-direct TTS row — only when a Piper TTS engine
+     *  is detected. Provider id is the transport (`ha_engine`), engine carried in
+     *  engineId → voice.haTtsEngineId. Voice field is a dropdown from the engine's
+     *  voices, else free-text. */
+    _piperOption(detection) {
+        const eng = this._matchEngine(detection?.tts, /piper/i);
+        if (!eng) return null;
+        const voices = (eng.voices || []).map(v => ({ value: v.voice_id, label: v.name || v.voice_id }));
+        const voiceField = voices.length
+            ? { key: 'voice.haTtsVoiceId', label: 'Voice', type: 'select', options: voices }
+            : { key: 'voice.haTtsVoiceId', label: 'Voice', placeholder: 'en_US-lessac-medium' };
+        return {
+            id: 'ha_engine', label: 'Piper (Home Assistant)', locality: 'local', cost: 'Free', haOnly: true,
+            engineId: eng.engine_id,
+            description: 'Your Home Assistant Piper voice — direct, no Assist pipeline.',
+            note: "Local voices don't change per personality — pick one voice here.",
+            configFields: [voiceField],
+        };
+    },
+
+    /** Whisper (Home Assistant) engine-direct STT row — only when a Whisper STT
+     *  engine is detected. Provider id is the transport (`ha_engine`), engine
+     *  carried in engineId → voice.haSttEngineId. Model/language deferred (Phase 2). */
+    _whisperOption(detection) {
+        const eng = this._matchEngine(detection?.stt, /whisper/i);
+        if (!eng) return null;
+        return {
+            id: 'ha_engine', label: 'Whisper (Home Assistant)', locality: 'local', cost: 'Free', haOnly: true,
+            engineId: eng.engine_id,
+            description: 'Your Home Assistant Whisper speech-to-text — direct, no Assist pipeline.',
+        };
+    },
+
+    /** Local TTS (your box): upgrade the free-text Voice field to a dropdown when
+     *  our Kokoro add-on was detected and exposed a voice list; else unchanged. */
+    _localUrlOption(base, detection) {
+        if (!base) return null;
+        const raw = detection?.kokoro?.voices || [];
+        const voices = raw.map(v => (typeof v === 'string' ? { value: v, label: v } : { value: v.voice_id, label: v.name || v.voice_id }));
+        if (!voices.length) return base;
+        const fields = base.configFields.map(f =>
+            f.key === 'voice.localTtsVoiceId' ? { ...f, type: 'select', options: voices } : f);
+        return { ...base, configFields: fields };
+    },
 
     SEARCH: [
         { id: 'dashie', label: 'Dashie (Tavily)', locality: 'cloud', cost: '~0.8¢/search',

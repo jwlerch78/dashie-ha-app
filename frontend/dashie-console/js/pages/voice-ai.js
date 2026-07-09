@@ -18,6 +18,7 @@
 
 const VoiceAiPage = {
     _defaults: null,        // {dotted: value}
+    _engines: null,         // GET /api/voice/engines result — add-on mode only (detection-gated picker)
     _sharing: null,         // { householdSharing } — add-on mode only (below AI Defaults)
     _templates: null,       // built-in personality rows
     _custom: null,          // custom personality rows
@@ -200,6 +201,9 @@ const VoiceAiPage = {
                 // Live margined rate card for the TTS/Search cost strings —
                 // internally best-effort, falls back to the hardcoded estimates.
                 window.VoiceAiOptions?.applyLiveRates?.(),
+                // Detection-gated picker: which local STT/TTS engines does HA have?
+                // Add-on mode only (decision §11.4). Best-effort — empty on failure.
+                this._fetchEngines(),
             ]);
             this._defaults = defaults;
             // Household sharing opt-in lives in the add-on only — fetch it so the
@@ -233,6 +237,33 @@ const VoiceAiPage = {
         for (const o of overrides) this._overrides[o.template_key] = o;
     },
 
+    /** Fetch local voice engine detection (GET /api/voice/engines). Add-on mode
+     *  only — a cloud console has no direct line to the user's HA (decision §11.4),
+     *  so detection is empty there and the picker shows URL-based local_* rows only.
+     *  Best-effort: any failure leaves _engines null (picker degrades, never breaks). */
+    async _fetchEngines() {
+        if (!DashieAuth.isAddonMode) { this._engines = null; return; }
+        try {
+            const r = await fetch(DashieAuth._addonUrl('/api/voice/engines'));
+            this._engines = r.ok ? await r.json() : null;
+        } catch (e) {
+            console.warn('[VoiceAiPage] engine detection unavailable:', e?.message || e);
+            this._engines = null;
+        }
+    },
+
+    /** Manual "Re-scan" affordance (§5.1) — bypass the server's 5-min cache. */
+    async rescanEngines() {
+        if (!DashieAuth.isAddonMode) return;
+        try {
+            const r = await fetch(DashieAuth._addonUrl('/api/voice/engines?refresh=1'));
+            if (r.ok) this._engines = await r.json();
+        } catch (e) {
+            console.warn('[VoiceAiPage] re-scan failed:', e?.message || e);
+        }
+        App.renderPage();
+    },
+
     getCustom(id) {
         return (this._custom || []).find(p => p.id === id) || null;
     },
@@ -252,7 +283,9 @@ const VoiceAiPage = {
         const STRING_KEYS = ['ai.model', 'voice.controlMethod', 'voice.conversationModel', 'voice.agentMode',
             'voice.sttProvider', 'voice.ttsProvider',
             'voice.searchSource', 'voice.sportsSource', 'voice.localLlmUrl', 'voice.localLlmModel',
-            'voice.searxngUrl', 'voice.localTtsUrl', 'voice.localSttUrl'];
+            'voice.searxngUrl', 'voice.localTtsUrl', 'voice.localTtsVoiceId', 'voice.localSttUrl',
+            // engine-direct HA voice (detection-gated picker, build plan §8)
+            'voice.haTtsEngineId', 'voice.haTtsVoiceId', 'voice.haSttEngineId'];
         if (dottedKey === 'ai.conversationTimeout') value = Number(rawValue);
         else if (STRING_KEYS.includes(dottedKey)) value = String(rawValue);
         else value = (rawValue === true || rawValue === 'true');
@@ -283,6 +316,19 @@ const VoiceAiPage = {
         const key = KEY[stageKey];
         if (!key) return;
         this._expandedCards.delete(stageKey);   // collapse back to the chosen option
+        // The engine-direct HA provider (transport id `ha_engine`) also pins which
+        // detected engine it binds to (single-canonical-row decision §11.1) so the
+        // native runtime knows the exact engine_id to hit — persist it alongside
+        // the provider selection. The engine name lives ONLY here, never in the
+        // provider id.
+        const O = window.VoiceAiOptions;
+        if (stageKey === 'tts' && id === 'ha_engine') {
+            const eng = O.ttsOptions(this._engines).find(o => o.id === 'ha_engine');
+            if (eng?.engineId) this.saveDefault('voice.haTtsEngineId', eng.engineId);
+        } else if (stageKey === 'stt' && id === 'ha_engine') {
+            const eng = O.sttOptions(this._engines).find(o => o.id === 'ha_engine');
+            if (eng?.engineId) this.saveDefault('voice.haSttEngineId', eng.engineId);
+        }
         this.saveDefault(key, id);
     },
 
@@ -419,8 +465,9 @@ const VoiceAiPage = {
                 ? card('AI Model', 'liveModel', this._liveModelOptions(), String(d['voice.conversationModel'] || this.CONVERSATION_MODELS[0][0]))
                 : card('AI Model', 'model', O.models(), String(d['ai.model']))}
 
-            ${showPipeline ? card('Text-to-speech (Voice)', 'tts', this._haFilter(O.TTS), String(d['voice.ttsProvider'])) : ''}
-            ${showPipeline ? card('Speech-to-text', 'stt', this._haFilter(O.STT), String(d['voice.sttProvider'])) : ''}
+            ${showPipeline ? this._renderEngineDetectionRow() : ''}
+            ${showPipeline ? card('Text-to-speech (Voice)', 'tts', this._haFilter(O.ttsOptions(this._engines)), String(d['voice.ttsProvider'])) : ''}
+            ${showPipeline ? card('Speech-to-text', 'stt', this._haFilter(O.sttOptions(this._engines)), String(d['voice.sttProvider'])) : ''}
             ${showPipeline ? card('Web search source', 'search', isGeminiAiModel ? this._googleSearchOption() : O.SEARCH, isGeminiAiModel ? 'google' : String(d['voice.searchSource'])) : ''}
             ${showPipeline ? card('Sports source', 'sports', O.SPORTS, String(d['voice.sportsSource'])) : ''}
 
@@ -525,6 +572,25 @@ const VoiceAiPage = {
             id: 'google', label: 'Google', locality: 'cloud', cost: 'Included with Gemini',
             description: 'Gemini searches Google directly and grounds its answer.',
         }];
+    },
+
+    /** Detection status + "Re-scan" for the engine-direct HA rows. Add-on mode
+     *  only (detection is add-on-only, §11.4). Tells the user whether local
+     *  engines were found and lets them re-probe after installing Piper/Whisper. */
+    _renderEngineDetectionRow() {
+        if (!DashieAuth.isAddonMode) return '';
+        const e = this._engines;
+        const hasLocal = e && e.available && (((e.tts || []).length) || ((e.stt || []).length));
+        const msg = (!e || !e.available)
+            ? 'Home Assistant not reachable — showing your-box (URL) options only.'
+            : (hasLocal
+                ? 'Detected local voice engines on Home Assistant.'
+                : 'No local voice engines found on Home Assistant. Install Piper (TTS) or Whisper (STT), then re-scan.');
+        return `
+            <div style="display:flex; justify-content:space-between; align-items:center; gap: 12px; margin: 0 0 8px; font-size: 12px; color: var(--text-secondary);">
+                <span>${this._escape(msg)}</span>
+                <button class="btn btn-ghost btn-sm" onclick="VoiceAiPage.rescanEngines()" style="flex-shrink:0;">Re-scan</button>
+            </div>`;
     },
 
     /** Cloud-vs-local key, shown above the pipeline cards when customize is on. */

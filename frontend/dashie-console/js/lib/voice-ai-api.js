@@ -41,6 +41,7 @@ const VoiceAiApi = {
         ['voice', 'localLlmModel'],
         ['voice', 'searxngUrl'],
         ['voice', 'localTtsUrl'],
+        ['voice', 'localTtsVoiceId'],
         ['voice', 'localSttUrl'],
     ],
 
@@ -65,6 +66,7 @@ const VoiceAiApi = {
         'voice.localLlmModel': '',
         'voice.searxngUrl': '',
         'voice.localTtsUrl': '',
+        'voice.localTtsVoiceId': '',
         'voice.localSttUrl': '',
     },
 

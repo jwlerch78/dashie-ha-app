@@ -1424,7 +1424,7 @@ Sports results (live from the sports provider):
 - Keep the spoken \`voice\` answer under 25 words and natural to hear aloud.
 `;
 
-    const AVAILABLE_TOOLS_LIST = `- calendar_events: query: {time_range: "today|tomorrow|this_week|next_week|weekend|next_30_days|next_60_days|<weekday e.g. wednesday for that specific day>", member_name?: "name (for a specific person)", query?: "keyword to find ONE specific event e.g. physical therapy (for "what time is X")", tags?: ["soccer"], mode?: "next|list"} - Family calendar events. Set member_name when the question is about one person; use mode "next" for a single upcoming event ("when is the next game"), "list" (default) for an overview ("what's on this weekend")
+    const AVAILABLE_TOOLS_LIST = `- calendar_events: query: {time_range: "today|tomorrow|this_week|next_week|weekend|next_weekend|next_30_days|next_60_days|<weekday e.g. wednesday for that specific day>", member_name?: "name (for a specific person)", query?: "keyword to find ONE specific event e.g. physical therapy (for "what time is X")", tags?: ["soccer"], mode?: "next|list"} - Family calendar events. Set member_name when the question is about one person; use "weekend" for "this weekend" and "next_weekend" for "next weekend"; use mode "next" for a single upcoming event ("when is the next game"), "list" (default) for an overview ("what's on this weekend")
 - family_members: query: {} - Info about family members (age, relationship, etc.)
 - web_search: query: "search string" - Current events, news, external info (IMPORTANT: query is a STRING)
 - chores: query: {hint: "task description", member_hint: "name"} - When someone reports completing a chore

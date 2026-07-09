@@ -302,14 +302,18 @@ const VoiceAiAnalysis = {
         const dialogTurns = (!intr.realtime && intr.turns && intr.turns.length > 1) ? intr.turns : null;
         let transcript;
         if (dialogTurns) {
+            // One thumbs pair rates the WHOLE dialog (top-right of the conversation
+            // bubble); a down-vote captures every turn's transcript.
+            const fbThumbs = this._renderFeedbackThumbs(intr.key);
             const shown = open ? dialogTurns : dialogTurns.slice(0, 1);
-            const thread = shown.map((t, i) => this._renderTurn(t, i === shown.length - 1, intr.key, i)).join('');
+            const thread = shown.map((t, i) => this._renderTurn(t, i === shown.length - 1)).join('');
             const more = `<button onclick="event.stopPropagation(); VoiceAiAnalysis.toggleInteraction('${this._escape(intr.key)}')"
                     style="background: none; border: none; color: var(--accent, #4f46e5); font-size: 12px; font-weight: 600; cursor: pointer; padding: 8px 0 0;">
                     ${open ? 'Show less ▴' : `Show full conversation (${dialogTurns.length - 1} more) ▾`}
                 </button>`;
             transcript = `
-            <div style="background: var(--surface-muted, #f7f7f8); border-radius: 8px; padding: 10px 12px; margin: 0 0 8px;">
+            <div style="position: relative; background: var(--surface-muted, #f7f7f8); border-radius: 8px; padding: 10px 12px;${fbThumbs ? ' padding-right: 64px;' : ''} margin: 0 0 8px;">
+                ${fbThumbs ? `<div style="position: absolute; top: 8px; right: 10px;">${fbThumbs}</div>` : ''}
                 ${thread}
             </div>${more}`;
         } else {
@@ -355,8 +359,11 @@ const VoiceAiAnalysis = {
         const badge = `<span style="background: var(--surface-muted, #f3f4f6); color: var(--text-secondary); font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.4px; padding: 2px 6px; border-radius: 4px;">Conversation</span>`;
         const cost = (intr.total_cost > 0) ? ` · ${this._fmtCost(intr.total_cost)}` : '';
         const meta = `${turns.length} turn${turns.length === 1 ? '' : 's'} · ${this._fmtTokens(intr.total_tokens)} tokens${cost}`;
+        // One thumbs pair rates the WHOLE conversation (top-right of the bubble);
+        // a down-vote captures every turn's transcript.
+        const fbThumbs = this._renderFeedbackThumbs(intr.key);
         const shown = open ? turns : turns.slice(0, 1);
-        const thread = shown.map((t, i) => this._renderTurn(t, i === shown.length - 1, intr.key, i)).join('');
+        const thread = shown.map((t, i) => this._renderTurn(t, i === shown.length - 1)).join('');
         const more = turns.length > 1
             ? `<button onclick="event.stopPropagation(); VoiceAiAnalysis.toggleInteraction('${this._escape(intr.key)}')"
                     style="background: none; border: none; color: var(--accent, #4f46e5); font-size: 12px; font-weight: 600; cursor: pointer; padding: 8px 0 0;">
@@ -372,7 +379,8 @@ const VoiceAiAnalysis = {
                     <span style="flex: 1; text-align: right; color: var(--text-muted); font-size: 12px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace;">${this._escape(meta)}</span>
                 </div>
                 <div style="padding: 0 16px 12px 38px;">
-                    <div style="background: var(--surface-muted, #f7f7f8); border-radius: 8px; padding: 10px 12px;">
+                    <div style="position: relative; background: var(--surface-muted, #f7f7f8); border-radius: 8px; padding: 10px 12px;${fbThumbs ? ' padding-right: 64px;' : ''}">
+                        ${fbThumbs ? `<div style="position: absolute; top: 8px; right: 10px;">${fbThumbs}</div>` : ''}
                         ${thread}
                     </div>
                     ${more}
@@ -382,8 +390,10 @@ const VoiceAiAnalysis = {
 
     /** One conversation turn: You/Dashie lines, with the AI response latency
      *  (end-of-user-speech → response) shown on "Dashie said" when captured.
-     *  `last` drops the divider so the thread doesn't end with a dangling rule. */
-    _renderTurn(t, last, intrKey, turnIndex) {
+     *  `last` drops the divider so the thread doesn't end with a dangling rule.
+     *  Feedback is per-DIALOG (one thumbs pair on the whole conversation), not
+     *  per-turn — so turns render as plain transcript lines. */
+    _renderTurn(t, last) {
         const lat = (t.latency_ms > 0)
             ? `<span style="color: var(--text-muted); font-size: 10px; margin-left: 6px; letter-spacing: 0;">(${this._escape(this._fmtMs(t.latency_ms))})</span>`
             : '';
@@ -394,12 +404,8 @@ const VoiceAiAnalysis = {
             </div>` : '';
         // On-screen (written) elaboration — cascade turns carry it; realtime turns don't.
         const subtext = t.subtext ? this._line('On-screen', t.subtext, 12, true) : '';
-        const hasTranscript = (intrKey !== undefined && (t.prompt || t.response));
-        const fbKey = `${intrKey}::${turnIndex}`;
-        const fbThumbs = hasTranscript ? this._renderFeedbackThumbs(fbKey) : '';
         return `
-            <div style="position: relative; margin: 0 0 ${last ? '0' : '10px'}; padding: 0${fbThumbs ? ' 64px 0 0' : ''}; padding-bottom: ${last ? '0' : '10px'}; ${last ? '' : 'border-bottom: 1px dashed var(--border, #e5e7eb);'}">
-                ${fbThumbs ? `<div style="position: absolute; top: 0; right: 0;">${fbThumbs}</div>` : ''}
+            <div style="margin: 0 0 ${last ? '0' : '10px'}; padding-bottom: ${last ? '0' : '10px'}; ${last ? '' : 'border-bottom: 1px dashed var(--border, #e5e7eb);'}">
                 ${t.prompt ? this._line('You said', t.prompt, 13) : ''}
                 ${dashie}
                 ${subtext}
@@ -473,11 +479,31 @@ const VoiceAiAnalysis = {
         return step ? step.kind : 'direct';
     },
 
+    /** The turns of a dialog (realtime, or a multi-turn cascade dialog), else []. */
+    _dialogTurns(intr) {
+        return (intr.turns && intr.turns.length) ? intr.turns : [];
+    },
+
+    /** Concatenated readable transcript for the columns: all user utterances and all
+     *  Dashie responses of a (possibly multi-turn) interaction. Falls back to the flat
+     *  single-turn prompt/response. Returns { promptText, responseText }. */
+    _transcriptText(intr) {
+        const turns = this._dialogTurns(intr);
+        if (turns.length) {
+            const join = (arr) => arr.map(x => x).filter(Boolean).join('\n');
+            return {
+                promptText: join(turns.map(t => t.prompt)) || null,
+                responseText: join(turns.map(t => t.response)) || null,
+            };
+        }
+        return { promptText: intr.prompt || null, responseText: intr.response || null };
+    },
+
     /** Self-contained pipeline trace for a down-vote, built from data the row
      *  already carries (no extra query): mode (cascade|realtime), route, model,
-     *  the per-stage steps (cascade) or turn latency (realtime), and totals.
-     *  Shaped so the voice-eval harness can reconstruct the turn from it. */
-    _toolTraceOf(intr, turn) {
+     *  the cascade per-stage steps, totals, and — for a dialog — the full turn-by-turn
+     *  transcript. Shaped so the voice-eval harness can reconstruct the (multi-)turn. */
+    _toolTraceOf(intr) {
         const trace = {
             mode: intr.realtime ? 'realtime' : 'cascade',
             route: this._routeOf(intr),
@@ -486,10 +512,18 @@ const VoiceAiAnalysis = {
             total_latency_ms: intr.total_latency_ms ?? null,
         };
         if (intr.total_cost != null) trace.total_cost = intr.total_cost;
-        if (intr.realtime) {
-            trace.turns = (intr.turns || []).length;
-            if (turn && turn.latency_ms != null) trace.turn_latency_ms = turn.latency_ms;
-        } else {
+        const turns = this._dialogTurns(intr);
+        if (turns.length) {
+            // Whole dialog: structured turn-by-turn transcript (maps to the eval
+            // harness's multi-turn case shape).
+            trace.turn_count = turns.length;
+            trace.transcript = turns.map(t => ({
+                prompt: t.prompt ?? null,
+                response: t.response ?? null,
+                latency_ms: t.latency_ms ?? null,
+            }));
+        }
+        if (!intr.realtime) {
             trace.steps = (intr.steps || []).map(s => ({
                 kind: s.kind,
                 label: s.label ?? null,
@@ -526,10 +560,11 @@ const VoiceAiAnalysis = {
 
     async rateDown(fbKey) {
         if (this._fbLocked(fbKey)) return;
-        const { intr, turn, turnIndex } = this._resolveFb(fbKey);
+        const { intr } = this._resolveFb(fbKey);
         if (!intr) return;
-        const promptText = turn ? turn.prompt : intr.prompt;
-        const responseText = turn ? turn.response : intr.response;
+        // Whole-interaction feedback: for a dialog (realtime or multi-turn cascade)
+        // this is the ENTIRE conversation transcript, not a single exchange.
+        const { promptText, responseText } = this._transcriptText(intr);
         // Follow-up modal: required reason + optional free-text detail.
         const res = await FeedbackModal.open({ prompt: promptText, response: responseText });
         if (!res) return;   // cancelled — leave unrated, thumbs stay active
@@ -543,9 +578,9 @@ const VoiceAiAnalysis = {
                 detail: res.detail,
                 promptText,
                 responseText,
-                turnIndex: turn ? turnIndex : null,
+                turnIndex: null,   // whole dialog, not a single turn
                 model: this._modelOf(intr),
-                toolTrace: this._toolTraceOf(intr, turn),
+                toolTrace: this._toolTraceOf(intr),   // includes the full turn-by-turn transcript
             });
             this._feedback[fbKey] = { rating: 'down', done: true };
         } catch (e) {
