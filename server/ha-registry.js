@@ -378,24 +378,17 @@ async function listTtsEngines() {
 }
 
 /** Voices for one TTS engine in a language. → { voices: [{ voice_id, name }] }.
- *  HA requires a language; Piper voices are language-specific. */
+ *  HA requires a language; Piper voices are language-specific (confirmed: 26 for
+ *  en_US vs 11 for en_GB). Voice ids look like `en_US-amy-medium`. */
 async function getTtsVoices(engineId, language) {
     return _send({ type: 'tts/engine/voices', engine_id: engineId, language });
 }
 
-/** Metadata for one TTS engine. → { provider: { engine_id, supported_languages } }. */
-async function getTtsEngine(engineId) {
-    return _send({ type: 'tts/engine/get', engine_id: engineId });
-}
-
-/** List STT engines. → { providers: [{ engine_id, supported_languages }] } (HA shape). */
+/** List STT engines. → { providers: [{ engine_id, supported_languages }] } (HA shape).
+ *  Note: stt/engine/get does NOT exist on current HA (unknown_command) — the list
+ *  carries everything the Console needs, so there's no per-engine getter. */
 async function listSttEngines() {
     return _send({ type: 'stt/engine/list' });
-}
-
-/** Metadata for one STT engine. → { provider: { engine_id, supported_languages } }. */
-async function getSttEngine(engineId) {
-    return _send({ type: 'stt/engine/get', engine_id: engineId });
 }
 
 /** Force a re-pull of the device registry (e.g., after we know HA changed). */
@@ -472,8 +465,6 @@ module.exports = {
     callService,
     listTtsEngines,
     getTtsVoices,
-    getTtsEngine,
     listSttEngines,
-    getSttEngine,
     refresh,
 };

@@ -20,11 +20,15 @@ const haRegistry = require('./ha-registry');
 const CACHE_TTL_MS = 5 * 60 * 1000;   // engines change rarely; Re-scan bypasses
 let _cache = null;                    // { result, fetchedAt }
 
-/** Pick the language to enumerate voices in. English-first (Phase 1 is EN-only
- *  households), else the engine's first supported language. */
+/** Pick the language to enumerate voices in. Voice lists are language-specific
+ *  (Piper: 26 voices for en_US vs 11 for en_GB, and it lists en_GB *before*
+ *  en_US), so prefer en-US explicitly, then any English, then the first
+ *  supported language. Phase 1 is EN-first households. */
 function _preferredLanguage(supportedLanguages) {
-    const langs = Array.isArray(supportedLanguages) ? supportedLanguages : [];
-    return langs.find(l => /^en\b|^en[-_]/i.test(String(l))) || langs[0] || 'en';
+    const langs = (Array.isArray(supportedLanguages) ? supportedLanguages : []).map(String);
+    return langs.find(l => /^en[-_]us$/i.test(l))
+        || langs.find(l => /^en([-_]|$)/i.test(l))
+        || langs[0] || 'en';
 }
 
 /** Normalize whatever tts/engine/list returned into a plain array of engines.
@@ -83,16 +87,10 @@ async function _detectStt(debug) {
         const engineId = p.engine_id || p.engineId;
         if (!engineId) continue;
         const languages = p.supported_languages || p.supportedLanguages || [];
-        // stt/engine/get carries formats/codecs the native POST needs (§4.2);
-        // fetch best-effort so the Console can show a language hint.
-        let meta = null;
-        try {
-            meta = await haRegistry.getSttEngine(engineId);
-            if (debug && !debug.stt_get_raw) debug.stt_get_raw = { engineId, meta };
-        } catch (e) {
-            if (debug) (debug.stt_get_errors = debug.stt_get_errors || {})[engineId] = e.message;
-        }
-        engines.push({ engine_id: engineId, name: p.name || engineId, languages, meta: meta?.provider || meta || null });
+        // No stt/engine/get: it's unknown_command on current HA (probe 2026-07-09).
+        // The list already carries supported_languages, and native STT POSTs a
+        // fixed X-Speech-Content capture format (§4.2) — no per-engine meta needed.
+        engines.push({ engine_id: engineId, name: p.name || engineId, languages });
     }
     return engines;
 }
