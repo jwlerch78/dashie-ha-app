@@ -90,12 +90,10 @@ const UsageChart = {
         const H = twoTier ? 214 : 200, padTop = 12, padBottom = twoTier ? 40 : 26, padLeft = 50;
         const plotH = H - padTop - padBottom;
         const slot = 34, barW = 22;
-        // Daily average reference line (two-tier only) — reserve room on the
-        // right for its "avg $x" callout so it never overlaps the last bar.
+        // Daily average reference line (two-tier only).
         const avg = twoTier ? buckets.reduce((s, b) => s + (b.total || 0), 0) / buckets.length : null;
-        const avgLabelW = avg != null ? 56 : 0;
-        const width = Math.max(560, padLeft + buckets.length * slot + 14 + avgLabelW);
-        const plotRight = width - 6 - avgLabelW;
+        const width = Math.max(560, padLeft + buckets.length * slot + 14);
+        const plotRight = width - 6;
         const maxTotal = Math.max(...buckets.map(b => b.total), 0.0001);
         const yFor = v => padTop + plotH - (v / maxTotal) * plotH;
 
@@ -105,14 +103,21 @@ const UsageChart = {
                     <text x="${padLeft - 6}" y="${(y + 3).toFixed(1)}" text-anchor="end" font-size="9" fill="var(--text-muted,#888)">${this._axis(v)}</text>`;
         }).join('');
 
-        // Average line: dashed, muted (an annotation, not a series), value
-        // called out at its right end.
+        // Average line: dashed, muted (an annotation, not a series). The value
+        // is called out at BOTH ends of the line — a wide chart scrolls
+        // horizontally (anchored to the recent end), so a single-end label can
+        // sit past the scroll fold. The surface-colored halo keeps the text
+        // readable when it crosses a bar.
         let avgLine = '';
         if (avg != null && avg > 0) {
             const y = yFor(avg);
+            const labelY = y < padTop + 14 ? y + 12 : y - 5;   // flip below the line when near the top
+            const lbl = (x, anchor) =>
+                `<text x="${x.toFixed(1)}" y="${labelY.toFixed(1)}" text-anchor="${anchor}" font-size="9" font-weight="600" fill="var(--text-muted,#888)" stroke="var(--surface,#fff)" stroke-width="3" paint-order="stroke">avg ${this._money(avg)}/day</text>`;
             avgLine = `<g pointer-events="none">
                        <line x1="${padLeft}" y1="${y.toFixed(1)}" x2="${plotRight}" y2="${y.toFixed(1)}" stroke="var(--text-muted,#888)" stroke-width="1" stroke-dasharray="4 3"/>
-                       <text x="${plotRight + 5}" y="${(y + 3).toFixed(1)}" text-anchor="start" font-size="9" fill="var(--text-muted,#888)">avg ${this._money(avg)}</text></g>`;
+                       ${lbl(padLeft + 4, 'start')}
+                       ${lbl(plotRight - 4, 'end')}</g>`;
         }
 
         const labelEvery = Math.ceil(buckets.length / 12);
@@ -141,7 +146,8 @@ const UsageChart = {
         }).join('');
 
         // Month row: a bracket under each month's span of day numbers (end
-        // ticks turned up toward the days it groups), month label beneath.
+        // ticks turned up toward the days it groups), month label beneath,
+        // and a vertical rule through the plot at each month boundary.
         let monthRow = '';
         if (twoTier) {
             const bktY = H - 17, tick = 3;
@@ -151,6 +157,10 @@ const UsageChart = {
                 const x1 = padLeft + i * slot + 3;
                 const x2 = padLeft + j * slot - 3;
                 const cx = (x1 + x2) / 2;
+                if (i > 0) {
+                    const xb = padLeft + i * slot;
+                    monthRow += `<line x1="${xb}" y1="${padTop}" x2="${xb}" y2="${bktY}" stroke="var(--border,#e5e7eb)" stroke-width="1"/>`;
+                }
                 monthRow += `<path d="M ${x1.toFixed(1)} ${bktY - tick} V ${bktY} H ${x2.toFixed(1)} V ${bktY - tick}" fill="none" stroke="var(--border,#e5e7eb)" stroke-width="1"/>
                              <text x="${cx.toFixed(1)}" y="${H - 5}" text-anchor="middle" font-size="9" font-weight="600" fill="var(--text-muted,#888)">${this._esc(buckets[i].month)}</text>`;
                 i = j;
@@ -168,14 +178,18 @@ const UsageChart = {
         return `
             <div style="display:flex; gap:14px; padding:10px 16px 4px;">${legend}</div>
             ${note}
-            <div style="overflow-x:auto; padding:0 8px 8px;">
-                <svg width="${width}" height="${H}" viewBox="0 0 ${width} ${H}" style="display:block;"
-                     onmousemove="UsageChart.onMove(event)" onmouseleave="UsageChart.hideTip()">
-                    ${grid}
-                    ${bars}
-                    ${avgLine}
-                    ${monthRow}
-                </svg>
+            <div style="overflow-x:auto; padding:0 8px 8px; direction:rtl;">
+                <!-- rtl on the scroller anchors the initial scroll position to the
+                     RIGHT (most recent days); the ltr wrapper restores normal layout. -->
+                <div style="direction:ltr; width:${width}px;">
+                    <svg width="${width}" height="${H}" viewBox="0 0 ${width} ${H}" style="display:block;"
+                         onmousemove="UsageChart.onMove(event)" onmouseleave="UsageChart.hideTip()">
+                        ${grid}
+                        ${bars}
+                        ${avgLine}
+                        ${monthRow}
+                    </svg>
+                </div>
             </div>`;
     },
 
