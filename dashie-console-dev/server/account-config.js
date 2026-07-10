@@ -15,7 +15,7 @@ const { SUPABASE } = require('./config');
 const TTL_MS = 30_000; // user_settings changes rarely; a short cache keeps converse latency low.
 let _cache = null; // { at, value }
 
-const SAFE_DEFAULT = { model: null, route: 'cloud', localLlmUrl: '', localLlmModel: '', retainTranscripts: false, agentMode: '', retrievePictures: null };
+const SAFE_DEFAULT = { model: null, route: 'cloud', localLlmUrl: '', localLlmModel: '', localLlmKey: '', retainTranscripts: false, agentMode: '', retrievePictures: null };
 
 /**
  * Resolve the account's voice routing config.
@@ -46,6 +46,10 @@ async function getAccountVoiceConfig() {
           route: model === 'local' ? 'local' : 'cloud',
           localLlmUrl: settings?.voice?.localLlmUrl || '',
           localLlmModel: settings?.voice?.localLlmModel || '',
+          // BYO-model API key (WS-I) — bearer for a Hermes/remote OpenAI-compatible
+          // endpoint. Console-only key (user_settings.voice.localLlmKey); passed to
+          // node-io.js. Blank for keyless local Ollama/llama.cpp.
+          localLlmKey: settings?.voice?.localLlmKey || '',
           retainTranscripts: row.retain_transcripts === true,
           // Household conversation agent mode (live|dialog|single) — the console's Voice & AI
           // page writes user_settings.voice.agentMode (ACCOUNT_VOICE_KEYS). Carried to

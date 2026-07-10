@@ -45,8 +45,12 @@ async function postDbOp(token, operation, data) {
  * @param {function} [opts.log]   Optional logger (defaults to console.log).
  * @returns {object} an OrchestratorIO
  */
-function createNodeIO({ endpoint, model, log = console.log }) {
+function createNodeIO({ endpoint, model, key = '', log = console.log }) {
   const chatUrl = String(endpoint).replace(/\/+$/, '') + '/v1/chat/completions';
+  // BYO-model (WS-I): send a bearer when the account configured a key — required
+  // for a Hermes API server or any remote OpenAI-compatible endpoint. Local
+  // Ollama/llama.cpp usually need no key, so the header is omitted when blank.
+  const authHeaders = key ? { Authorization: `Bearer ${key}` } : {};
 
   async function callGateway({ provider, prompt, modelId }) {
     const t0 = Date.now();
@@ -54,7 +58,7 @@ function createNodeIO({ endpoint, model, log = console.log }) {
     try {
       const resp = await fetch(chatUrl, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...authHeaders },
         body: JSON.stringify({
           model: useModel,
           messages: [{ role: 'user', content: prompt }],

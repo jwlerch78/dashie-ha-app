@@ -16,6 +16,7 @@
 // validation against a real HA before the native clients depend on them.
 
 const haRegistry = require('./ha-registry');
+const { getAccountVoiceConfig } = require('./account-config');
 
 const CACHE_TTL_MS = 5 * 60 * 1000;   // engines change rarely; Re-scan bypasses
 let _cache = null;                    // { result, fetchedAt }
@@ -142,25 +143,59 @@ async function _detectKokoro(debug) {
  *   available=false means HA WS isn't reachable (no supervisor token / dev env);
  *   the Console then falls back to URL-based local_* rows only.
  */
+/** OpenAI-compatible reachability + model list — GET {url}/v1/models with an
+ *  optional bearer. Reused by the brain (BYO-model) block below and available for
+ *  a future Hermes add-on probe (Voice Master Plan WS-I). Best-effort. */
+async function probeOpenAiCompat(url, key, debug) {
+    const base = String(url || '').trim().replace(/\/+$/, '');
+    if (!base) return { reachable: false, models: [] };
+    try {
+        const headers = key ? { Authorization: `Bearer ${key}` } : {};
+        const resp = await fetch(`${base}/v1/models`, { headers });
+        if (debug) debug.brain_models_status = resp.status;
+        if (!resp.ok) return { reachable: false, models: [], error: `HTTP ${resp.status}` };
+        const body = await resp.json().catch(() => ({}));
+        const models = (Array.isArray(body?.data) ? body.data : []).map(m => m.id || m.name).filter(Boolean);
+        return { reachable: true, models };
+    } catch (e) {
+        if (debug) debug.brain_error = e.message;
+        return { reachable: false, models: [], error: e.message };
+    }
+}
+
+/** BYO-model brain endpoint (WS-I): if the account configured a custom OpenAI-
+ *  compatible URL (voice.localLlmUrl — Ollama / self-hosted Hermes / remote), probe
+ *  it so the picker can pre-fill URL/models like the Kokoro block does. No URL
+ *  configured → { configured:false }. Same shape/pattern as _detectKokoro. */
+async function _detectBrain(debug) {
+    let acct;
+    try { acct = await getAccountVoiceConfig(); } catch { return { configured: false, reason: 'no_account' }; }
+    const url = acct?.localLlmUrl || '';
+    if (!url) return { configured: false };
+    const probe = await probeOpenAiCompat(url, acct?.localLlmKey || '', debug);
+    return { configured: true, url, ...probe };
+}
+
 async function detectVoiceEngines({ refresh = false, debug = false } = {}) {
     if (!haRegistry.isAvailable()) {
-        return { available: false, tts: [], stt: [], kokoro: { installed: false, reason: 'ha_unavailable' } };
+        return { available: false, tts: [], stt: [], kokoro: { installed: false, reason: 'ha_unavailable' }, brain: { configured: false } };
     }
     if (!refresh && !debug && _cache && (Date.now() - _cache.fetchedAt) < CACHE_TTL_MS) {
         return _cache.result;
     }
 
     const dbg = debug ? {} : null;
-    const [tts, stt, kokoro] = await Promise.all([
+    const [tts, stt, kokoro, brain] = await Promise.all([
         _detectTts(dbg),
         _detectStt(dbg),
         _detectKokoro(dbg),
+        _detectBrain(dbg),
     ]);
-    const result = { available: true, tts, stt, kokoro };
+    const result = { available: true, tts, stt, kokoro, brain };
 
     // Cache only the clean (non-debug) result so a debug call never poisons it.
     if (!debug) _cache = { result, fetchedAt: Date.now() };
     return debug ? { ...result, _debug: dbg } : result;
 }
 
-module.exports = { detectVoiceEngines };
+module.exports = { detectVoiceEngines, probeOpenAiCompat };
