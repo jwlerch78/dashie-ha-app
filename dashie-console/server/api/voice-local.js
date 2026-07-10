@@ -54,8 +54,7 @@ router.post('/converse-local', express.json(), async (req, res) => {
   const acct = await getAccountVoiceConfig();
   const endpoint = acct.localLlmUrl || ENV_ENDPOINT;
   const model = (body.options && body.options.model) || acct.localLlmModel || ENV_MODEL;
-  const key = acct.localLlmKey || '';   // BYO-model bearer (Hermes/remote) — WS-I
-  const io = createNodeIO({ endpoint, model, key });
+  const io = createNodeIO({ endpoint, model });
 
   const brainReq = {
     text: body.text,
