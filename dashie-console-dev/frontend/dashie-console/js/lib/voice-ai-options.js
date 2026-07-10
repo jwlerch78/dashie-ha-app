@@ -28,6 +28,39 @@ const VoiceAiOptions = {
     BG: { cloud: 'rgba(249, 115, 22, 0.08)', local: 'rgba(22, 163, 74, 0.10)' },
     LABEL: { cloud: 'Cloud', local: 'Local' },
 
+    // ── pipeline presets (Open Brain plan §6) ─────────────────
+    // The top-level Voice & AI selector: three Dashie Intelligence presets
+    // (Cloud / Hybrid / Local) + HA Voice Assist. Stored in
+    // voice.pipelinePreset; granular providers are seeded from the preset
+    // and Customize lets them diverge. Cloud & Hybrid need credits OR a
+    // BYO AI key (add-on API Keys page) — gated by the page, never a
+    // silent charge.
+    PRESETS: [
+        { id: 'cloud', label: 'Cloud', locality: 'cloud', cost: 'Uses credits', needsCreditsOrKey: true,
+          tagline: 'Best quality, zero setup',
+          description: 'Premium cloud AI and voices, ready out of the box.' },
+        { id: 'hybrid', label: 'Hybrid', locality: 'mixed', cost: 'Credits or your AI key', needsCreditsOrKey: true,
+          tagline: 'Cloud AI · local voice',
+          description: 'Cloud-quality AI with free, private voice engines on your own hardware.' },
+        { id: 'local', label: 'Local', locality: 'local', cost: 'Free',
+          tagline: 'Free & private',
+          description: 'Your own AI model and voice engines. Nothing leaves your network.' },
+        { id: 'ha_assist', label: 'HA Voice Assist', locality: 'local', cost: 'Free', haOnly: true,
+          tagline: 'Home Assistant’s pipeline',
+          description: 'Hand voice off to Home Assistant’s Assist pipeline, configured in HA.' },
+    ],
+
+    /** Filter a picker option list by the active preset (§6): Local hides
+     *  cloud rows, Cloud hides local rows, Hybrid shows both minus the HA
+     *  Assist pipeline row (va_default), HA Assist shows no pickers at all. */
+    presetFilter(presetId, options) {
+        if (presetId === 'local')  return options.filter(o => o.locality === 'local');
+        if (presetId === 'cloud')  return options.filter(o => o.locality === 'cloud');
+        if (presetId === 'hybrid') return options.filter(o => o.id !== 'va_default');
+        if (presetId === 'ha_assist') return [];
+        return options;
+    },
+
     // Typical turn token estimate for the per-turn model cost (≈ the
     // 1342-in / 145-out seen in real sports turns).
     _TURN_IN: 1300,

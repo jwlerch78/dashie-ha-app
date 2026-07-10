@@ -27,7 +27,7 @@ const Sidebar = {
             </div>
 
             <div class="sidebar-section">
-                <div class="sidebar-section-label">Manage</div>
+                <div class="sidebar-section-label">Settings</div>
                 ${this._navItem('devices', 'Dashboards', 'icon-tv', activePage)}
                 ${this._gatedNavItem('voice-ai', 'Voice & AI', 'icon-ai-chat', activePage)}
                 ${this._gatedNavItem('video-feeds', 'Video Feeds', 'icon-video-camera', activePage)}
@@ -51,14 +51,16 @@ const Sidebar = {
             <div class="sidebar-divider"></div>
 
             <div class="sidebar-section">
-                <div class="sidebar-section-label">Account</div>
-                ${this._navItem('account', 'Account & Credits', 'icon-settings', activePage)}
+                <div class="sidebar-section-label">Manage</div>
+                ${this._navItem('account', 'Account', 'icon-settings', activePage)}
+                ${this._gatedNavItem('credits', 'Credits', 'icon-star', activePage)}
+                ${this._gatedNavItem('api-keys', 'API Keys', 'icon-lock', activePage)}
             </div>
 
             <div class="sidebar-footer">
                 ${this._renderTrialPill()}
                 ${showCredits ? `
-                    <div class="sidebar-credits" onclick="App.navigate('account')"${lowBalance ? ' style="color: var(--status-error, #c00);" title="Low balance — buy credits"' : ''}>
+                    <div class="sidebar-credits" onclick="App.navigate('credits')"${lowBalance ? ' style="color: var(--status-error, #c00);" title="Low balance — buy credits"' : ''}>
                         <span class="sidebar-credits-amount">${balanceLabel}</span>
                         <span class="sidebar-credits-label">${lowBalance ? 'Buy credits →' : 'credits'}</span>
                     </div>

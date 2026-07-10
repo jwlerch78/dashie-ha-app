@@ -1,0 +1,137 @@
+/* ============================================================
+   Voice & AI preset picker
+   ------------------------------------------------------------
+   The top-level selector on the Voice & AI page (Open Brain plan
+   §6): Cloud · Hybrid · Local (Dashie Intelligence) + HA Voice
+   Assist, as a card grid. Replaces the old voice.controlMethod
+   dropdown; the choice persists to voice.pipelinePreset (plus a
+   synced controlMethod for runtime/back-compat — see
+   VoiceAiPage.selectPreset).
+
+   Availability gating: Cloud & Hybrid require credits OR a BYO AI
+   key. When neither, the card renders disabled with an inline
+   "Add credits or API keys →" prompt (links) — never a silent
+   fall-through to metered usage.
+
+   Pure render. State + writes live in VoiceAiPage:
+     VoiceAiPage.selectPreset(id)
+   ============================================================ */
+
+const VoiceAiPresetPicker = {
+    _esc(s) {
+        return String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+    },
+
+    /** @param {object} o { presets[], selectedId, available(id)→bool, isAddonMode } */
+    render(o) {
+        const cards = (o.presets || [])
+            .map(p => this._card(p, p.id === o.selectedId, o.available(p.id), o.isAddonMode))
+            .join('');
+        return `
+            <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(158px, 1fr)); gap: 10px; margin-bottom: 16px;">
+                ${cards}
+            </div>`;
+    },
+
+    _card(p, selected, available, isAddonMode) {
+        const O = window.VoiceAiOptions;
+        const costColor = p.needsCreditsOrKey ? O.COLOR.cloud : O.COLOR.local;
+        const ring = selected
+            ? `box-shadow: 0 0 0 2px var(--accent); border-color: var(--accent);`
+            : '';
+        const disabledStyle = available ? '' : 'opacity: 0.55;';
+        const onclick = available ? `onclick="VoiceAiPage.selectPreset('${p.id}')"` : '';
+        const check = selected ? `<span style="color: var(--accent); font-weight: 700;">✓</span>` : '';
+        // Unavailable Cloud/Hybrid: explicit prompt with working links — the
+        // links stay clickable even though the card itself is inert.
+        const prompt = available ? '' : `
+            <div style="font-size: 11px; color: var(--status-error, #c00); margin-top: 8px; line-height: 1.4; opacity: 1;">
+                Add <a href="#" onclick="event.preventDefault(); event.stopPropagation(); App.navigate('credits')" style="color: var(--accent); font-weight: 600;">credits</a>${isAddonMode ? ` or <a href="#" onclick="event.preventDefault(); event.stopPropagation(); App.navigate('api-keys')" style="color: var(--accent); font-weight: 600;">API keys</a>` : ''} →
+            </div>`;
+        return `
+            <div ${onclick}
+                class="card"
+                style="cursor: ${available ? 'pointer' : 'default'}; padding: 12px 14px; ${ring} ${disabledStyle}">
+                <div style="display: flex; justify-content: space-between; align-items: baseline; gap: 8px;">
+                    <div style="font-weight: 700; font-size: 14px;">${this._esc(p.label)}</div>
+                    ${check}
+                </div>
+                <div style="font-size: 11px; font-weight: 600; color: ${costColor}; margin-top: 2px;">${this._esc(p.tagline)}</div>
+                <div style="font-size: 11px; color: var(--text-muted); margin-top: 6px; line-height: 1.45;">${this._esc(p.description)}</div>
+                <div style="font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 10px; color: var(--text-muted); margin-top: 8px;">${this._esc(p.cost)}</div>
+                ${prompt}
+            </div>`;
+    },
+
+    // ── preset-adjacent renders (pure; handlers live on VoiceAiPage) ──
+
+    /** Compact "Customize pipeline" toggle row under the preset picker. The
+     *  toggle reveals the granular TTS / STT / search-source cards (filtered by
+     *  preset). Hidden while a Live model is selected — Live owns the pipeline. */
+    renderCustomizeRow(customPipeline, show) {
+        if (!show) return '';
+        return `
+            <div style="display:flex; justify-content:flex-end; align-items:center; gap: 8px; margin: 0 0 8px; color: var(--text-secondary); font-size: 13px;">
+                <span>Customize pipeline</span>
+                <label class="toggle">
+                    <input type="checkbox" ${customPipeline ? 'checked' : ''}
+                        onchange="VoiceAiPage.saveDefault('voice.customizePipeline', this.checked)">
+                    <span class="toggle-slider"></span>
+                </label>
+            </div>`;
+    },
+
+    /** HA Voice Assist preset: no Dashie pickers — link out to HA's own Voice
+     *  assistants page, where the pipeline (STT/agent/TTS) is configured. */
+    renderHaAssistCard() {
+        return `
+            <div class="card" style="margin-bottom: 16px;"><div class="card-body">
+                <div style="font-weight: 500; margin-bottom: 6px;">Voice is handled by Home Assistant</div>
+                <div style="color: var(--text-secondary); font-size: var(--font-size-sm); line-height: 1.5; margin-bottom: 12px;">
+                    Dashie hands the wake word's audio to your Home Assistant Assist pipeline —
+                    speech-to-text, conversation agent, and voice are all configured in HA.
+                </div>
+                <a href="https://my.home-assistant.io/redirect/voice_assistants/" target="_blank" rel="noopener"
+                   class="btn btn-secondary btn-sm">Configure in Home Assistant ↗</a>
+            </div></div>`;
+    },
+
+    /** Dialog toggle card (shown when a cascade — non-Live — model is selected):
+     *  ON → voice.agentMode='dialog' (mic stays open between turns), OFF →
+     *  'single'. `subToggleHtml` = the indented "Open dialog after commands"
+     *  row, rendered by the page (it owns the toggle-row helper + save path).
+     *  Replaces the old Live/Dialog/Single dropdown. */
+    renderDialogCard({ dialogOn, saving, subToggleHtml }) {
+        const sub = subToggleHtml ? `
+                <div style="border-top: 1px solid var(--border, #e5e7eb); margin-top: 4px;">
+                    ${subToggleHtml}
+                </div>` : '';
+        return `
+            <div class="card" style="margin-bottom: 16px;"><div class="card-body">
+                <div class="setting-row" style="align-items: flex-start; padding: 10px 0;">
+                    <div style="flex: 1; padding-right: 12px;">
+                        <div class="setting-row-label">Conversation dialog ${saving ? '<span style="color: var(--text-muted);">· saving…</span>' : ''}</div>
+                        <div style="font-size: 12px; color: var(--text-muted); margin-top: 2px;">Keep the mic open after a reply so you can keep talking — no wake word needed. Off = one response per “Hey Dashie”.</div>
+                    </div>
+                    <label class="toggle">
+                        <input type="checkbox" ${dialogOn ? 'checked' : ''}
+                            onchange="VoiceAiPage.setDialogMode(this.checked)">
+                        <span class="toggle-slider"></span>
+                    </label>
+                </div>
+                ${sub}
+            </div></div>`;
+    },
+
+    /** Beta note shown instead of the Dialog card while a Live model is
+     *  selected (Live's dialog behavior is built into the model). */
+    renderLiveNote() {
+        return `
+            <div style="margin: -8px 0 16px; font-size: 12px; color: var(--text-secondary); line-height: 1.5;">
+                ⚡ Live (beta): one Gemini Live model handles speech, language &amp; search end-to-end.
+                Speaks in a Google voice for now; billed per audio token (see usage). Android only.
+            </div>`;
+    },
+};
+
+window.VoiceAiPresetPicker = VoiceAiPresetPicker;

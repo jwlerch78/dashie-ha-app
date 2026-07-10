@@ -192,16 +192,11 @@ const FamilyPage = {
         this._householdSaving = true;
         App.renderPage();
         try {
-            // Refetch + merge only the familyName key so we don't clobber
-            // temperatureUnit/zipCode/etc. that a Preferences edit or another
-            // device may have written between our load and this save.
-            const remote = (await DashieAuth.loadUserSettings()) || {};
-            const merged = {
-                ...remote,
-                family: { ...(remote.family || {}), familyName: this._userSettings.family.familyName },
-            };
-            await DashieAuth.saveUserSettings(merged);
-            this._userSettings = merged;
+            // Patch only the familyName leaf via the canonical serialized
+            // writer — the server merges it over the stored blob, so
+            // temperatureUnit/zipCode/etc. can't be clobbered.
+            await DashieAuth.patchUserSetting(
+                'family.familyName', this._userSettings.family.familyName);
         } catch (e) {
             console.error('[FamilyPage] household save failed:', e);
             Toast?.error?.(`Save failed: ${e?.message || e}`);

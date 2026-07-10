@@ -22,6 +22,8 @@ const App = {
         locations:     { page: LocationsPage },
         photos:        { page: PhotosPage },
         account:       { page: AccountPage },
+        credits:       { page: CreditsPage },
+        'api-keys':    { page: ApiKeysPage },
     },
 
     async init() {

@@ -179,7 +179,15 @@ const DashieAuth = {
         return settings;
     },
 
-    /** Save (upsert) the full user_settings object.
+    /** Transport for user_settings writes (jwt-auth 'save' op). The server
+     *  DEEP-MERGES the payload over the stored blob (objects merge key-by-key,
+     *  arrays/scalars replace) — so a partial payload only changes the keys it
+     *  includes.
+     *
+     *  ⚠️ Do NOT call this from pages/components — use patchUserSetting(s)
+     *  below (lint:console-writes enforces this). Passing a full stale blob
+     *  here reverts every leaf another tab/device changed since it was loaded;
+     *  that race silently dropped voice.ttsProvider (2026-07-10 incident).
      *
      *  Also broadcasts on `user_settings_${userId}` so other devices
      *  (tablet webapp via SettingsSync) hear the change and refetch
@@ -188,6 +196,38 @@ const DashieAuth = {
     async saveUserSettings(fullSettings) {
         const result = await this._authRequest({ operation: 'save', data: fullSettings });
         this._broadcastSettingsChanged().catch(() => {});
+        return result;
+    },
+
+    /** Serializes patchUserSetting(s) calls. The server's save op does its own
+     *  select→merge→upsert, so two write requests IN FLIGHT AT ONCE can still
+     *  race server-side (each merges over the same pre-image). Chaining our
+     *  writes closes that window for everything this console session sends —
+     *  e.g. a select control saving provider + engineId + voice back-to-back. */
+    _patchChain: Promise.resolve(),
+
+    /** THE sanctioned way to write one user_settings key from the console.
+     *  Sends ONLY the changed leaf as a nested partial; the server deep-merge
+     *  does the read-modify-write atomically against the stored blob, so
+     *  nothing outside the patch can be clobbered — no client load→merge→save.
+     *  patchUserSetting('voice.ttsProvider', 'piper_ha') */
+    async patchUserSetting(dottedKey, value) {
+        const parts = dottedKey.split('.');
+        const patch = {};
+        let node = patch;
+        for (let i = 0; i < parts.length - 1; i++) node = node[parts[i]] = {};
+        node[parts[parts.length - 1]] = value;
+        return this.patchUserSettings(patch);
+    },
+
+    /** Multi-key variant: pass a nested partial covering only the keys you
+     *  own, e.g. { chores: { enabled: true }, rewards: { enabled: false } }.
+     *  Merge semantics: objects merge, arrays/scalars replace, null overwrites;
+     *  a key can't be DELETED via patch — write null to clear it. */
+    async patchUserSettings(partial) {
+        const run = () => this.saveUserSettings(partial);
+        const result = this._patchChain.then(run, run);   // run after the prior write settles
+        this._patchChain = result.catch(() => {});        // keep the chain alive on error
         return result;
     },
 

@@ -4,10 +4,10 @@
 
    Two backends, no new edge functions:
    - Account AI defaults live in the user_settings blob (nested
-     ai.* / voice.*), read/written via DashieAuth.loadUserSettings
-     / saveUserSettings (the jwt-auth load/save path). Writes are
-     full-blob read-modify-write — load, merge, save — so we never
-     clobber other settings categories.
+     ai.* / voice.*), read via DashieAuth.loadUserSettings and
+     written via DashieAuth.patchUserSetting — the canonical
+     serialized partial-patch writer, so a write only ever touches
+     its own key and can't clobber other settings categories.
    - Personalities (templates + custom) + voices come from
      database-operations via DashieAuth.dbRequest.
 
@@ -21,6 +21,7 @@ const VoiceAiApi = {
      *  in the blob is preserved verbatim. */
     AI_DEFAULT_KEYS: [
         ['ai', 'model'],
+        ['voice', 'pipelinePreset'],
         ['voice', 'controlMethod'],
         ['voice', 'agentMode'],
         ['voice', 'conversationModel'],
@@ -47,6 +48,9 @@ const VoiceAiApi = {
 
     DEFAULTS: {
         'ai.model': 'gemini-2.5-flash',
+        // '' = preset not chosen yet — the page derives one from the granular
+        // keys (display-only) and persists on the user's first preset click.
+        'voice.pipelinePreset': '',
         'voice.controlMethod': 'dashie_cloud',
         'voice.conversationModel': '',
         'voice.conversationAlways': false,
@@ -97,28 +101,14 @@ const VoiceAiApi = {
         return out;
     },
 
-    /** Merge a single account AI default into the full user_settings blob
-     *  and persist. dottedKey e.g. 'ai.model'. Read-modify-write of the
-     *  whole blob — mirrors how chores.js persists user_settings. */
-    // Serializes the read-modify-write below. Because each save loads the whole
-    // blob, mutates one key, and writes it back, two CONCURRENT saves would each
-    // read the same pre-image and the last writer would clobber the other's key.
-    // That silently lost voice.ttsProvider when selectOption fired provider +
-    // haTtsEngineId (+ the voice dropdown) at once. Chaining makes each save read
-    // the blob only after the previous one has written it.
-    _saveChain: Promise.resolve(),
-
+    /** Persist a single account AI default. dottedKey e.g. 'ai.model'.
+     *  Delegates to the canonical serialized partial-patch writer — the
+     *  hand-rolled load→merge→save this used to do is what raced when
+     *  selectOption fired provider + engineId + voice concurrently and
+     *  silently dropped voice.ttsProvider (2026-07-10 incident). */
     async saveAiDefault(dottedKey, value) {
-        const run = async () => {
-            const [a, b] = dottedKey.split('.');
-            const settings = await DashieAuth.loadUserSettings();
-            settings[a] = { ...(settings[a] || {}), [b]: value };
-            await DashieAuth.saveUserSettings(settings);
-            return value;
-        };
-        const result = this._saveChain.then(run, run);   // run after the prior save settles
-        this._saveChain = result.catch(() => {});         // keep the chain alive on error
-        return result;
+        await DashieAuth.patchUserSetting(dottedKey, value);
+        return value;
     },
 
     // ── Voice response feedback (thumbs up/down) ─────────────

@@ -1,33 +1,21 @@
 /* ============================================================
-   Account & Credits Page
+   Account Page
+   ------------------------------------------------------------
+   Profile, plan/subscription, and account deletion. Credits
+   (balance, usage, transactions) moved to the Credits page in the
+   2026-07 Manage-nav restructure — this page keeps subscribe() and
+   openBillingPortal() because other components (top-bar menu,
+   sidebar trial pill) call them by name.
    ============================================================ */
 
 const AccountPage = {
     _data: null,
     _loading: false,
     _error: null,
-    _expiry: null,           // {next_expiry:{amount,expires_at}, lots} — get_credit_expiry
-    _transactions: null,     // [{kind,label,amount,unit,note,ts}] — get_transactions
     _subRenewsAt: null,      // ISO — active sub's next renewal (Stripe current_period_end)
-    _showAllTx: false,       // "Show transaction history" expand
-    _activeTab: 'account',   // 'account' | 'usage'
 
-    setTab(tab) {
-        if (tab !== 'account' && tab !== 'usage') return;
-        this._activeTab = tab;
-        if (tab === 'usage' && typeof AccountUsage !== 'undefined' && !AccountUsage._balance && !AccountUsage._loading) {
-            AccountUsage._fetchAll();
-        }
-        App.renderPage();
-    },
-
-    // Refresh the data for whichever tab is showing (account vs usage/credits).
     async refresh() {
-        if (this._activeTab === 'usage' && typeof AccountUsage !== 'undefined' && AccountUsage._fetchAll) {
-            await AccountUsage._fetchAll();
-        } else {
-            await this._fetchData();
-        }
+        await this._fetchData();
     },
 
     render() {
@@ -40,35 +28,10 @@ const AccountPage = {
         if (this._loading) return this._renderLoading();
         if (this._error) return this._renderError();
 
-        const tabBar = this._renderTabBar();
-        if (this._activeTab === 'usage' && typeof AccountUsage !== 'undefined') {
-            return `${tabBar}${AccountUsage.render()}`;
-        }
-        return `${tabBar}${this._renderLoaded()}`;
+        return this._renderLoaded();
     },
 
-    /** Tab strip shared with the Token Usage subpage. Matches the Voice & AI
-     *  page's tab pattern (same colors, same active-underline behavior). */
-    _renderTabBar() {
-        const tab = (id, label) => {
-            const active = this._activeTab === id;
-            return `
-                <button onclick="AccountPage.setTab('${id}')"
-                    style="background: none; border: none; padding: 10px 4px; cursor: pointer; font-size: 14px; font-weight: ${active ? '600' : '500'};
-                           color: ${active ? 'var(--text-primary)' : 'var(--text-muted)'};
-                           border-bottom: 2px solid ${active ? 'var(--accent)' : 'transparent'};
-                           margin-bottom: -1px;">
-                    ${label}
-                </button>`;
-        };
-        return `
-            <div style="display: flex; gap: 24px; border-bottom: 1px solid var(--border, #d1d5db); margin-bottom: 20px; max-width: 800px;">
-                ${tab('account', 'Account')}
-                ${tab('usage', 'Credit Usage')}
-            </div>`;
-    },
-
-    topBarTitle() { return 'Account & Credits'; },
+    topBarTitle() { return 'Account'; },
     topBarSubtitle() { return ''; },
 
     /** Top-bar action buttons. Hidden when expired — the page already has
@@ -100,21 +63,14 @@ const AccountPage = {
         this._loading = true;
         this._error = null;
         try {
-            // Use the authenticated user ID from DashieAuth. Fetch the credit
-            // balance / auto-replenish / expiry alongside (alpha-only) so the
-            // Credits card and section paint complete on first render.
-            const showCredits = typeof FeatureGate !== 'undefined' && FeatureGate.shouldShow('credits');
+            // get_transactions rides along only for subscription_renews_at
+            // (Stripe current_period_end) — the Plan box's renewal date. The
+            // transaction list itself lives on the Credits page now.
             const [response] = await Promise.all([
                 DashieAuth.edgeFunctionRequest('check-subscription', { auth_user_id: DashieAuth.jwtUserId }),
-                showCredits ? CreditsService.fetch() : Promise.resolve(),
-                showCredits ? CreditsControls.fetchAutorefill() : Promise.resolve(),
-                showCredits ? DashieAuth.dbRequest('get_credit_expiry', {}).then(e => { this._expiry = e; }).catch(() => {}) : Promise.resolve(),
-                showCredits ? DashieAuth.dbRequest('get_transactions', { limit: 50 }).then(r => {
-                    // Only overwrite on a real array — a transient failure must not
-                    // wipe the displayed list (was showing blank on navigate-back).
-                    if (Array.isArray(r?.transactions)) this._transactions = r.transactions;
+                DashieAuth.dbRequest('get_transactions', { limit: 1 }).then(r => {
                     if (r?.subscription_renews_at) this._subRenewsAt = r.subscription_renews_at;
-                }).catch(() => {}) : Promise.resolve(),
+                }).catch(() => {}),
             ]);
             this._data = response;
             this._loading = false;
@@ -158,69 +114,23 @@ const AccountPage = {
         App.renderPage();
     },
 
-    /** On re-entry, soft-refresh the credit/transaction data in place (no loading
-     *  flash) so navigating back shows current data and self-heals a transient
-     *  fetch failure (transactions/auto-replenish were going blank). First visit
-     *  goes through render()'s _fetchData. */
+    /** On re-entry, soft-refresh the subscription data in place (no loading
+     *  flash) so navigating back shows a current plan/renewal state. First
+     *  visit goes through render()'s _fetchData. */
     onNavigateTo() {
-        if (this._data) this._refreshCredits();
+        if (this._data) this._refreshSubscription();
     },
 
-    async _refreshCredits() {
-        const showCredits = typeof FeatureGate !== 'undefined' && FeatureGate.shouldShow('credits');
-        if (!showCredits) return;
+    async _refreshSubscription() {
         await Promise.all([
-            CreditsService.fetch({ force: true }).catch(() => {}),
-            CreditsControls.fetchAutorefill({ force: true }).catch(() => {}),
-            DashieAuth.dbRequest('get_credit_expiry', {}).then(e => { this._expiry = e; }).catch(() => {}),
-            DashieAuth.dbRequest('get_transactions', { limit: 50 }).then(r => {
-                if (Array.isArray(r?.transactions)) this._transactions = r.transactions;
+            DashieAuth.edgeFunctionRequest('check-subscription', { auth_user_id: DashieAuth.jwtUserId })
+                .then(r => { if (r) this._data = r; }).catch(() => {}),
+            DashieAuth.dbRequest('get_transactions', { limit: 1 }).then(r => {
                 if (r?.subscription_renews_at) this._subRenewsAt = r.subscription_renews_at;
             }).catch(() => {}),
         ]);
         App.renderPage();
     },
-
-    /** Transaction history — credit purchases, auto-replenish, admin grants, and
-     *  monthly/annual subscription charges (Stripe). Shows the 5 most recent with
-     *  a "Show transaction history" expand. */
-    _renderTransactions() {
-        const tx = this._transactions || [];
-        if (!tx.length) return '';
-        const shown = this._showAllTx ? tx : tx.slice(0, 5);
-        const rows = shown.map(t => this._txRow(t)).join('');
-        const more = (!this._showAllTx && tx.length > 5)
-            ? `<div style="padding: 12px 16px; border-top: 1px solid var(--border, #e5e7eb);">
-                   <a href="#" onclick="event.preventDefault(); AccountPage.showAllTransactions()" style="color: var(--accent); font-size: 13px;">Show transaction history (${tx.length})</a>
-               </div>` : '';
-        return `
-            <div class="section-header" style="margin-top: 32px;">Transactions</div>
-            <div class="card"><div class="card-body" style="padding: 0;">
-                ${rows}${more}
-            </div></div>`;
-    },
-
-    _txRow(t) {
-        const date = (() => {
-            try { return new Date(t.ts).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }); }
-            catch { return t.ts; }
-        })();
-        // Subscription charges are payments ($); credit grants add credits (+$).
-        const isCharge = t.kind === 'subscription_charge';
-        const amt = `${isCharge ? '' : '+'}$${Number(t.amount || 0).toFixed(2)}`;
-        const color = isCharge ? 'var(--text-primary)' : 'var(--status-success, #16a34a)';
-        const sub = t.note ? ` · ${this._escape(t.note)}` : '';
-        return `
-            <div style="display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 16px; border-top: 1px solid var(--border, #f0f0f0);">
-                <div>
-                    <div style="font-weight: 500; font-size: 13px;">${this._escape(t.label)}</div>
-                    <div style="color: var(--text-muted); font-size: 11px; margin-top: 2px;">${this._escape(date)}${sub}</div>
-                </div>
-                <div style="font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-weight: 600; font-size: 13px; color: ${color};">${amt}</div>
-            </div>`;
-    },
-
-    showAllTransactions() { this._showAllTx = true; App.renderPage(); },
 
     _escape(s) {
         return String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -231,10 +141,6 @@ const AccountPage = {
         const user = DashieAuth.user;
         const d = this._data || {};
 
-        // Credits: the same rich box used on the Credit Usage tab (balance +
-        // Buy more + auto-replenish), reading from the shared CreditsService.
-        // Gated alpha-only via FeatureGate.
-        const showCredits = FeatureGate.shouldShow('credits');
         const expired = typeof SubscribeGate !== 'undefined' && SubscribeGate.isRequired(d);
         const isCancel = d.subscription_status === 'canceled';
         const bannerCopy = isCancel
@@ -255,7 +161,6 @@ const AccountPage = {
             </div>
         ` : '';
 
-        // Content is constrained to the same width as the tab divider bar (800px).
         return `
             <div style="max-width: 800px;">
                 ${banner}
@@ -265,11 +170,7 @@ const AccountPage = {
 
                 <div class="stat-cards">
                     ${this._renderPlanBox(d)}
-                    ${showCredits ? CreditsControls.renderBalanceCard(CreditsService.balance()) : ''}
                 </div>
-                ${showCredits ? CreditsControls.renderExpiryNotice(this._expiry) : ''}
-
-                ${showCredits ? this._renderTransactions() : ''}
 
                 <div class="section-header" style="color: var(--status-error, #c00); margin-top: 32px;">Danger Zone</div>
                 <div class="card" style="border-color: var(--status-error, #c00);">

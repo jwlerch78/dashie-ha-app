@@ -19,6 +19,7 @@
 const VoiceAiPage = {
     _defaults: null,        // {dotted: value}
     _engines: null,         // GET /api/voice/engines result — add-on mode only (detection-gated picker)
+    _keyStatus: null,       // GET /api/keys/status providers booleans — add-on mode only (preset gating)
     _sharing: null,         // { householdSharing } — add-on mode only (below AI Defaults)
     _templates: null,       // built-in personality rows
     _custom: null,          // custom personality rows
@@ -54,34 +55,22 @@ const VoiceAiPage = {
         ['360', '6 hours'], ['0', 'Never (until refresh)'],
     ],
 
-    // Voice pipeline option sets (account-level). Stored in user_settings; the
-    // runtime providers/brain read these in a later phase (storage-first).
-    // Control method (engine domain — matches Kotlin VoicePreferences). The third
-    // element flags HA-only options, hidden for non-HA accounts. STT/TTS option
-    // sets live in window.VoiceAiOptions (voice-ai-options.js), not here.
-    CONTROL_METHOD_OPTIONS: [
-        ['dashie_cloud', 'Dashie Intelligence'],
-        ['voice_assistant', 'Home Assistant Voice Assistant', true],
-    ],
+    // Voice pipeline option sets (account-level) live in window.VoiceAiOptions
+    // (voice-ai-options.js): the preset defs (Cloud/Hybrid/Local/HA Assist) and
+    // the STT/TTS/search rows. The old controlMethod dropdown and Live/Dialog/
+    // Single agent-mode dropdown are replaced by the preset picker + the model
+    // card (Live models at top) + the Dialog toggle (Open Brain plan §6).
+    // voice.agentMode (live|dialog|single) stays the canonical stored key:
+    //   Live model selected in the AI Model card → agentMode='live'
+    //   Dialog toggle ON → 'dialog' · OFF → 'single'
 
-    // Conversation Agent Mode — how the assistant carries a turn:
-    //   live   → Gemini Live S2S (one model owns speech+language+search; native only)
-    //   dialog → cascade pipeline, mic stays open for continuous dialogue (conversation loop)
-    //   single → cascade pipeline, one response then back to wake-word (today's default)
-    // Maps 1:1 onto voice-command-router._conversationMode(). See
-    // 20260628_CASCADE_CONVERSATION_MODE.md + 20260625_REALTIME_VOICE_CONVERSATION_MODE.md.
-    AGENT_MODES: [
-        ['live', 'Live (recommended)'],
-        ['dialog', 'Dialog'],
-        ['single', 'Single Response'],
-    ],
-
-    // Live S2S models, shown in the AI-model dropdown when Agent Mode = Live.
-    // Bound to voice.conversationModel (the Live engine reads it). Speaks in a
-    // Google voice (beta). NOTE: "more capable" is a 2.5 model, hence the honest labels.
+    // Live S2S models, grouped at the top of the AI-model card (Cloud preset
+    // only — Live is fully cloud + credits). Bound to voice.conversationModel
+    // (the Live engine reads it). Speaks in a Google voice (beta).
+    // NOTE: "more capable" is a 2.5 model, hence the honest labels.
     CONVERSATION_MODELS: [
-        ['gemini-3.1-flash-live-preview', 'Gemini 3.1 (faster)'],
-        ['gemini-2.5-flash-native-audio-latest', 'Gemini 2.5 (more capable)'],
+        ['gemini-3.1-flash-live-preview', 'Gemini 3.1 Live (faster)'],
+        ['gemini-2.5-flash-native-audio-latest', 'Gemini 2.5 Live (more capable)'],
     ],
 
     /** Drop HA-only voice options (va_default / piper / voice_assistant) for
@@ -207,6 +196,9 @@ const VoiceAiPage = {
                 // Add-on mode only (decision §11.4). Best-effort — empty on failure.
                 // The top-bar refresh forces a fresh scan (bypasses the server cache).
                 this._fetchEngines(forceEngines),
+                // BYO-key booleans (add-on API Keys page) — gate the Cloud/Hybrid
+                // presets on credits OR a key. Best-effort — null on failure.
+                this._fetchKeyStatus(),
             ]);
             this._defaults = defaults;
             // Household sharing opt-in lives in the add-on only — fetch it so the
@@ -260,6 +252,20 @@ const VoiceAiPage = {
         }
     },
 
+    /** Which BYO providers have a key on the box (booleans only, never the
+     *  keys). Add-on mode only; null elsewhere / on failure — the preset
+     *  gate then rests on credits alone. */
+    async _fetchKeyStatus() {
+        if (!DashieAuth.isAddonMode) { this._keyStatus = null; return; }
+        try {
+            const r = await fetch(DashieAuth._addonUrl('/api/keys/status'), { cache: 'no-store' });
+            this._keyStatus = r.ok ? (await r.json())?.providers || null : null;
+        } catch (e) {
+            console.warn('[VoiceAiPage] key status unavailable:', e?.message || e);
+            this._keyStatus = null;
+        }
+    },
+
     getCustom(id) {
         return (this._custom || []).find(p => p.id === id) || null;
     },
@@ -277,6 +283,7 @@ const VoiceAiPage = {
         // are string selects; everything else boolean.
         let value = rawValue;
         const STRING_KEYS = ['ai.model', 'voice.controlMethod', 'voice.conversationModel', 'voice.agentMode',
+            'voice.pipelinePreset',   // cloud | hybrid | local | ha_assist (Open Brain §6)
             'voice.sttProvider', 'voice.ttsProvider',
             'voice.searchSource', 'voice.sportsSource', 'voice.localLlmUrl', 'voice.localLlmModel',
             'voice.searxngUrl', 'voice.localTtsUrl', 'voice.localTtsVoiceId', 'voice.localSttUrl',
@@ -303,21 +310,94 @@ const VoiceAiPage = {
         }
     },
 
-    // ── Component-card handlers ──────────────────────────────
+    // ── Preset handling (Open Brain §6) ──────────────────────
 
-    /** Card option chosen → map the stage to its dotted key and persist. Selecting
-     *  the 'local' model stores ai.model='local' (the route); the endpoint + model
-     *  live in their own voice.* keys, saved via the inline config fields. */
-    selectOption(stageKey, id) {
-        const KEY = { model: 'ai.model', liveModel: 'voice.conversationModel', stt: 'voice.sttProvider', tts: 'voice.ttsProvider', search: 'voice.searchSource', sports: 'voice.sportsSource' };
-        const key = KEY[stageKey];
-        if (!key) return;
-        this._expandedCards.delete(stageKey);   // collapse back to the chosen option
-        // The engine-direct HA provider (transport id `ha_engine`) also pins which
-        // detected engine it binds to (single-canonical-row decision §11.1) so the
-        // native runtime knows the exact engine_id to hit — persist it alongside
-        // the provider selection. The engine name lives ONLY here, never in the
-        // provider id.
+    /** The active preset: the stored voice.pipelinePreset, or — for accounts
+     *  that predate presets — a display-only derivation from the granular keys
+     *  (persisted on the user's first preset click, matching the no-migration
+     *  _LEGACY_MAP pattern). */
+    _activePreset() {
+        const d = this._defaults;
+        const stored = String(d['voice.pipelinePreset'] || '');
+        if (stored) return stored;
+        if (String(d['voice.controlMethod']) === 'voice_assistant') return 'ha_assist';
+        const localVoice = String(d['voice.ttsProvider']) !== 'dashie_cloud'
+            && String(d['voice.sttProvider']) !== 'dashie_cloud';
+        if (String(d['ai.model']) === 'local' && localVoice) return 'local';
+        if (localVoice) return 'hybrid';
+        return 'cloud';
+    },
+
+    /** Cloud & Hybrid need credits OR a BYO AI key; Local & HA Assist are
+     *  always available. Optimistic while balances are still loading so the
+     *  picker never flash-disables. */
+    _presetAvailable(id) {
+        const p = window.VoiceAiOptions.PRESETS.find(x => x.id === id);
+        if (!p?.needsCreditsOrKey) return true;
+        return this._hasCreditsOrKey();
+    },
+
+    _hasCreditsOrKey() {
+        // Accounts that don't see the credits feature aren't metered from the
+        // console's perspective — don't lock their presets.
+        if (typeof FeatureGate !== 'undefined' && !FeatureGate.shouldShow('credits')) return true;
+        if (this._keyStatus && Object.values(this._keyStatus).some(Boolean)) return true;
+        const bal = window.CreditsService?.balance();
+        if (!bal || typeof bal.balance !== 'number') return true;   // still loading → optimistic
+        return bal.balance > 0;
+    },
+
+    /** Preset card clicked. Persists voice.pipelinePreset, keeps the runtime's
+     *  engine-domain key (voice.controlMethod) in sync for old APKs, and seeds
+     *  any granular provider the new preset filters out — Customize can diverge
+     *  afterwards. Explicitly guarded: an unavailable preset never saves
+     *  (degradation rule — no silent fall-through to metered usage). */
+    selectPreset(id) {
+        const O = window.VoiceAiOptions;
+        if (!O.PRESETS.some(p => p.id === id)) return;
+        if (!this._presetAvailable(id)) return;
+        const d = this._defaults;
+        this.saveDefault('voice.pipelinePreset', id);
+        const cm = id === 'ha_assist' ? 'voice_assistant' : 'dashie_cloud';
+        if (String(d['voice.controlMethod']) !== cm) this.saveDefault('voice.controlMethod', cm);
+        if (id === 'ha_assist') return;
+
+        // Live is Cloud-only (fully cloud + credits) — leaving Cloud drops the
+        // agent back to a cascade mode.
+        if (id !== 'cloud' && this._agentMode() === 'live') {
+            this.saveDefault('voice.agentMode', 'single');
+        }
+        // AI model: Local runs the user's own model; Cloud/Hybrid run a cloud
+        // model (credits or BYO key — the key routing itself is Phase 2).
+        const model = String(d['ai.model'] || '');
+        if (id === 'local' && model !== 'local') this.saveDefault('ai.model', 'local');
+        if (id !== 'local' && model === 'local') this.saveDefault('ai.model', VoiceAiApi.DEFAULTS['ai.model']);
+        // Voice engines: seed only when the current provider contradicts the
+        // preset (it would vanish from the filtered picker otherwise).
+        this._seedProvider(id, 'tts', 'voice.ttsProvider');
+        this._seedProvider(id, 'stt', 'voice.sttProvider');
+    },
+
+    /** If the stored provider isn't in the preset's filtered option list, pick
+     *  the preset's natural default: dashie_cloud for Cloud; for Hybrid/Local a
+     *  detected HA engine when available, else Android voice (works everywhere,
+     *  no config). */
+    _seedProvider(presetId, stageKey, dottedKey) {
+        const O = window.VoiceAiOptions;
+        const all = stageKey === 'tts' ? O.ttsOptions(this._engines) : O.sttOptions(this._engines);
+        const opts = O.presetFilter(presetId, this._haFilter(all)).filter(o => !o.install);
+        const current = String(this._defaults[dottedKey] || '');
+        if (opts.some(o => o.id === current)) return;
+        const seed = presetId === 'cloud'
+            ? 'dashie_cloud'
+            : (opts.some(o => o.id === 'ha_engine') ? 'ha_engine' : 'android_voice');
+        if (!opts.some(o => o.id === seed)) return;
+        this._selectProvider(stageKey, seed);
+    },
+
+    /** Persist a TTS/STT provider choice, pinning the detected HA engine id
+     *  alongside `ha_engine` selections (single-canonical-row decision §11.1). */
+    _selectProvider(stageKey, id) {
         const O = window.VoiceAiOptions;
         if (stageKey === 'tts' && id === 'ha_engine') {
             const eng = O.ttsOptions(this._engines).find(o => o.id === 'ha_engine');
@@ -326,7 +406,54 @@ const VoiceAiPage = {
             const eng = O.sttOptions(this._engines).find(o => o.id === 'ha_engine');
             if (eng?.engineId) this.saveDefault('voice.haSttEngineId', eng.engineId);
         }
-        this.saveDefault(key, id);
+        this.saveDefault(stageKey === 'tts' ? 'voice.ttsProvider' : 'voice.sttProvider', id);
+    },
+
+    /** Canonical agent mode (live|dialog|single), deriving the legacy
+     *  conversationAlways/conversationModel pair for unmigrated accounts —
+     *  mirrors voice-command-router._conversationMode. */
+    _agentMode() {
+        const d = this._defaults;
+        const stored = String(d['voice.agentMode'] || '');
+        if (stored) return stored;
+        const always = d['voice.conversationAlways'] === true;
+        const lm = String(d['voice.conversationModel'] || '');
+        return always ? (lm ? 'live' : 'dialog') : 'single';
+    },
+
+    /** Dialog toggle (shown when a non-Live model is selected):
+     *  ON → conversation dialog (mic stays open) · OFF → single response. */
+    setDialogMode(on) {
+        this.saveDefault('voice.agentMode', on ? 'dialog' : 'single');
+    },
+
+    // ── Component-card handlers ──────────────────────────────
+
+    /** Card option chosen → map the stage to its dotted key and persist.
+     *  The model card mixes Live models (top group, Cloud preset) with cascade
+     *  models: picking a Live model sets agentMode='live' + conversationModel
+     *  (ai.model untouched); picking a cascade model saves ai.model and drops
+     *  a live agent back to single (the Dialog toggle re-enables dialog). */
+    selectOption(stageKey, id) {
+        this._expandedCards.delete(stageKey);   // collapse back to the chosen option
+        if (stageKey === 'model') {
+            const isLiveModel = this.CONVERSATION_MODELS.some(([v]) => v === id);
+            if (isLiveModel) {
+                if (this._agentMode() !== 'live') this.saveDefault('voice.agentMode', 'live');
+                this.saveDefault('voice.conversationModel', id);
+            } else {
+                if (this._agentMode() === 'live') this.saveDefault('voice.agentMode', 'single');
+                this.saveDefault('ai.model', id);
+            }
+            return;
+        }
+        if (stageKey === 'tts' || stageKey === 'stt') {
+            this._selectProvider(stageKey, id);
+            return;
+        }
+        const KEY = { search: 'voice.searchSource', sports: 'voice.sportsSource' };
+        const key = KEY[stageKey];
+        if (key) this.saveDefault(key, id);
     },
 
     /** Inline local-config field (endpoint URL, model, SearXNG URL) → persist as string. */
@@ -423,24 +550,14 @@ const VoiceAiPage = {
         const d = this._defaults;
         const O = window.VoiceAiOptions;
         const memoryOn = d['ai.conversationContextEnabled'] === true;
-        // The pipeline (TTS/STT/search/sports) is a Dashie Intelligence concept.
-        // When the control method is Home Assistant Voice Assistant, HA owns the
-        // pipeline, so hide the "Customize pipeline" toggle and its cards.
-        const isDashieIntelligence = String(d['voice.controlMethod']) === 'dashie_cloud';
-        // Conversation Agent Mode (canonical: voice.agentMode = live|dialog|single).
-        // Back-compat: derive from the old conversationAlways/conversationModel pair
-        // for accounts not yet migrated — mirrors voice-command-router._conversationMode.
-        let agentMode = String(d['voice.agentMode'] || '');
-        if (!agentMode) {
-            const always = d['voice.conversationAlways'] === true;
-            const lm = String(d['voice.conversationModel'] || '');
-            agentMode = always ? (lm ? 'live' : 'dialog') : 'single';
-        }
-        // Live (S2S) owns STT+LLM+TTS+search, so hide the cascade model/pipeline items
-        // it replaces. Dialog + Single both run the cascade → keep their settings shown.
-        const isLive = isDashieIntelligence && agentMode === 'live';
+        const preset = this._activePreset();
+        const isHaAssist = preset === 'ha_assist';
+        const agentMode = this._agentMode();
+        // Live (S2S) owns STT+LLM+TTS+search, so hide the cascade pipeline cards
+        // it replaces. Dialog + Single both run the cascade → keep them shown.
+        const isLive = !isHaAssist && agentMode === 'live';
         const customPipeline = d['voice.customizePipeline'] === true;
-        const showPipeline = isDashieIntelligence && customPipeline && !isLive;
+        const showPipeline = !isHaAssist && customPipeline && !isLive;
         // Gemini cascade models search via native Google grounding (not Tavily) → the
         // Web-search-source card shows "Google" instead. Applies in dialog/single.
         const isGeminiAiModel = String(d['ai.model'] || '').startsWith('gemini-');
@@ -452,21 +569,34 @@ const VoiceAiPage = {
             anyExpanded: this._expandedCards.size > 0,  // dim the other cards while one is open
             getConfig: cfg,
         });
-        return `
-            ${this._sectionHeader('Voice & AI Defaults', 'Apply to every device signed into this account.')}
-            ${this._renderControlMethodRow(d, customPipeline, isDashieIntelligence && !isLive)}
-            ${isDashieIntelligence ? this._renderAgentModeRow(d, agentMode, isLive) : ''}
-
+        const filtered = (stage, all) => O.presetFilter(preset, this._haFilter(all));
+        const P = window.VoiceAiPresetPicker;
+        const body = isHaAssist ? P.renderHaAssistCard() : `
+            ${P.renderCustomizeRow(customPipeline, !isLive)}
             ${this._renderLocalityLegend()}
-            ${isLive
-                ? card('AI Model', 'liveModel', this._liveModelOptions(), String(d['voice.conversationModel'] || this.CONVERSATION_MODELS[0][0]))
-                : card('AI Model', 'model', O.models(), String(d['ai.model']))}
+            ${card('AI Model', 'model', this._modelOptions(preset), this._selectedModelId(agentMode))}
+            ${isLive ? P.renderLiveNote() : P.renderDialogCard({
+                dialogOn: agentMode === 'dialog',
+                saving: this._savingKey === 'voice.agentMode',
+                subToggleHtml: agentMode === 'dialog'
+                    ? this._toggleRow('Open dialog after commands', 'Keep listening after every command — not just questions — without saying “Hey Dashie” again.', 'voice.alwaysOpenDialog', d['voice.alwaysOpenDialog'])
+                    : '',
+            })}
 
             ${showPipeline ? this._renderEngineDetectionRow() : ''}
-            ${showPipeline ? card('Text-to-speech (Voice)', 'tts', this._haFilter(O.ttsOptions(this._engines)), String(d['voice.ttsProvider'])) : ''}
-            ${showPipeline ? card('Speech-to-text', 'stt', this._haFilter(O.sttOptions(this._engines)), String(d['voice.sttProvider'])) : ''}
-            ${showPipeline ? card('Web search source', 'search', isGeminiAiModel ? this._googleSearchOption() : O.SEARCH, isGeminiAiModel ? 'google' : String(d['voice.searchSource'])) : ''}
-            ${showPipeline ? card('Sports source', 'sports', O.SPORTS, String(d['voice.sportsSource'])) : ''}
+            ${showPipeline ? card('Text-to-speech (Voice)', 'tts', filtered('tts', O.ttsOptions(this._engines)), String(d['voice.ttsProvider'])) : ''}
+            ${showPipeline ? card('Speech-to-text', 'stt', filtered('stt', O.sttOptions(this._engines)), String(d['voice.sttProvider'])) : ''}
+            ${showPipeline ? card('Web search source', 'search', isGeminiAiModel ? this._googleSearchOption() : filtered('search', O.SEARCH), isGeminiAiModel ? 'google' : String(d['voice.searchSource'])) : ''}
+            ${showPipeline ? card('Sports source', 'sports', filtered('sports', O.SPORTS), String(d['voice.sportsSource'])) : ''}`;
+        return `
+            ${this._sectionHeader('Voice & AI Defaults', 'Apply to every device signed into this account.')}
+            ${VoiceAiPresetPicker.render({
+                presets: this._haFilter(O.PRESETS),
+                selectedId: preset,
+                available: (id) => this._presetAvailable(id),
+                isAddonMode: DashieAuth.isAddonMode,
+            })}
+            ${body}
 
             ${this._sectionHeader('AI Tools & Settings', '')}
             <div class="card"><div class="card-body">
@@ -474,76 +604,29 @@ const VoiceAiPage = {
                 ${this._toggleRow('Retrieve pictures', 'Let the assistant pull family photos into responses.', 'ai.retrievePicturesEnabled', d['ai.retrievePicturesEnabled'])}
                 ${this._toggleRow('Conversation memory', 'Remember the prior conversation for follow-ups.', 'ai.conversationContextEnabled', d['ai.conversationContextEnabled'])}
                 ${memoryOn ? this._selectRow('Memory duration', 'ai.conversationTimeout', this.MEMORY_OPTIONS, String(d['ai.conversationTimeout'])) : ''}
-                ${(isDashieIntelligence && agentMode !== 'single')
-                    ? this._toggleRow('Keep dialog open', 'After every command, keep listening for a follow-up without saying "Hey Dashie" again.', 'voice.alwaysOpenDialog', d['voice.alwaysOpenDialog'])
-                    : ''}
                 ${this._toggleRow('Always use AI for chores', 'Disable the fast path — routes all chore commands through AI (uses more tokens).', 'voice.alwaysUseAI', d['voice.alwaysUseAI'])}
             </div></div>
         `;
     },
 
-    /** Voice control method dropdown with a compact "Customize pipeline" toggle
-     *  inline on the right. The toggle reveals the TTS / STT / search-source cards. */
-    _renderControlMethodRow(d, customPipeline, showCustomizeToggle) {
-        const opts = this._haFilter(this.CONTROL_METHOD_OPTIONS).map(([v, l]) =>
-            `<option value="${this._escape(v)}" ${v === String(d['voice.controlMethod']) ? 'selected' : ''}>${this._escape(l)}</option>`).join('');
-        // The "Customize pipeline" toggle is only meaningful for Dashie
-        // Intelligence — hide it when Home Assistant Voice Assistant is selected.
-        const customizeToggle = showCustomizeToggle ? `
-                    <div style="display:flex; align-items:center; gap: 8px; padding-bottom: 8px; white-space: nowrap; color: var(--text-secondary); font-size: 13px;">
-                        <span>Customize pipeline</span>
-                        <label class="toggle">
-                            <input type="checkbox" ${customPipeline ? 'checked' : ''}
-                                onchange="VoiceAiPage.saveDefault('voice.customizePipeline', this.checked)">
-                            <span class="toggle-slider"></span>
-                        </label>
-                    </div>` : '';
-        return `
-            <div class="card" style="margin-bottom: 16px;"><div class="card-body">
-                <div style="display:flex; align-items:flex-end; gap: 16px; flex-wrap: wrap;">
-                    <div style="flex: 1; min-width: 220px;">
-                        <label class="form-label">Voice control method</label>
-                        <select class="form-select" onchange="VoiceAiPage.saveDefault('voice.controlMethod', this.value)">${opts}</select>
-                    </div>
-                    ${customizeToggle}
-                </div>
-            </div></div>`;
+    /** The AI Model card's option list for the active preset: Live models
+     *  grouped at the top (Cloud preset only — Live is fully cloud + credits),
+     *  then the preset-filtered catalog (Local → the own-AI row; Cloud/Hybrid →
+     *  cloud provider groups). */
+    _modelOptions(preset) {
+        const O = window.VoiceAiOptions;
+        const catalog = O.presetFilter(preset, O.models());
+        if (preset !== 'cloud') return catalog;
+        const live = this._liveModelOptions().map(o => ({ ...o, group: 'Live · realtime conversation' }));
+        return [...live, ...catalog];
     },
 
-    /** Conversation Agent Mode selector (Live / Dialog / Single Response) under
-     *  Dashie Intelligence. When Live, the AI-model card below uses the Live-model
-     *  options (bound to voice.conversationModel) and the cascade pipeline cards are
-     *  hidden. Dialog + Single keep the full model list + pipeline.
-     *  See 20260628_CASCADE_CONVERSATION_MODE.md. */
-    _renderAgentModeRow(d, agentMode, isLive) {
-        const modeOpts = this.AGENT_MODES.map(([v, l]) =>
-            `<option value="${this._escape(v)}" ${v === agentMode ? 'selected' : ''}>${this._escape(l)}</option>`).join('');
-        const desc = {
-            live:   'One Gemini Live model handles speech, language & search end-to-end (fastest, most natural). Android only.',
-            dialog: 'Continuous conversation: the mic stays open between turns so you can keep talking without the wake word.',
-            single: 'One response per wake word, then back to listening for “Hey Dashie”.',
-        }[agentMode] || '';
-        // Beta note for Live (the model itself is picked in the AI Model card below).
-        const liveNote = isLive ? `
-                <div style="margin-top: 10px; font-size: 12px; color: var(--text-secondary); line-height: 1.5;">
-                    ⚡ Live (beta). Speaks in a Google voice for now; billed per audio token (see usage).
-                </div>` : '';
-        return `
-            <div class="card" style="margin-bottom: 16px;"><div class="card-body">
-                <label class="form-label">Conversation Agent Mode</label>
-                <select class="form-select" onchange="VoiceAiPage.setAgentMode(this.value)">${modeOpts}</select>
-                <div style="margin-top: 8px; font-size: 12px; color: var(--text-muted); line-height: 1.5;">${desc}</div>
-                ${liveNote}
-            </div></div>`;
-    },
-
-    /** Set the agent mode; when switching to Live, seed a default Live model so the
-     *  Live engine always has one (the AI-model dropdown then shows the picker). */
-    async setAgentMode(mode) {
-        await this.saveDefault('voice.agentMode', mode);
-        if (mode === 'live' && !String(this._defaults['voice.conversationModel'] || '')) {
-            await this.saveDefault('voice.conversationModel', this.CONVERSATION_MODELS[0][0]);
-        }
+    /** Selected id for the AI Model card: the Live model while agentMode='live',
+     *  else the cascade model. */
+    _selectedModelId(agentMode) {
+        const d = this._defaults;
+        if (agentMode === 'live') return String(d['voice.conversationModel'] || this.CONVERSATION_MODELS[0][0]);
+        return String(d['ai.model']);
     },
 
     /** Live S2S models in the same option shape as O.models() so the AI-model card

@@ -162,31 +162,29 @@ const OptionsModal = {
         App.renderPage();
 
         try {
-            // Refetch the latest account settings immediately before save so we
-            // don't clobber changes made elsewhere since this modal opened: the
-            // server deep-merges but leaf-overwrites, so spreading the page-open
-            // snapshot reverts any account field changed in the meantime. Mirrors
-            // preferences.js. Falls back to the opened snapshot if the refetch fails.
-            let base = this._userSettings || {};
-            try {
-                const fresh = await DashieAuth.loadUserSettings();
-                if (fresh) base = fresh;
-            } catch (e) { /* keep the snapshot we opened with */ }
-
-            const full = { ...base };
-            full.chores = {
-                ...(full.chores || {}),
-                enabled: f.choresEnabled,
-                anyoneEnabled: f.anyoneEnabled,
-                participants: f.participants,
-                upcomingDays: f.upcomingDays,
+            // Patch only the keys this modal owns via the canonical
+            // serialized writer — the server merges them over the stored
+            // blob, so nothing else can be clobbered (no refetch needed).
+            const patch = {
+                chores: {
+                    enabled: f.choresEnabled,
+                    anyoneEnabled: f.anyoneEnabled,
+                    participants: f.participants,
+                    upcomingDays: f.upcomingDays,
+                },
+                rewards: {
+                    enabled: f.rewardsEnabled,
+                },
             };
-            full.rewards = {
-                ...(full.rewards || {}),
-                enabled: f.rewardsEnabled,
-            };
+            await DashieAuth.patchUserSettings(patch);
 
-            await DashieAuth.saveUserSettings(full);
+            // Local view of the result for the onSaved callback (pages use
+            // it to update their own _userSettings render state).
+            const full = {
+                ...(this._userSettings || {}),
+                chores: { ...(this._userSettings?.chores || {}), ...patch.chores },
+                rewards: { ...(this._userSettings?.rewards || {}), ...patch.rewards },
+            };
 
             const cb = this._onSaved;
             this._open = false;

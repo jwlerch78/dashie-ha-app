@@ -1286,26 +1286,31 @@ const ChoresPage = {
         App.renderPage();
 
         try {
-            // Merge with current user settings (preserve other sections)
-            const full = { ...(this._userSettings || {}) };
-            full.chores = {
-                ...(full.chores || {}),
-                enabled: f.choresEnabled,
-                anyoneEnabled: f.anyoneEnabled,
-                participants: f.participants,  // null means "all members"
-                upcomingDays: f.upcomingDays,
+            // Patch only the keys this modal owns via the canonical
+            // serialized writer — the server merges them over the stored
+            // blob, so other sections can't be clobbered.
+            const patch = {
+                chores: {
+                    enabled: f.choresEnabled,
+                    anyoneEnabled: f.anyoneEnabled,
+                    participants: f.participants,  // null means "all members"
+                    upcomingDays: f.upcomingDays,
+                },
+                rewards: {
+                    enabled: f.rewardsEnabled,
+                },
             };
-            full.rewards = {
-                ...(full.rewards || {}),
-                enabled: f.rewardsEnabled,
+            await DashieAuth.patchUserSettings(patch);
+
+            // Mirror the patch into local render state
+            this._userSettings = {
+                ...(this._userSettings || {}),
+                chores: { ...(this._userSettings?.chores || {}), ...patch.chores },
+                rewards: { ...(this._userSettings?.rewards || {}), ...patch.rewards },
             };
-
-            await DashieAuth.saveUserSettings(full);
-
-            this._userSettings = full;
 
             // Re-derive visible family members
-            const participants = full.chores.participants;
+            const participants = patch.chores.participants;
             this._familyMembers = (Array.isArray(participants) && participants.length > 0)
                 ? this._allFamilyMembers.filter(m => participants.includes(m.id))
                 : this._allFamilyMembers;

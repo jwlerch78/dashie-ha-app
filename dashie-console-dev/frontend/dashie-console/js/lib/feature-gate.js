@@ -104,6 +104,10 @@ const FeatureGate = {
         // gets starter credits, so it's a beta gate now (was alpha).
         credits:    'beta-only',
 
+        // API Keys (BYO model-provider keys) — stored on the HA box's add-on
+        // /data volume, so the page only exists inside the add-on console.
+        apiKeys:    'addon',
+
         // Locations / GPS — STAYS alpha (dev/innermost only), mirroring the
         // feature_access catalog (rollout='alpha').
         locations:  'alpha-only',
@@ -140,6 +144,8 @@ const FeatureGate = {
         'chores':      'chores',
         'rewards':     'rewards',
         'scheduled-actions': 'scheduledActions',
+        'credits':     'credits',
+        'api-keys':    'apiKeys',
     },
 
     /**

@@ -27,18 +27,19 @@
    here they act as the account default a new device picks up at
    registration. A per-device override would live on Devices later.
 
-   Saves: every change calls DashieAuth.saveUserSettings(full) after
-   a 300ms debounce per field. The whole user_settings JSON gets
-   round-tripped, so we deep-merge into the freshly-loaded snapshot
-   before each save to avoid clobbering other categories another
-   thread may have written.
+   Saves: every change accumulates into a pending partial patch and
+   calls DashieAuth.patchUserSettings(patch) after a 300ms debounce.
+   Only the touched keys leave this page — the server deep-merges the
+   patch over the stored blob, so nothing else can be clobbered (the
+   old full-blob round-trip raced with other writers).
    ============================================================ */
 
 const PreferencesPage = {
-    _settings: null,         // full user_settings tree, fetched on entry
+    _settings: null,         // full user_settings tree, fetched on entry (render state)
     _loading: false,
     _error: null,
-    _saving: false,
+    _pendingPatch: null,     // nested partial of touched keys awaiting save
+    _saving: false,          // UI indicator only — serialization lives in patchUserSettings
     _saveTimer: null,        // debounce for text-input changes
 
     // Mirrors Kotlin's PreferencesPageSchema.languageOptions(). 'system'
@@ -109,6 +110,10 @@ const PreferencesPage = {
         if (!this._settings) return;
         if (!this._settings[category]) this._settings[category] = {};
         this._settings[category][key] = value;
+        // Accumulate only the touched key into the pending patch — that's
+        // all that gets sent; the server merges it over the stored blob.
+        this._pendingPatch = this._pendingPatch || {};
+        this._pendingPatch[category] = { ...(this._pendingPatch[category] || {}), [key]: value };
         App.renderPage();          // reflect the change immediately
         this._scheduleSave();
     },
@@ -120,17 +125,15 @@ const PreferencesPage = {
 
     async _save() {
         this._saveTimer = null;
-        if (!this._settings || this._saving) return;
+        const patch = this._pendingPatch;
+        if (!patch || Object.keys(patch).length === 0) return;
+        this._pendingPatch = null;
         this._saving = true;
         try {
-            // Refetch + deep-merge before save so we don't clobber
-            // a category another tab/device wrote between our load and
-            // this save. Cheap belt-and-suspenders; the typical case
-            // is a single user editing in one place.
-            const remote = (await DashieAuth.loadUserSettings()) || {};
-            const merged = this._mergeRemoteIntoLocal(remote, this._settings);
-            await DashieAuth.saveUserSettings(merged);
-            this._settings = merged;
+            // Partial patch via the canonical serialized writer — fields
+            // changed while a save is in flight land in a fresh
+            // _pendingPatch and get their own (chained) save.
+            await DashieAuth.patchUserSettings(patch);
             // Bust the chat client's cached language so the next turn
             // sees the new locale without a page reload.
             window.ConsoleAiClient?.invalidateLanguageCache?.();
@@ -140,20 +143,6 @@ const PreferencesPage = {
             this._saving = false;
             App.renderPage();
         }
-    },
-
-    /** For each category the user touched on this page, keep the local
-     *  value; for every other category, prefer the remote snapshot. */
-    _mergeRemoteIntoLocal(remote, local) {
-        // Categories this page writes (dashboard-canonical paths): general
-        // (language), interface (use24HourClock/dateFormat), family
-        // (temperatureUnit/zipCode), time/weather (useHa toggles).
-        const ourCategories = new Set(['general', 'interface', 'family', 'time', 'weather']);
-        const out = { ...remote };
-        for (const cat of ourCategories) {
-            if (local[cat]) out[cat] = { ...(remote[cat] || {}), ...local[cat] };
-        }
-        return out;
     },
 
     // ── render ────────────────────────────────────────────────
