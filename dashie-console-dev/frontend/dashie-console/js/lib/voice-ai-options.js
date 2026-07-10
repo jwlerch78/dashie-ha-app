@@ -49,14 +49,19 @@ const VoiceAiOptions = {
         // fields; the integration + add-on read these to run the on-prem brain (§13.17).
         const out = [{
             id: 'local',
-            label: 'My Local LLM',
+            label: 'My own AI (local / self-hosted)',
             group: 'Local',
-            description: 'Runs on your own hardware (Ollama / llama.cpp). Nothing leaves your network.',
+            // BYO-model (Voice Master Plan WS-I): keep Dashie's cards/tools/dialog,
+            // swap the model behind the brain — local Ollama/llama.cpp, a self-hosted
+            // Hermes agent, or any OpenAI-compatible endpoint (remote URLs OK; add a
+            // key for Hermes/remote). Unlisted models bill $0 (managed STT/TTS still metered).
+            description: 'Point the brain at your own model — local Ollama / llama.cpp, a self-hosted Hermes agent, or any OpenAI-compatible endpoint. Dashie keeps its cards, tools & dialog; only the model changes.',
             locality: 'local',
             cost: 'Free',
             configFields: [
-                { key: 'voice.localLlmUrl', label: 'Endpoint URL', placeholder: 'http://192.168.1.50:11434' },
+                { key: 'voice.localLlmUrl', label: 'Endpoint URL', placeholder: 'http://192.168.1.50:11434  (or https://your-hermes.example.com)' },
                 { key: 'voice.localLlmModel', label: 'Model', placeholder: 'qwen3:8b' },
+                { key: 'voice.localLlmKey', label: 'API key (optional)', type: 'password', placeholder: 'for Hermes / remote endpoints' },
             ],
         }];
         for (const prov of this._PROVIDER_ORDER) {
@@ -158,30 +163,51 @@ const VoiceAiOptions = {
      *  voices, else free-text. */
     _piperOption(detection) {
         const eng = this._matchEngine(detection?.tts, /piper/i);
-        if (!eng) return null;
-        const voices = (eng.voices || []).map(v => ({ value: v.voice_id, label: v.name || v.voice_id }));
-        const voiceField = voices.length
-            ? { key: 'voice.haTtsVoiceId', label: 'Voice', type: 'select', options: voices }
-            : { key: 'voice.haTtsVoiceId', label: 'Voice', placeholder: 'en_US-lessac-medium' };
-        return {
-            id: 'ha_engine', label: 'Piper (Home Assistant)', locality: 'local', cost: 'Free', haOnly: true,
-            engineId: eng.engine_id,
-            description: 'Your Home Assistant Piper voice — direct, no Assist pipeline.',
-            note: "Local voices don't change per personality — pick one voice here.",
-            configFields: [voiceField],
-        };
+        if (eng) {
+            const voices = (eng.voices || []).map(v => ({ value: v.voice_id, label: v.name || v.voice_id }));
+            const voiceField = voices.length
+                ? { key: 'voice.haTtsVoiceId', label: 'Voice', type: 'select', options: voices }
+                : { key: 'voice.haTtsVoiceId', label: 'Voice', placeholder: 'en_US-lessac-medium' };
+            return {
+                id: 'ha_engine', label: 'Piper (Home Assistant)', locality: 'local', cost: 'Free', haOnly: true,
+                engineId: eng.engine_id,
+                description: 'Your Home Assistant Piper voice — direct, no Assist pipeline.',
+                note: "Local voices don't change per personality — pick one voice here.",
+                configFields: [voiceField],
+            };
+        }
+        // Probed HA but no Piper → advertise it as installable (guided deep-link).
+        // Detection absent (cloud mode) → hide; haOnly hides it for non-HA accounts.
+        if (detection?.available !== true) return null;
+        return this._installRow('ha_engine', 'Piper (Home Assistant)', 'core_piper',
+            'Free, natural local voices via Home Assistant. Install the Piper add-on to enable.');
     },
 
-    /** Whisper (Home Assistant) engine-direct STT row — only when a Whisper STT
-     *  engine is detected. Provider id is the transport (`ha_engine`), engine
-     *  carried in engineId → voice.haSttEngineId. Model/language deferred (Phase 2). */
+    /** Whisper (Home Assistant) engine-direct STT row — selectable when a Whisper STT
+     *  engine is detected, else an install row (deep-link) when HA was probed. Provider
+     *  id is the transport (`ha_engine`), engine carried in engineId → voice.haSttEngineId. */
     _whisperOption(detection) {
         const eng = this._matchEngine(detection?.stt, /whisper/i);
-        if (!eng) return null;
+        if (eng) {
+            return {
+                id: 'ha_engine', label: 'Whisper (Home Assistant)', locality: 'local', cost: 'Free', haOnly: true,
+                engineId: eng.engine_id,
+                description: 'Your Home Assistant Whisper speech-to-text — direct, no Assist pipeline.',
+            };
+        }
+        if (detection?.available !== true) return null;
+        return this._installRow('ha_engine', 'Whisper (Home Assistant)', 'core_whisper',
+            'Free local speech-to-text via Home Assistant. Install the Whisper add-on to enable.');
+    },
+
+    /** A not-yet-installed engine row: shown for HA users when detection probed HA but
+     *  the engine is absent. Renders an "Install" badge that deep-links to the official
+     *  add-on (my.home-assistant.io redirect → the add-on page in the user's OWN HA,
+     *  regardless of their URL). Not selectable — click opens install; Re-scan after. */
+    _installRow(id, label, addonSlug, description) {
         return {
-            id: 'ha_engine', label: 'Whisper (Home Assistant)', locality: 'local', cost: 'Free', haOnly: true,
-            engineId: eng.engine_id,
-            description: 'Your Home Assistant Whisper speech-to-text — direct, no Assist pipeline.',
+            id, label, locality: 'local', cost: 'Free', haOnly: true, description,
+            install: { addon: addonSlug, url: `https://my.home-assistant.io/redirect/supervisor_addon/?addon=${addonSlug}` },
         };
     },
 

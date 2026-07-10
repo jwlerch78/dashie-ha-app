@@ -284,6 +284,7 @@ const VoiceAiPage = {
             'voice.sttProvider', 'voice.ttsProvider',
             'voice.searchSource', 'voice.sportsSource', 'voice.localLlmUrl', 'voice.localLlmModel',
             'voice.searxngUrl', 'voice.localTtsUrl', 'voice.localTtsVoiceId', 'voice.localSttUrl',
+            'voice.localLlmKey',   // BYO-model API key (Hermes/remote) — WS-I; read server-side by node-io.js
             // engine-direct HA voice (detection-gated picker, build plan §8)
             'voice.haTtsEngineId', 'voice.haTtsVoiceId', 'voice.haSttEngineId'];
         if (dottedKey === 'ai.conversationTimeout') value = Number(rawValue);
@@ -579,13 +580,13 @@ const VoiceAiPage = {
      *  engines were found and lets them re-probe after installing Piper/Whisper. */
     _renderEngineDetectionRow() {
         if (!DashieAuth.isAddonMode) return '';
+        // The Piper/Whisper rows now carry their own state (selectable when detected,
+        // an Install deep-link when absent), so this is just a light "Re-scan after
+        // installing an engine" affordance. When HA is unreachable, note it.
         const e = this._engines;
-        const hasLocal = e && e.available && (((e.tts || []).length) || ((e.stt || []).length));
         const msg = (!e || !e.available)
             ? 'Home Assistant not reachable — showing your-box (URL) options only.'
-            : (hasLocal
-                ? 'Detected local voice engines on Home Assistant.'
-                : 'No local voice engines found on Home Assistant. Install Piper (TTS) or Whisper (STT), then re-scan.');
+            : 'Local Home Assistant engines are detected automatically.';
         return `
             <div style="display:flex; justify-content:space-between; align-items:center; gap: 12px; margin: 0 0 8px; font-size: 12px; color: var(--text-secondary);">
                 <span>${this._escape(msg)}</span>

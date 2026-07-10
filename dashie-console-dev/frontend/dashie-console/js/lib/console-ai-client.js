@@ -295,7 +295,7 @@ const ConsoleAiClient = {
         const KNOWN_TOOLS = new Set([
             'web_search', 'calendar_events', 'family_members', 'chores', 'rewards',
             'location_events', 'travel_time', 'family_locations', 'weather_data',
-            'home_assistant',
+            'home_assistant', 'get_current_time',
         ]);
         if (parsed.type && KNOWN_TOOLS.has(parsed.type) && parsed.type !== 'info_request') {
             return {

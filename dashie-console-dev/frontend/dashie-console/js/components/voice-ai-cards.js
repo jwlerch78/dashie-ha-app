@@ -92,25 +92,36 @@ const VoiceAiCards = {
             ? `<span style="font-size:10px; font-weight:600; color: var(--text-muted); background: var(--bg-card, #fff); border: 1px solid var(--border, #e5e7eb); padding: 1px 6px; border-radius: 9px;">coming soon</span>`
             : '';
         const isStatic = mode === 'static';
+        // Install row: an uninstalled HA engine advertised with an "Install ↗" badge
+        // that deep-links to the add-on store (the row is not selectable).
+        const isInstall = !!x.install;
+        const installBadge = isInstall
+            ? `<span style="font-size:10px; font-weight:700; text-transform:uppercase; letter-spacing:0.4px; color:#fff; background: var(--accent); padding: 2px 8px; border-radius: 9px;">Install ↗</span>`
+            : '';
+        // Collapsed (expand mode) always shows ▾ to click-to-open, even for a stale
+        // install selection; the Install badge only shows in the expanded option list.
         const right = mode === 'expand'
             ? `<span style="color: var(--text-muted); font-size: 13px;">▾</span>`
-            : (!isStatic && selected ? `<span style="color: var(--accent); font-weight: 700;">✓</span>` : '');
-        const config = (selected && x.configFields) ? this._config(x, getConfig) : '';
+            : (isInstall ? installBadge
+                : (!isStatic && selected ? `<span style="color: var(--accent); font-weight: 700;">✓</span>` : ''));
+        const config = (!isInstall && selected && x.configFields) ? this._config(x, getConfig) : '';
         // One-line note under a selected local engine (e.g. "local voices don't
         // change per personality"). Build plan §6.
-        const note = (selected && x.note)
+        const note = (!isInstall && selected && x.note)
             ? `<div style="font-size: 11px; color: var(--text-muted); margin-top: 8px; line-height: 1.4;">${this._esc(x.note)}</div>`
             : '';
         const topBorder = isFirst ? '' : 'border-top: 1px solid var(--border, #e5e7eb);';
-        const onclick = isStatic ? ''
-            : (mode === 'expand'
-                ? `VoiceAiPage.toggleCard('${stageKey}')`
-                : `VoiceAiPage.selectOption('${stageKey}', '${this._esc(x.id)}')`);
+        const onclick = (isInstall && mode !== 'expand')
+            ? `window.open('${x.install.url}', '_blank', 'noopener')`   // expanded list: deep-link to add-on store
+            : (isStatic ? ''
+                : (mode === 'expand'
+                    ? `VoiceAiPage.toggleCard('${stageKey}')`           // collapsed: click to open the picker
+                    : `VoiceAiPage.selectOption('${stageKey}', '${this._esc(x.id)}')`));
         const onclickAttr = onclick ? `onclick="${onclick}"` : '';
 
         return `
             <div ${onclickAttr}
-                style="cursor: ${isStatic ? 'default' : 'pointer'}; padding: 12px 14px; ${topBorder} background: ${bg}; border-left: 3px solid ${selected ? color : 'transparent'};">
+                style="cursor: ${(isStatic && !isInstall) ? 'default' : 'pointer'}; padding: 12px 14px; ${topBorder} background: ${bg}; border-left: 3px solid ${(!isInstall && selected) ? color : 'transparent'};">
                 <div style="display:flex; justify-content:space-between; align-items:baseline; gap: 10px;">
                     <div style="font-weight: 600; font-size: 14px; display:flex; align-items:center; gap: 8px; flex-wrap: wrap;">
                         ${this._esc(x.label)} ${localityTag} ${soon}
@@ -156,8 +167,10 @@ const VoiceAiCards = {
             ].join('');
             return `<select onchange="VoiceAiPage.saveLocalField('${f.key}', this.value)" style="${inputStyle}">${opts}</select>`;
         }
-        return `<input type="text" value="${this._esc(cur)}" placeholder="${this._esc(f.placeholder || '')}"
-                    onchange="VoiceAiPage.saveLocalField('${f.key}', this.value)" style="${inputStyle}">`;
+        // Credentials (API keys) render masked; everything else is plain text.
+        const inputType = f.type === 'password' ? 'password' : 'text';
+        return `<input type="${inputType}" value="${this._esc(cur)}" placeholder="${this._esc(f.placeholder || '')}"
+                    autocomplete="off" onchange="VoiceAiPage.saveLocalField('${f.key}', this.value)" style="${inputStyle}">`;
     },
 };
 
