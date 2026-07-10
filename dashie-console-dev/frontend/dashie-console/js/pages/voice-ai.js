@@ -175,7 +175,9 @@ const VoiceAiPage = {
         if (this._activeTab === 'benchmark' && typeof VoiceAiBenchmark !== 'undefined') {
             return VoiceAiBenchmark.refresh();
         }
-        await this._fetch();
+        // Top-bar refresh forces a fresh engine scan — so re-detecting after
+        // installing a Piper/Whisper add-on is just "refresh the page".
+        await this._fetch(true);
     },
 
     _registerSyncOnce() {
@@ -190,7 +192,7 @@ const VoiceAiPage = {
         });
     },
 
-    async _fetch() {
+    async _fetch(forceEngines = false) {
         this._registerSyncOnce();
         this._loading = true;
         this._error = null;
@@ -203,7 +205,8 @@ const VoiceAiPage = {
                 window.VoiceAiOptions?.applyLiveRates?.(),
                 // Detection-gated picker: which local STT/TTS engines does HA have?
                 // Add-on mode only (decision §11.4). Best-effort — empty on failure.
-                this._fetchEngines(),
+                // The top-bar refresh forces a fresh scan (bypasses the server cache).
+                this._fetchEngines(forceEngines),
             ]);
             this._defaults = defaults;
             // Household sharing opt-in lives in the add-on only — fetch it so the
@@ -241,27 +244,20 @@ const VoiceAiPage = {
      *  only — a cloud console has no direct line to the user's HA (decision §11.4),
      *  so detection is empty there and the picker shows URL-based local_* rows only.
      *  Best-effort: any failure leaves _engines null (picker degrades, never breaks). */
-    async _fetchEngines() {
+    /** Fetch local voice engine detection. `force` bypasses the server's 5-min
+     *  cache (?refresh=1) — used by the top-bar page refresh so re-scanning after
+     *  installing an engine is just the normal refresh. `cache:'no-store'` stops
+     *  the browser/ingress serving a stale response (mirrors _probeAddonMode). */
+    async _fetchEngines(force = false) {
         if (!DashieAuth.isAddonMode) { this._engines = null; return; }
         try {
-            const r = await fetch(DashieAuth._addonUrl('/api/voice/engines'));
+            const url = DashieAuth._addonUrl('/api/voice/engines' + (force ? '?refresh=1' : ''));
+            const r = await fetch(url, { cache: 'no-store' });
             this._engines = r.ok ? await r.json() : null;
         } catch (e) {
             console.warn('[VoiceAiPage] engine detection unavailable:', e?.message || e);
             this._engines = null;
         }
-    },
-
-    /** Manual "Re-scan" affordance (§5.1) — bypass the server's 5-min cache. */
-    async rescanEngines() {
-        if (!DashieAuth.isAddonMode) return;
-        try {
-            const r = await fetch(DashieAuth._addonUrl('/api/voice/engines?refresh=1'));
-            if (r.ok) this._engines = await r.json();
-        } catch (e) {
-            console.warn('[VoiceAiPage] re-scan failed:', e?.message || e);
-        }
-        App.renderPage();
     },
 
     getCustom(id) {
@@ -580,17 +576,16 @@ const VoiceAiPage = {
      *  engines were found and lets them re-probe after installing Piper/Whisper. */
     _renderEngineDetectionRow() {
         if (!DashieAuth.isAddonMode) return '';
-        // The Piper/Whisper rows now carry their own state (selectable when detected,
-        // an Install deep-link when absent), so this is just a light "Re-scan after
-        // installing an engine" affordance. When HA is unreachable, note it.
+        // The Piper/Whisper rows carry their own state (selectable when detected, an
+        // Install deep-link when absent). Re-scanning is folded into the top-bar page
+        // refresh (forces a fresh probe), so this is just a one-line status hint.
         const e = this._engines;
         const msg = (!e || !e.available)
             ? 'Home Assistant not reachable — showing your-box (URL) options only.'
-            : 'Local Home Assistant engines are detected automatically.';
+            : 'Local Home Assistant engines are detected automatically — use ↻ Refresh after installing one.';
         return `
-            <div style="display:flex; justify-content:space-between; align-items:center; gap: 12px; margin: 0 0 8px; font-size: 12px; color: var(--text-secondary);">
-                <span>${this._escape(msg)}</span>
-                <button class="btn btn-ghost btn-sm" onclick="VoiceAiPage.rescanEngines()" style="flex-shrink:0;">Re-scan</button>
+            <div style="margin: 0 0 8px; font-size: 12px; color: var(--text-secondary);">
+                ${this._escape(msg)}
             </div>`;
     },
 
