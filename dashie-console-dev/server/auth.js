@@ -18,11 +18,11 @@ const REFRESH_THRESHOLD_MS = 24 * 60 * 60 * 1000; // refresh when <24h remain
 const DEVICE_TYPE = 'ha_app';                      // baked into JWT custom claims
 const EDGE_FN_URL = SUPABASE.url + '/functions/v1/jwt-auth';
 
-// Base URL for the verification page — must match the Supabase env so dev JWTs don't
-// flow through prod's (potentially older) auth.html. Prod `auth.html` isn't deployed yet
-// (serves /auth which 404s); dev.dashieapp.com/auth.html works.
+// Host for the verification page — must match the Supabase env. PROD web lives at
+// app.dashieapp.com (dashieapp.com is the marketing site → /auth 404s); staging at
+// dev.dashieapp.com. The page is /auth.html on both.
 const VERIFICATION_BASE_URL = SUPABASE_ENV === 'production'
-    ? 'https://dashieapp.com'
+    ? 'https://app.dashieapp.com'
     : 'https://dev.dashieapp.com';
 
 // ------------------------------------------------------------------
@@ -122,12 +122,17 @@ async function createDeviceCode({ packageVersion } = {}) {
     });
     if (!result.success) throw new Error(`create_device_code failed: ${JSON.stringify(result)}`);
 
-    // The edge function echoes back the base_url in verification_url. In case it's still
-    // returning the prod URL despite our base_url param, rewrite host-side to what matches
-    // our env so the user always lands on a working page.
+    // The edge function ignores our base_url param and echoes the prod host + (on the prod
+    // project, a stale) /auth path — e.g. https://dashieapp.com/auth?code=… which 404s
+    // (dashieapp.com is marketing; the page is /auth.html on app.dashieapp.com). Rebuild the
+    // URL to this env's canonical auth page, preserving the query (code + type), so the user
+    // always lands on a working page regardless of the edge fn's output.
     let verification_url = result.verification_url;
-    if (SUPABASE_ENV !== 'production' && verification_url.startsWith('https://dashieapp.com/')) {
-        verification_url = verification_url.replace('https://dashieapp.com/', 'https://dev.dashieapp.com/');
+    try {
+        const q = new URL(verification_url).search;   // e.g. "?code=…&type=ha_app"
+        verification_url = `${VERIFICATION_BASE_URL}/auth.html${q}`;
+    } catch (e) {
+        verification_url = `${VERIFICATION_BASE_URL}/auth.html?code=${encodeURIComponent(result.user_code || '')}&type=${DEVICE_TYPE}`;
     }
 
     return {
