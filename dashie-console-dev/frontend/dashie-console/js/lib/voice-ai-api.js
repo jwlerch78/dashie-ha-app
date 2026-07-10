@@ -100,12 +100,25 @@ const VoiceAiApi = {
     /** Merge a single account AI default into the full user_settings blob
      *  and persist. dottedKey e.g. 'ai.model'. Read-modify-write of the
      *  whole blob — mirrors how chores.js persists user_settings. */
+    // Serializes the read-modify-write below. Because each save loads the whole
+    // blob, mutates one key, and writes it back, two CONCURRENT saves would each
+    // read the same pre-image and the last writer would clobber the other's key.
+    // That silently lost voice.ttsProvider when selectOption fired provider +
+    // haTtsEngineId (+ the voice dropdown) at once. Chaining makes each save read
+    // the blob only after the previous one has written it.
+    _saveChain: Promise.resolve(),
+
     async saveAiDefault(dottedKey, value) {
-        const [a, b] = dottedKey.split('.');
-        const settings = await DashieAuth.loadUserSettings();
-        settings[a] = { ...(settings[a] || {}), [b]: value };
-        await DashieAuth.saveUserSettings(settings);
-        return value;
+        const run = async () => {
+            const [a, b] = dottedKey.split('.');
+            const settings = await DashieAuth.loadUserSettings();
+            settings[a] = { ...(settings[a] || {}), [b]: value };
+            await DashieAuth.saveUserSettings(settings);
+            return value;
+        };
+        const result = this._saveChain.then(run, run);   // run after the prior save settles
+        this._saveChain = result.catch(() => {});         // keep the chain alive on error
+        return result;
     },
 
     // ── Voice response feedback (thumbs up/down) ─────────────
