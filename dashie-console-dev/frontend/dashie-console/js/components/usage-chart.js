@@ -28,10 +28,14 @@ const UsageChart = {
 
     // ── data shaping (cost/bucket logic injected by the caller) ──
 
-    /** Per-day buckets: [{label, ai, speech, tools, total}], date order preserved. */
+    /** Per-day buckets: [{label, day, month, ai, speech, tools, total}], date
+     *  order preserved. `day`/`month` drive the two-tier axis (day number on
+     *  every bar, one month label per month span). */
     dayBuckets(days, bucketFn, costFn) {
         return (days || []).map(d => ({
             label: this._dayLabel(d.date),
+            day: this._dayNum(d.date),
+            month: this._monthShort(d.date),
             ...this._sum(d.by_service, bucketFn, costFn),
         }));
     },
@@ -79,18 +83,37 @@ const UsageChart = {
         if (!buckets || !buckets.length) {
             return `<div style="padding:32px 16px; text-align:center; color:var(--text-muted); font-size:13px;">No usage in this range.</div>`;
         }
-        const H = 200, padTop = 12, padBottom = 26, padLeft = 50;
+        // Two-tier axis (day buckets): day number under every bar, a bracket
+        // grouping each month's days, and one month label per span. Month
+        // buckets keep the single sparse row.
+        const twoTier = buckets.every(b => b.day != null && b.month);
+        const H = twoTier ? 214 : 200, padTop = 12, padBottom = twoTier ? 40 : 26, padLeft = 50;
         const plotH = H - padTop - padBottom;
         const slot = 34, barW = 22;
-        const width = Math.max(560, padLeft + buckets.length * slot + 14);
+        // Daily average reference line (two-tier only) — reserve room on the
+        // right for its "avg $x" callout so it never overlaps the last bar.
+        const avg = twoTier ? buckets.reduce((s, b) => s + (b.total || 0), 0) / buckets.length : null;
+        const avgLabelW = avg != null ? 56 : 0;
+        const width = Math.max(560, padLeft + buckets.length * slot + 14 + avgLabelW);
+        const plotRight = width - 6 - avgLabelW;
         const maxTotal = Math.max(...buckets.map(b => b.total), 0.0001);
         const yFor = v => padTop + plotH - (v / maxTotal) * plotH;
 
         const grid = [0, maxTotal / 2, maxTotal].map(v => {
             const y = yFor(v);
-            return `<line x1="${padLeft}" y1="${y.toFixed(1)}" x2="${width - 6}" y2="${y.toFixed(1)}" stroke="var(--border,#e5e7eb)" stroke-width="1"/>
+            return `<line x1="${padLeft}" y1="${y.toFixed(1)}" x2="${plotRight}" y2="${y.toFixed(1)}" stroke="var(--border,#e5e7eb)" stroke-width="1"/>
                     <text x="${padLeft - 6}" y="${(y + 3).toFixed(1)}" text-anchor="end" font-size="9" fill="var(--text-muted,#888)">${this._axis(v)}</text>`;
         }).join('');
+
+        // Average line: dashed, muted (an annotation, not a series), value
+        // called out at its right end.
+        let avgLine = '';
+        if (avg != null && avg > 0) {
+            const y = yFor(avg);
+            avgLine = `<g pointer-events="none">
+                       <line x1="${padLeft}" y1="${y.toFixed(1)}" x2="${plotRight}" y2="${y.toFixed(1)}" stroke="var(--text-muted,#888)" stroke-width="1" stroke-dasharray="4 3"/>
+                       <text x="${plotRight + 5}" y="${(y + 3).toFixed(1)}" text-anchor="start" font-size="9" fill="var(--text-muted,#888)">avg ${this._money(avg)}</text></g>`;
+        }
 
         const labelEvery = Math.ceil(buckets.length / 12);
         const bars = buckets.map((b, i) => {
@@ -106,12 +129,33 @@ const UsageChart = {
             }
             // full-height transparent hit area so tiny bars are still hoverable
             segs += `<rect x="${x.toFixed(1)}" y="${padTop}" width="${barW}" height="${plotH}" fill="transparent" data-tip="${tip}"></rect>`;
-            const showLabel = (i % labelEvery === 0) || i === buckets.length - 1;
-            if (showLabel) {
-                segs += `<text x="${(x + barW / 2).toFixed(1)}" y="${H - 9}" text-anchor="middle" font-size="9" fill="var(--text-muted,#888)">${this._esc(b.label)}</text>`;
+            if (twoTier) {
+                segs += `<text x="${(x + barW / 2).toFixed(1)}" y="${H - 23}" text-anchor="middle" font-size="8.5" fill="var(--text-muted,#888)">${this._esc(b.day)}</text>`;
+            } else {
+                const showLabel = (i % labelEvery === 0) || i === buckets.length - 1;
+                if (showLabel) {
+                    segs += `<text x="${(x + barW / 2).toFixed(1)}" y="${H - 9}" text-anchor="middle" font-size="9" fill="var(--text-muted,#888)">${this._esc(b.label)}</text>`;
+                }
             }
             return segs;
         }).join('');
+
+        // Month row: a bracket under each month's span of day numbers (end
+        // ticks turned up toward the days it groups), month label beneath.
+        let monthRow = '';
+        if (twoTier) {
+            const bktY = H - 17, tick = 3;
+            for (let i = 0; i < buckets.length;) {
+                let j = i;
+                while (j < buckets.length && buckets[j].month === buckets[i].month) j++;
+                const x1 = padLeft + i * slot + 3;
+                const x2 = padLeft + j * slot - 3;
+                const cx = (x1 + x2) / 2;
+                monthRow += `<path d="M ${x1.toFixed(1)} ${bktY - tick} V ${bktY} H ${x2.toFixed(1)} V ${bktY - tick}" fill="none" stroke="var(--border,#e5e7eb)" stroke-width="1"/>
+                             <text x="${cx.toFixed(1)}" y="${H - 5}" text-anchor="middle" font-size="9" font-weight="600" fill="var(--text-muted,#888)">${this._esc(buckets[i].month)}</text>`;
+                i = j;
+            }
+        }
 
         const legend = this.ORDER.map(k =>
             `<span style="display:inline-flex; align-items:center; gap:5px; font-size:11px; color:var(--text-muted);">
@@ -129,6 +173,8 @@ const UsageChart = {
                      onmousemove="UsageChart.onMove(event)" onmouseleave="UsageChart.hideTip()">
                     ${grid}
                     ${bars}
+                    ${avgLine}
+                    ${monthRow}
                 </svg>
             </div>`;
     },
@@ -186,6 +232,16 @@ const UsageChart = {
         if (n < 0.01) return '$' + n.toFixed(3);
         if (n < 1) return '$' + n.toFixed(2);
         return '$' + n.toFixed(n < 10 ? 1 : 0);
+    },
+    _dayNum(dateStr) {
+        const n = Number(String(dateStr).slice(8, 10));
+        return isFinite(n) && n > 0 ? n : null;
+    },
+    _monthShort(dateStr) {
+        try {
+            const [y, m] = String(dateStr).split('-').map(Number);
+            return new Date(Date.UTC(y, m - 1, 1)).toLocaleDateString('en-US', { timeZone: 'UTC', month: 'short' });
+        } catch { return null; }
     },
     _dayLabel(dateStr) {
         try {
