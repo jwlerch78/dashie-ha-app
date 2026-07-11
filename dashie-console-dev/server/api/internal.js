@@ -93,6 +93,12 @@ router.get('/voice-config', async (req, res) => {
             // ai.retrievePicturesEnabled for anonymous kiosks (relay image_search gate).
             // Omitted when unset so the kiosk keeps its cached/default value.
             ...(typeof cfg.retrievePictures === 'boolean' ? { retrieve_pictures: cfg.retrievePictures } : {}),
+            // WS-G §13.2 account defaults for anon kiosks (device override still
+            // wins on-device; '' = unset → app defaults). Forwarded by the
+            // integration on /api/dashie/voice/status like agent_mode.
+            default_personality_id: cfg.defaultPersonalityId || '',
+            default_voice_key: cfg.defaultVoiceKey || '',
+            default_wake_word: cfg.defaultWakeWord || '',
         });
     } catch (e) {
         // Never block the gateway on this — default to cloud.

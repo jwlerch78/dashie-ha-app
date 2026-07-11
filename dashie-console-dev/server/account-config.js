@@ -15,7 +15,7 @@ const { SUPABASE } = require('./config');
 const TTL_MS = 30_000; // user_settings changes rarely; a short cache keeps converse latency low.
 let _cache = null; // { at, value }
 
-const SAFE_DEFAULT = { model: null, route: 'cloud', localLlmUrl: '', localLlmModel: '', localLlmKey: '', retainTranscripts: false, agentMode: '', retrievePictures: null };
+const SAFE_DEFAULT = { model: null, route: 'cloud', localLlmUrl: '', localLlmModel: '', localLlmKey: '', retainTranscripts: false, agentMode: '', retrievePictures: null, defaultPersonalityId: '', defaultVoiceKey: '', defaultWakeWord: '' };
 
 /**
  * Resolve the account's voice routing config.
@@ -60,6 +60,13 @@ async function getAccountVoiceConfig() {
           // omits the image_search tool when false/unset). null = unset.
           retrievePictures: typeof settings?.ai?.retrievePicturesEnabled === 'boolean'
             ? settings.ai.retrievePicturesEnabled : null,
+          // WS-G §13.2: household account defaults — anon kiosks resolve the
+          // household-sharing account's defaults (locked decision), still
+          // overridable on-device. '' = unset → kiosk/app defaults
+          // (Dashie personality / Hey Dashie).
+          defaultPersonalityId: typeof settings?.ai?.defaultPersonalityId === 'string' ? settings.ai.defaultPersonalityId : '',
+          defaultVoiceKey: typeof settings?.ai?.defaultVoiceKey === 'string' ? settings.ai.defaultVoiceKey : '',
+          defaultWakeWord: typeof settings?.ai?.defaultWakeWord === 'string' ? settings.ai.defaultWakeWord : '',
         };
       }
     }
