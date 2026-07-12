@@ -31,30 +31,10 @@ const VoiceAiCards = {
         const sel = opts.find(x => x.id === o.selectedId) || opts[0];
         if (!sel) return '';
 
-        // Single option (the preset filtered everything else out, e.g. Cloud →
-        // only Dashie Cloud TTS/STT): the SAME compact row as a collapsed
-        // multi-option card — minus the caret/click, with the cost where the
-        // caret would sit — so presets don't render visibly different card
-        // styles (Cloud vs Hybrid inconsistency, 2026-07-12).
-        if (opts.length === 1) {
-            const O = window.VoiceAiOptions;
-            const color = O.COLOR[sel.locality] || 'var(--text-muted)';
-            const tag = sel.locality
-                ? `<span style="font-size:10px; font-weight:700; text-transform:uppercase; letter-spacing:0.4px; color:${color};">${O.LABEL[sel.locality] || ''}</span>`
-                : '';
-            const config = sel.configFields ? `<div style="padding: 0 14px 12px;">${this._config(sel, o.getConfig)}</div>` : '';
-            return `
-                <div style="margin-bottom: 10px; transition: opacity 120ms ease; ${o.anyExpanded ? 'opacity: 0.45;' : ''}">
-                    <div class="card"><div class="card-body" style="padding: 0;">
-                        <div style="display: flex; align-items: center; gap: 10px; padding: 10px 14px;">
-                            <span style="font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; color: var(--text-muted); min-width: 170px;">${this._esc(o.title)}</span>
-                            <span style="flex: 1; font-weight: 600; font-size: 13px; display: flex; align-items: center; gap: 8px;">${this._esc(sel.label)} ${tag}</span>
-                            <span style="font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; color: var(--text-muted);">${this._esc(sel.cost || '')}</span>
-                        </div>
-                        ${config}
-                    </div></div>
-                </div>`;
-        }
+        // Single-option cards render exactly like the rest: a compact collapsed
+        // row (no cost at this level) that expands to the option list, where
+        // the cost + description live (John, 2026-07-12 — the selector opens
+        // even when there's only one option).
 
         // Collapsed: one compact summary row — section title, the selected
         // option, a caret (2026-07-12 vertical-compression pass; the old

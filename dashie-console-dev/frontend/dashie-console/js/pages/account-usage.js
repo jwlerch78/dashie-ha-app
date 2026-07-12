@@ -220,17 +220,22 @@ const AccountUsage = {
         } catch { return d; }
     },
 
-    /** "ai" → "AI Models", etc. */
+    /** Section key → header label ("speech" merges tts+stt; image search files
+     *  under Tools). */
     _serviceLabel(svc) {
-        return { ai: 'AI Models', tts: 'Speech (TTS)', stt: 'Speech (STT)', web_search: 'Tools', image_search: 'Image Search' }[svc] || svc;
+        return { ai: 'AI Models', speech: 'Speech', tts: 'Speech', stt: 'Speech', web_search: 'Tools', image_search: 'Tools' }[svc] || svc;
     },
 
-    /** Display name for a summary line. Web-search rows read as the tool name —
-     *  "Tavily (web search)" — so the Tools group is human-readable as we add more. */
+    /** Display name for a summary line. Web/image-search rows read as the tool
+     *  name; TTS/STT rows carry their direction so the merged Speech section
+     *  stays legible ("elevenlabs (TTS)" / "nova-3-streaming (STT)"). */
     _summaryItemName(r) {
         if (r.service === 'web_search' || r.service === 'image_search') {
             const p = r.provider ? r.provider.charAt(0).toUpperCase() + r.provider.slice(1) : (r.service === 'image_search' ? 'Image' : 'Web');
             return `${p} (${r.service === 'image_search' ? 'image' : 'web'} search)`;
+        }
+        if (r.service === 'tts' || r.service === 'stt') {
+            return `${r.model || r.provider || '—'} (${r.service.toUpperCase()})`;
         }
         return r.model || r.provider || '—';
     },
@@ -468,14 +473,19 @@ const AccountUsage = {
                 </div></div>`;
         }
 
-        // Group by service for clean section headers in the table.
+        // Group by SECTION: TTS + STT fold into one 'Speech' section (Deepgram
+        // STT rows land beside ElevenLabs since the streaming-STT logging), and
+        // image search files under Tools with web search (John, 2026-07-12).
+        const sectionOf = (svc) => (svc === 'tts' || svc === 'stt') ? 'speech'
+            : (svc === 'image_search' ? 'web_search' : svc);
         const groups = new Map();
         for (const r of rows) {
-            const g = groups.get(r.service) || [];
+            const key = sectionOf(r.service);
+            const g = groups.get(key) || [];
             g.push(r);
-            groups.set(r.service, g);
+            groups.set(key, g);
         }
-        const order = ['ai', 'tts', 'stt', 'web_search', 'image_search'];
+        const order = ['ai', 'speech', 'web_search'];
         const sections = order.filter(s => groups.has(s)).map(svc => {
             const items = groups.get(svc);
             const total = items.reduce((sum, r) => sum + this._costForRow(r), 0);
@@ -881,7 +891,12 @@ const AccountUsage = {
                 ? `${this._escape(c.provider || '')} (${this._fmtCount(c.result_count || 0)} results)`
                 : c.service === 'image_search'
                     ? `${this._escape(c.provider || '')} (${this._fmtCount(c.result_count || 0)} images)`
-                    : `${this._escape(c.provider || '')} ${c.service}`;
+                    : (c.service === 'stt' || c.service === 'tts')
+                        // Deepgram STT / ElevenLabs TTS lines inside a voice
+                        // interaction, under the AI pass (anchor-attached
+                        // server-side when the row predates the session id).
+                        ? `${this._escape(c.model || c.provider || '—')} (${c.service === 'stt' ? 'speech-to-text' : 'text-to-speech'})`
+                        : `${this._escape(c.provider || '')} ${c.service}`;
         return `
             <tr>
                 <td style="padding: 4px 0; color: var(--text-muted); width: 60px; text-transform: uppercase; font-size: 10px; letter-spacing: 0.5px;">${this._escape(this._svcLabel(c.service))}</td>

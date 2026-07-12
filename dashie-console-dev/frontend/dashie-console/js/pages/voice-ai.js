@@ -211,6 +211,9 @@ const VoiceAiPage = {
                     this._sharing = { householdSharing: false };
                 }
             }
+            // Piper active but no voice stored (pre-seeding account) → persist
+            // amy (low) so the Voice row never renders unset.
+            this._seedPiperVoiceIfMissing();
         } catch (e) {
             console.error('[VoiceAiPage] fetch failed:', e);
             this._error = e.message || String(e);
@@ -361,18 +364,20 @@ const VoiceAiPage = {
         this.saveDefault('voice.pipelinePreset', id);
         const cm = id === 'ha_assist' ? 'voice_assistant' : 'dashie_cloud';
         if (String(d['voice.controlMethod']) !== cm) this.saveDefault('voice.controlMethod', cm);
-        if (id === 'ha_assist') return;
 
         // Live is Cloud-only (fully cloud + credits) — leaving Cloud drops the
         // agent back to a cascade mode.
         if (id !== 'cloud' && this._agentMode() === 'live') {
             this.saveDefault('voice.agentMode', 'single');
         }
-        // AI model: Local runs the user's own model; Cloud/Hybrid run a cloud
-        // model (credits or BYO key — the key routing itself is Phase 2).
-        const model = String(d['ai.model'] || '');
-        if (id === 'local' && model !== 'local') this.saveDefault('ai.model', 'local');
-        if (id !== 'local' && model === 'local') this.saveDefault('ai.model', VoiceAiApi.DEFAULTS['ai.model']);
+        if (id !== 'ha_assist') {
+            // AI model: Local runs the user's own model; Cloud/Hybrid run a cloud
+            // model (credits or BYO key — the key routing itself is Phase 2).
+            // HA Assist has no Dashie brain → ai.model untouched.
+            const model = String(d['ai.model'] || '');
+            if (id === 'local' && model !== 'local') this.saveDefault('ai.model', 'local');
+            if (id !== 'local' && model === 'local') this.saveDefault('ai.model', VoiceAiApi.DEFAULTS['ai.model']);
+        }
         // Voice engines: seed only when the current provider contradicts the
         // preset (it would vanish from the filtered picker otherwise).
         this._seedProvider(id, 'tts', 'voice.ttsProvider');
@@ -410,8 +415,8 @@ const VoiceAiPage = {
             return;
         }
         if (currentValid) return;
-        const seed = presetId === 'cloud'
-            ? 'dashie_cloud'
+        const seed = presetId === 'cloud' ? 'dashie_cloud'
+            : presetId === 'ha_assist' ? 'va_default'   // the Assist pipeline itself
             : (hasHaEngine ? 'ha_engine' : 'android_voice');
         if (!has(seed)) return;
         this._selectProvider(stageKey, seed);
@@ -424,19 +429,38 @@ const VoiceAiPage = {
         if (stageKey === 'tts' && id === 'ha_engine') {
             const eng = O.ttsOptions(this._engines).find(o => o.id === 'ha_engine');
             if (eng?.engineId) this.saveDefault('voice.haTtsEngineId', eng.engineId);
-            // First Piper selection defaults the voice to amy (low) — matched
-            // from the detected voice list when possible (John, 2026-07-12).
+            // Piper always has a concrete voice — default amy (low) (John, 2026-07-12).
             if (!String(this._defaults['voice.haTtsVoiceId'] || '')) {
-                const voices = (eng?.configFields || []).find(f => f.key === 'voice.haTtsVoiceId')?.options || [];
-                const amy = voices.find(v => /amy/i.test(v.value) && /low/i.test(v.value))
-                    || voices.find(v => /amy/i.test(v.value));
-                this.saveDefault('voice.haTtsVoiceId', amy?.value || 'en_US-amy-low');
+                this.saveDefault('voice.haTtsVoiceId', this._defaultPiperVoice() || 'en_US-amy-low');
             }
         } else if (stageKey === 'stt' && id === 'ha_engine') {
             const eng = O.sttOptions(this._engines).find(o => o.id === 'ha_engine');
             if (eng?.engineId) this.saveDefault('voice.haSttEngineId', eng.engineId);
         }
         this.saveDefault(stageKey === 'tts' ? 'voice.ttsProvider' : 'voice.sttProvider', id);
+    },
+
+    /** amy (low) from the detected Piper voice list — the default voice a
+     *  Piper selection should always carry. Null when detection is empty. */
+    _defaultPiperVoice() {
+        const eng = window.VoiceAiOptions.ttsOptions(this._engines).find(o => o.id === 'ha_engine');
+        const voices = (eng?.configFields || []).find(f => f.key === 'voice.haTtsVoiceId')?.options || [];
+        if (!voices.length) return null;
+        const amy = voices.find(v => /amy/i.test(v.value) && /low/i.test(v.value))
+            || voices.find(v => /amy/i.test(v.value));
+        return (amy || voices[0]).value;
+    },
+
+    /** Self-heal for accounts that picked Piper before voice seeding existed
+     *  (or whose voice was clobbered): Piper active + no stored voice +
+     *  detection has voices → persist amy (low). Runs once per fetch; the
+     *  Voice row never shows "— pick a voice —". */
+    _seedPiperVoiceIfMissing() {
+        const d = this._defaults;
+        if (!d || String(d['voice.ttsProvider']) !== 'ha_engine') return;
+        if (String(d['voice.haTtsVoiceId'] || '')) return;
+        const v = this._defaultPiperVoice();
+        if (v) this.saveDefault('voice.haTtsVoiceId', v);
     },
 
     /** Canonical agent mode (live|dialog|single), deriving the legacy
@@ -595,9 +619,11 @@ const VoiceAiPage = {
         const agentMode = this._agentMode();
         // Live (S2S) owns STT+LLM+TTS+search, so hide the cascade pipeline cards
         // it replaces. Dialog + Single both run the cascade → keep them shown.
+        // HA Assist keeps Customize too (mix the Assist pipeline with e.g. the
+        // local Android voice) — just without the Dashie-brain cards.
         const isLive = !isHaAssist && agentMode === 'live';
         const customPipeline = d['voice.customizePipeline'] === true;
-        const showPipeline = !isHaAssist && customPipeline && !isLive;
+        const showPipeline = customPipeline && !isLive;
         // Gemini cascade models search via native Google grounding (not Tavily) → the
         // Web-search-source card shows "Google" instead. Applies in dialog/single.
         const isGeminiAiModel = String(d['ai.model'] || '').startsWith('gemini-');
@@ -605,7 +631,9 @@ const VoiceAiPage = {
         // Prune expanded-state for cards that are no longer rendered (Customize
         // off, preset switch, Live hiding the pipeline). A stale entry keeps
         // anyExpanded true and dims every visible card indefinitely.
-        const visibleStages = new Set(isHaAssist ? [] : ['model', ...(showPipeline ? ['tts', 'stt', 'search'] : [])]);
+        const visibleStages = new Set(isHaAssist
+            ? (showPipeline ? ['tts', 'stt'] : [])
+            : ['model', ...(showPipeline ? ['tts', 'stt', 'search'] : [])]);
         for (const k of [...this._expandedCards]) {
             if (!visibleStages.has(k)) this._expandedCards.delete(k);
         }
@@ -641,7 +669,15 @@ const VoiceAiPage = {
             const rest = x.configFields.filter(f => !VOICE_FIELD_KEYS.includes(f.key));
             return { ...x, configFields: rest.length ? rest : undefined };
         });
-        const body = isHaAssist ? P.renderHaAssistCard() : `
+        // HA Assist: the link-out card + customizable STT/TTS (mix the Assist
+        // pipeline with local engines/Android voice) — no Dashie-brain cards
+        // (model/personality/search) since HA owns the conversation agent.
+        const body = isHaAssist ? `
+            ${P.renderHaAssistCard()}
+            ${P.renderCustomizeRow(customPipeline, true)}
+            ${showPipeline ? card('Text-to-speech', 'tts', ttsCardOpts, String(d['voice.ttsProvider'])) : ''}
+            ${showPipeline && voiceField ? this._renderVoiceRow(voiceField, d) : ''}
+            ${showPipeline ? card('Speech-to-text', 'stt', filtered('stt', O.sttOptions(this._engines)), String(d['voice.sttProvider'])) : ''}` : `
             ${P.renderCustomizeRow(customPipeline, !isLive)}
             ${card('AI Model', 'model', this._modelOptions(preset), this._selectedModelId(agentMode))}
             ${D.renderPersonalityCard({
@@ -672,12 +708,13 @@ const VoiceAiPage = {
             })}
             ${body}
 
+            ${isHaAssist ? '' : `
             ${this._sectionHeader('AI Tools & Settings', '')}
             <div class="card"><div class="card-body">
-                ${(!isHaAssist && !isLive) ? this._renderDialogRows(d, agentMode) : ''}
+                ${!isLive ? this._renderDialogRows(d, agentMode) : ''}
                 ${this._toggleRow('Retrieve pictures', `Allow the AI to show pictures with its responses. Uses web image search (${O.imageSearchCost}/search).`, 'ai.retrievePicturesEnabled', d['ai.retrievePicturesEnabled'])}
                 ${FeatureGate.shouldShow('chores') ? this._toggleRow('Always use AI for chores', 'Disable the fast path — routes all chore commands through AI (uses more tokens).', 'voice.alwaysUseAI', d['voice.alwaysUseAI']) : ''}
-            </div></div>
+            </div></div>`}
         `;
         // Conversation memory (+ duration) hidden for now (John, 2026-07-12) —
         // not in use yet. Re-add via ai.conversationContextEnabled /
@@ -693,12 +730,16 @@ const VoiceAiPage = {
         let control;
         let caret = true;
         if (voiceField.type === 'select' && Array.isArray(voiceField.options)) {
-            const known = voiceField.options.some(v => v.value === cur);
+            // Never render unset — an empty stored value displays as the default
+            // voice (amy (low) for Piper); _seedPiperVoiceIfMissing persists it.
+            const effective = cur
+                || (voiceField.key === 'voice.haTtsVoiceId' ? this._defaultPiperVoice() : '')
+                || voiceField.options[0]?.value || '';
+            const known = voiceField.options.some(v => v.value === effective);
             const opts = [
-                `<option value="" ${cur ? '' : 'selected'} disabled>— pick a voice —</option>`,
                 ...voiceField.options.map(v =>
-                    `<option value="${this._escape(v.value)}" ${v.value === cur ? 'selected' : ''}>${this._escape(v.label)}</option>`),
-                (cur && !known) ? `<option value="${this._escape(cur)}" selected>${this._escape(cur)} (current)</option>` : '',
+                    `<option value="${this._escape(v.value)}" ${v.value === effective ? 'selected' : ''}>${this._escape(v.label)}</option>`),
+                (effective && !known) ? `<option value="${this._escape(effective)}" selected>${this._escape(effective)} (current)</option>` : '',
             ].join('');
             control = `<select style="${D.SELECT_STYLE}" onchange="VoiceAiPage.saveLocalField('${voiceField.key}', this.value)">${opts}</select>`;
         } else {

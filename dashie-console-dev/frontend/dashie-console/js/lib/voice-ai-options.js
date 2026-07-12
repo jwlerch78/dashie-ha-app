@@ -58,12 +58,15 @@ const VoiceAiOptions = {
 
     /** Filter a picker option list by the active preset (§6): Local hides
      *  cloud rows, Cloud hides local rows, Hybrid shows both minus the HA
-     *  Assist pipeline row (va_default), HA Assist shows no pickers at all. */
+     *  Assist pipeline row (va_default). HA Assist keeps the local rows
+     *  (va_default = the Assist pipeline itself, plus Android/engine-direct
+     *  overrides — e.g. speak HA's reply in the local Android voice) but no
+     *  Dashie-cloud metered rows (John, 2026-07-12). */
     presetFilter(presetId, options) {
         if (presetId === 'local')  return options.filter(o => o.locality === 'local');
         if (presetId === 'cloud')  return options.filter(o => o.locality === 'cloud');
         if (presetId === 'hybrid') return options.filter(o => o.id !== 'va_default');
-        if (presetId === 'ha_assist') return [];
+        if (presetId === 'ha_assist') return options.filter(o => o.locality === 'local');
         return options;
     },
 
@@ -146,8 +149,8 @@ const VoiceAiOptions = {
     // detection finds a Piper engine on HA.
     TTS: [
         // cost is a fallback estimate — applyLiveRates() overwrites the rate from
-        // the server's margined rate card; the "~½–1¢/reply" estimate stays static.
-        { id: 'dashie_cloud', label: 'Dashie Cloud (ElevenLabs)', locality: 'cloud', cost: '$0.13/1k chars · ~½–1¢/reply',
+        // the server's margined rate card; the "~0.5–1¢/reply" estimate stays static.
+        { id: 'dashie_cloud', label: 'Dashie Cloud (ElevenLabs)', locality: 'cloud', cost: '$0.13/1k chars · ~0.5–1¢/reply',
           description: 'Premium character voices.' },
         { id: 'local_url', label: 'Local TTS (your box)', locality: 'local', cost: 'Free',
           description: 'Kokoro / OpenAI-compatible TTS on your own box (LAN, direct).',
@@ -294,7 +297,7 @@ const VoiceAiOptions = {
     /** Overwrite the paid-provider rate strings with the server's rate card
      *  (get_credit_rates), which returns amounts ALREADY MARGINED — what the
      *  user actually pays. The hardcoded strings above are offline fallbacks
-     *  and the per-reply "~½–1¢" estimate is intentionally static. Best-effort:
+     *  and the per-reply "~0.5–1¢" estimate is intentionally static. Best-effort:
      *  rendering never blocks on failure, and repeat calls are no-ops. */
     _liveRatesApplied: false,
     _liveModelRates: null,   // { modelId: {input, output} } margined per 1M — read by models()
@@ -314,7 +317,7 @@ const VoiceAiOptions = {
             const tts = amt('tts');   // USD per 1,000 characters
             if (tts) {
                 this.TTS.find(o => o.id === 'dashie_cloud').cost =
-                    `$${tts.toFixed(2)}/1k chars · ~½–1¢/reply`;
+                    `$${tts.toFixed(2)}/1k chars · ~0.5–1¢/reply`;
             }
             const search = amt('web_search');   // USD per search
             if (search) {
