@@ -101,34 +101,10 @@ const VoiceAiPresetPicker = {
             </div></div>`;
     },
 
-    /** Dialog toggle card (shown when a cascade — non-Live — model is selected):
-     *  ON → voice.agentMode='dialog' (mic stays open between turns), OFF →
-     *  'single'. `subToggleHtml` = the indented "Open dialog after commands"
-     *  row, rendered by the page (it owns the toggle-row helper + save path).
-     *  Replaces the old Live/Dialog/Single dropdown. */
-    renderDialogCard({ dialogOn, saving, subToggleHtml }) {
-        const sub = subToggleHtml ? `
-                <div style="border-top: 1px solid var(--border, #e5e7eb); margin-top: 4px;">
-                    ${subToggleHtml}
-                </div>` : '';
-        return `
-            <div class="card" style="margin-bottom: 16px;"><div class="card-body">
-                <div class="setting-row" style="align-items: flex-start; padding: 10px 0;">
-                    <div style="flex: 1; padding-right: 12px;">
-                        <div class="setting-row-label">Conversation dialog ${saving ? '<span style="color: var(--text-muted);">· saving…</span>' : ''}</div>
-                        <div style="font-size: 12px; color: var(--text-muted); margin-top: 2px;">Keep the mic open after a reply so you can keep talking — no wake word needed. Off = one response per “Hey Dashie”.</div>
-                    </div>
-                    <label class="toggle">
-                        <input type="checkbox" ${dialogOn ? 'checked' : ''}
-                            onchange="VoiceAiPage.setDialogMode(this.checked)">
-                        <span class="toggle-slider"></span>
-                    </label>
-                </div>
-                ${sub}
-            </div></div>`;
-    },
+    // (The Dialog toggle moved into the AI Tools & Settings section —
+    //  VoiceAiPage._renderDialogRows — 2026-07-12.)
 
-    /** Beta note shown instead of the Dialog card while a Live model is
+    /** Beta note shown instead of the Dialog rows while a Live model is
      *  selected (Live's dialog behavior is built into the model). */
     renderLiveNote() {
         return `

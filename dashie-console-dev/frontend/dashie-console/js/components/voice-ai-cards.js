@@ -42,43 +42,53 @@ const VoiceAiCards = {
                 </div>`;
         }
 
-        let body;
-        if (o.expanded) {
-            // Explicit "you're choosing" header with a ▴ close affordance, so an
-            // open card is unmistakable (vs the subtle ▾ in the collapsed state).
-            const head = `
-                <div onclick="VoiceAiPage.toggleCard('${o.stageKey}')"
-                    style="cursor: pointer; display:flex; justify-content:space-between; align-items:center; padding: 10px 14px; border-bottom: 1px solid var(--border, #e5e7eb); background: var(--surface-muted, #fafafa);">
-                    <span style="font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; color: var(--accent);">Choose ${this._esc(o.title)}</span>
-                    <span style="color: var(--text-muted); font-size: 13px;">▴</span>
+        // Collapsed: one compact summary row — section title, the selected
+        // option, a caret (2026-07-12 vertical-compression pass; the old
+        // full selected-option card is only shown expanded). Expanding
+        // reveals the option list directly.
+        if (!o.expanded) {
+            const O = window.VoiceAiOptions;
+            const color = O.COLOR[sel.locality] || 'var(--text-muted)';
+            const tag = sel.locality
+                ? `<span style="font-size:10px; font-weight:700; text-transform:uppercase; letter-spacing:0.4px; color:${color};">${O.LABEL[sel.locality] || ''}</span>`
+                : '';
+            const dimmed = o.anyExpanded;
+            return `
+                <div style="margin-bottom: 10px; transition: opacity 120ms ease; ${dimmed ? 'opacity: 0.45;' : ''}">
+                    <div class="card"><div class="card-body" style="padding: 0;">
+                        <div onclick="VoiceAiPage.toggleCard('${o.stageKey}')"
+                            style="cursor: pointer; display: flex; align-items: center; gap: 10px; padding: 10px 14px;">
+                            <span style="font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; color: var(--text-muted); min-width: 150px;">${this._esc(o.title)}</span>
+                            <span style="flex: 1; font-weight: 600; font-size: 13px; display: flex; align-items: center; gap: 8px;">${this._esc(sel.label)} ${tag}</span>
+                            <span style="color: var(--text-muted); font-size: 13px;">▸</span>
+                        </div>
+                    </div></div>
                 </div>`;
-            let prevGroup = null;
-            const rows = opts.map((x, i) => {
-                const groupChanged = !!x.group && x.group !== prevGroup;
-                let header = '';
-                if (groupChanged) {
-                    header = `<div style="padding: 9px 14px 5px; font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; color: var(--text-muted); ${i === 0 ? '' : 'border-top: 1px solid var(--border, #e5e7eb);'}">${this._esc(x.group)}</div>`;
-                    prevGroup = x.group;
-                }
-                const firstInGroup = groupChanged || i === 0;
-                return header + this._row(x, x.id === o.selectedId, o.stageKey, o.getConfig, firstInGroup, 'select');
-            }).join('');
-            body = head + rows;
-        } else {
-            body = this._row(sel, true, o.stageKey, o.getConfig, true, 'expand');
         }
 
-        // Open card pops with an accent ring + shadow; sibling cards dim while
-        // another is open so it's clear which selector is currently active.
-        const cardStyle = o.expanded
-            ? 'box-shadow: 0 0 0 2px var(--accent), 0 6px 18px rgba(0,0,0,0.10); border-color: var(--accent);'
-            : '';
-        const dimmed = !o.expanded && o.anyExpanded;
+        // Expanded: explicit "you're choosing" header with a ▴ close affordance,
+        // then the full option list. Pops with an accent ring + shadow.
+        const head = `
+            <div onclick="VoiceAiPage.toggleCard('${o.stageKey}')"
+                style="cursor: pointer; display:flex; justify-content:space-between; align-items:center; padding: 10px 14px; border-bottom: 1px solid var(--border, #e5e7eb); background: var(--surface-muted, #fafafa);">
+                <span style="font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; color: var(--accent);">Choose ${this._esc(o.title)}</span>
+                <span style="color: var(--text-muted); font-size: 13px;">▴</span>
+            </div>`;
+        let prevGroup = null;
+        const rows = opts.map((x, i) => {
+            const groupChanged = !!x.group && x.group !== prevGroup;
+            let header = '';
+            if (groupChanged) {
+                header = `<div style="padding: 9px 14px 5px; font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; color: var(--text-muted); ${i === 0 ? '' : 'border-top: 1px solid var(--border, #e5e7eb);'}">${this._esc(x.group)}</div>`;
+                prevGroup = x.group;
+            }
+            const firstInGroup = groupChanged || i === 0;
+            return header + this._row(x, x.id === o.selectedId, o.stageKey, o.getConfig, firstInGroup, 'select');
+        }).join('');
         return `
-            <div style="margin-bottom: 16px; transition: opacity 120ms ease; ${dimmed ? 'opacity: 0.45;' : ''}">
-                <div style="margin-bottom: 6px; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; color: var(--text-muted);">${this._esc(o.title)}</div>
-                <div class="card" style="${cardStyle}"><div class="card-body" style="padding: 0;">
-                    ${body}
+            <div style="margin-bottom: 10px;">
+                <div class="card" style="box-shadow: 0 0 0 2px var(--accent), 0 6px 18px rgba(0,0,0,0.10); border-color: var(--accent);"><div class="card-body" style="padding: 0;">
+                    ${head + rows}
                 </div></div>
             </div>`;
     },

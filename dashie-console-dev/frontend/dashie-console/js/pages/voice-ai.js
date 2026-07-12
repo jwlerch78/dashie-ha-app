@@ -24,7 +24,6 @@ const VoiceAiPage = {
     _templates: null,       // built-in personality rows
     _custom: null,          // custom personality rows
     _overrides: null,       // {template_key: {family_notes}}
-    _voices: null,          // tts_voices catalog — for the default-voice picker (WS-G)
     _loading: false,
     _error: null,
     _savingKey: null,       // dotted key currently saving (for inline "saving…")
@@ -200,8 +199,6 @@ const VoiceAiPage = {
                 // BYO-key booleans (add-on API Keys page) — gate the Cloud/Hybrid
                 // presets on credits OR a key. Best-effort — null on failure.
                 this._fetchKeyStatus(),
-                // Voice catalog for the account default-voice picker (WS-G).
-                VoiceAiApi.listVoices().then(v => { this._voices = v; }).catch(() => { this._voices = []; }),
             ]);
             this._defaults = defaults;
             // Household sharing opt-in lives in the add-on only — fetch it so the
@@ -267,14 +264,6 @@ const VoiceAiPage = {
             console.warn('[VoiceAiPage] key status unavailable:', e?.message || e);
             this._keyStatus = null;
         }
-    },
-
-    /** The account's default-personality record (template by key, custom by
-     *  uuid) for the voice-lock check — null while the catalog loads or when
-     *  the stored id no longer exists (deleted custom → treat as flexible). */
-    _defaultPersonality() {
-        const id = String(this._defaults?.['ai.defaultPersonalityId'] || 'dashie');
-        return this.getTemplate(id) || this.getCustom(id);
     },
 
     getCustom(id) {
@@ -435,6 +424,14 @@ const VoiceAiPage = {
         if (stageKey === 'tts' && id === 'ha_engine') {
             const eng = O.ttsOptions(this._engines).find(o => o.id === 'ha_engine');
             if (eng?.engineId) this.saveDefault('voice.haTtsEngineId', eng.engineId);
+            // First Piper selection defaults the voice to amy (low) — matched
+            // from the detected voice list when possible (John, 2026-07-12).
+            if (!String(this._defaults['voice.haTtsVoiceId'] || '')) {
+                const voices = (eng?.configFields || []).find(f => f.key === 'voice.haTtsVoiceId')?.options || [];
+                const amy = voices.find(v => /amy/i.test(v.value) && /low/i.test(v.value))
+                    || voices.find(v => /amy/i.test(v.value));
+                this.saveDefault('voice.haTtsVoiceId', amy?.value || 'en_US-amy-low');
+            }
         } else if (stageKey === 'stt' && id === 'ha_engine') {
             const eng = O.sttOptions(this._engines).find(o => o.id === 'ha_engine');
             if (eng?.engineId) this.saveDefault('voice.haSttEngineId', eng.engineId);
@@ -484,9 +481,20 @@ const VoiceAiPage = {
             this._selectProvider(stageKey, id);
             return;
         }
-        const KEY = { search: 'voice.searchSource', sports: 'voice.sportsSource' };
-        const key = KEY[stageKey];
-        if (key) this.saveDefault(key, id);
+        if (stageKey === 'search') {
+            // 'None' replaces the old Web-search toggle: it maps to
+            // ai.webSearchEnabled=false (searchSource untouched, so switching
+            // back restores the prior provider). 'google' is display-only (the
+            // Gemini-grounding pseudo-source) — never persisted as a source.
+            if (id === 'none') {
+                this.saveDefault('ai.webSearchEnabled', false);
+                return;
+            }
+            if (this._defaults['ai.webSearchEnabled'] !== true) this.saveDefault('ai.webSearchEnabled', true);
+            if (id !== 'google') this.saveDefault('voice.searchSource', id);
+            return;
+        }
+        if (stageKey === 'sports') this.saveDefault('voice.sportsSource', id);
     },
 
     /** Inline local-config field (endpoint URL, model, SearXNG URL) → persist as string. */
@@ -612,43 +620,35 @@ const VoiceAiPage = {
         const filtered = (stage, all) => O.presetFilter(preset, this._haFilter(all));
         const P = window.VoiceAiPresetPicker;
         const D = window.VoiceAiDefaultsCards;
-        // Account default voice (WS-G): a Dashie-Cloud-TTS concern — local
-        // engines pick their voice in the TTS card's config fields, Live speaks
-        // Google. Voice lock wins: fixed-voice personalities render locked.
-        const defaultPersonality = this._defaultPersonality();
-        const showVoiceDefault = !isLive && String(d['voice.ttsProvider'] || 'dashie_cloud') === 'dashie_cloud';
+        // Web search: the toggle is gone (John, 2026-07-12) — "None" is a
+        // source-card option instead. Selection maps webSearchEnabled + source.
+        const searchOptions = [
+            ...(isGeminiAiModel ? this._googleSearchOption() : filtered('search', O.SEARCH)),
+            { id: 'none', label: 'None', cost: '', description: 'Web search off — Dashie answers without searching the web.' },
+        ];
+        const searchSelected = !searchOn ? 'none' : (isGeminiAiModel ? 'google' : String(d['voice.searchSource']));
         const body = isHaAssist ? P.renderHaAssistCard() : `
             ${P.renderCustomizeRow(customPipeline, !isLive)}
-            ${this._renderLocalityLegend()}
             ${card('AI Model', 'model', this._modelOptions(preset), this._selectedModelId(agentMode))}
             ${D.renderPersonalityCard({
                 templates: this._templates, custom: this._custom,
                 currentId: String(d['ai.defaultPersonalityId'] || 'dashie'),
                 saving: this._savingKey === 'ai.defaultPersonalityId',
             })}
-            ${isLive ? P.renderLiveNote() : P.renderDialogCard({
-                dialogOn: agentMode === 'dialog',
-                saving: this._savingKey === 'voice.agentMode',
-                subToggleHtml: agentMode === 'dialog'
-                    ? this._toggleRow('Open dialog after commands', 'Keep listening after every command — not just questions — without saying “Hey Dashie” again.', 'voice.alwaysOpenDialog', d['voice.alwaysOpenDialog'])
-                    : '',
-            })}
-
+            ${isLive ? P.renderLiveNote() : ''}
             ${showPipeline ? this._renderEngineDetectionRow() : ''}
             ${showPipeline ? card('Text-to-speech (Voice)', 'tts', filtered('tts', O.ttsOptions(this._engines)), String(d['voice.ttsProvider'])) : ''}
-            ${showVoiceDefault ? D.renderVoiceCard({
-                voices: this._voices || [],
-                currentKey: String(d['ai.defaultVoiceKey'] || ''),
-                personality: defaultPersonality,
-                saving: this._savingKey === 'ai.defaultVoiceKey',
-            }) : ''}
             ${showPipeline ? card('Speech-to-text', 'stt', filtered('stt', O.sttOptions(this._engines)), String(d['voice.sttProvider'])) : ''}
-            ${showPipeline ? card('Web search source', 'search', isGeminiAiModel ? this._googleSearchOption() : filtered('search', O.SEARCH), isGeminiAiModel ? 'google' : String(d['voice.searchSource'])) : ''}`;
+            ${showPipeline ? card('Web search source', 'search', searchOptions, searchSelected) : ''}`;
             // Sports source card hidden for now (John, 2026-07-11) — ESPN is the
-            // only option. Re-add via card('Sports source', 'sports', …) when a
-            // second source exists.
+            // only option. The account default-VOICE card was removed 2026-07-12
+            // (cloud voice follows the personality; Piper voice lives in the TTS
+            // card's config; per-device override on the Devices page).
         return `
-            ${this._sectionHeader('Voice & AI Defaults', 'Apply to every device signed into this account.')}
+            <div style="display: flex; justify-content: space-between; align-items: flex-end; gap: 16px; margin: 20px 0 10px;">
+                <div style="font-size: 15px; font-weight: 600;">Voice &amp; AI Defaults</div>
+                ${this._renderLocalityLegend()}
+            </div>
             ${VoiceAiPresetPicker.render({
                 presets: this._haFilter(O.PRESETS),
                 selectedId: preset,
@@ -659,13 +659,35 @@ const VoiceAiPage = {
 
             ${this._sectionHeader('AI Tools & Settings', '')}
             <div class="card"><div class="card-body">
-                ${this._toggleRow('Web search', 'Let the assistant search the web for answers.', 'ai.webSearchEnabled', searchOn)}
+                ${(!isHaAssist && !isLive) ? this._renderDialogRows(d, agentMode) : ''}
                 ${this._toggleRow('Retrieve pictures', 'Let the assistant pull family photos into responses.', 'ai.retrievePicturesEnabled', d['ai.retrievePicturesEnabled'])}
                 ${this._toggleRow('Conversation memory', 'Remember the prior conversation for follow-ups.', 'ai.conversationContextEnabled', d['ai.conversationContextEnabled'])}
                 ${memoryOn ? this._selectRow('Memory duration', 'ai.conversationTimeout', this.MEMORY_OPTIONS, String(d['ai.conversationTimeout'])) : ''}
-                ${this._toggleRow('Always use AI for chores', 'Disable the fast path — routes all chore commands through AI (uses more tokens).', 'voice.alwaysUseAI', d['voice.alwaysUseAI'])}
+                ${FeatureGate.shouldShow('chores') ? this._toggleRow('Always use AI for chores', 'Disable the fast path — routes all chore commands through AI (uses more tokens).', 'voice.alwaysUseAI', d['voice.alwaysUseAI']) : ''}
             </div></div>
         `;
+    },
+
+    /** Conversation-dialog rows at the top of AI Tools & Settings (moved from
+     *  their own card, 2026-07-12): the Dialog toggle (agentMode dialog/single)
+     *  + the "Open dialog after commands" sub-option while it's on. Hidden for
+     *  Live (built into the model) and HA Assist. */
+    _renderDialogRows(d, agentMode) {
+        const dialogOn = agentMode === 'dialog';
+        const saving = this._savingKey === 'voice.agentMode';
+        return `
+            <div class="setting-row" style="align-items: flex-start; padding: 10px 0;">
+                <div style="flex: 1; padding-right: 12px;">
+                    <div class="setting-row-label">Conversation dialog ${saving ? '<span style="color: var(--text-muted);">· saving…</span>' : ''}</div>
+                    <div style="font-size: 12px; color: var(--text-muted); margin-top: 2px;">Keep the mic open after a reply so you can keep talking — no wake word needed. Off = one response per “Hey Dashie”.</div>
+                </div>
+                <label class="toggle">
+                    <input type="checkbox" ${dialogOn ? 'checked' : ''}
+                        onchange="VoiceAiPage.setDialogMode(this.checked)">
+                    <span class="toggle-slider"></span>
+                </label>
+            </div>
+            ${dialogOn ? this._toggleRow('Open dialog after commands', 'Keep listening after every command — not just questions — without saying “Hey Dashie” again.', 'voice.alwaysOpenDialog', d['voice.alwaysOpenDialog']) : ''}`;
     },
 
     /** The AI Model card's option list for the active preset: Live models
@@ -718,25 +740,23 @@ const VoiceAiPage = {
      *  engines were found and lets them re-probe after installing Piper/Whisper. */
     _renderEngineDetectionRow() {
         if (!DashieAuth.isAddonMode) return '';
-        // The Piper/Whisper rows carry their own state (selectable when detected, an
-        // Install deep-link when absent). Re-scanning is folded into the top-bar page
-        // refresh (forces a fresh probe), so this is just a one-line status hint.
+        // Only the failure case gets a line — when detection works, the
+        // Piper/Whisper rows speak for themselves (hint removed 2026-07-12).
         const e = this._engines;
-        const msg = (!e || !e.available)
-            ? 'Home Assistant not reachable — showing your-box (URL) options only.'
-            : 'Local Home Assistant engines are detected automatically — use ↻ Refresh after installing one.';
+        if (e && e.available) return '';
         return `
             <div style="margin: 0 0 8px; font-size: 12px; color: var(--text-secondary);">
-                ${this._escape(msg)}
+                ${this._escape('Home Assistant not reachable — showing your-box (URL) options only.')}
             </div>`;
     },
 
-    /** Cloud-vs-local key, shown above the pipeline cards when customize is on. */
+    /** Cloud-vs-local color key — rendered inline in the section-title row,
+     *  right of "Voice & AI Defaults" (moved above the preset cards 2026-07-12). */
     _renderLocalityLegend() {
         const O = window.VoiceAiOptions;
         const dot = (c, label) => `<span style="display:inline-flex; align-items:center; gap:6px;"><span style="width:12px; height:12px; border-radius:3px; background:${c};"></span>${label}</span>`;
         return `
-            <div style="display:flex; justify-content:flex-end; gap: 16px; margin: 0 0 8px; font-size: 12px; color: var(--text-secondary);">
+            <div style="display:flex; gap: 16px; font-size: 12px; color: var(--text-secondary);">
                 ${dot(O.COLOR.cloud, 'Cloud')}
                 ${dot(O.COLOR.local, 'Local')}
             </div>`;
