@@ -1,0 +1,5 @@
+# Wrap the official upstream image (multi-arch: amd64 + arm64). Pinned — bump
+# deliberately with a version bump in config.yaml so updates are auditable.
+build_from:
+  amd64: docker.io/nousresearch/hermes-agent:v2026.7.7.2
+  aarch64: docker.io/nousresearch/hermes-agent:v2026.7.7.2

@@ -1,0 +1,42 @@
+name: Dashie Hermes Agent (Beta)
+version: "0.1.0"
+slug: dashie_hermes
+description: Self-hosted Hermes Agent (Nous Research) as Dashie's BYO brain — persistent memory and skills, running on your own box. Beta; pair with Voice & AI → AI Model → "Hermes Agent" in the Dashie Console.
+url: https://github.com/jwlerch78/dashie-ha-app
+# Upstream nousresearch/hermes-agent ships amd64 + arm64 only (no armv7).
+arch:
+  - aarch64
+  - amd64
+
+homeassistant: "2024.1.0"
+
+# The OpenAI-compatible API server, exposed on the host LAN so both the Dashie
+# Console add-on brain and devices can reach it at http://<ha-host>:8642.
+# Auth is enforced by API_SERVER_KEY (see DOCS) — never exposed keyless.
+ports:
+  8642/tcp: 8642
+ports_description:
+  8642/tcp: Hermes OpenAI-compatible API (bearer-protected)
+
+# Hermes state (memory, skills, .env secrets) lives in HERMES_HOME=/data/hermes —
+# the add-on data volume, so it survives add-on updates. The image's built-in
+# /opt/data VOLUME is an anonymous docker volume that would NOT survive updates;
+# cont-init redirects HERMES_HOME instead (see rootfs/etc/cont-init.d/).
+
+# User-configurable settings (Configuration tab). Provider keys are exported to
+# the container env (Hermes reads ANTHROPIC_API_KEY / OPENAI_API_KEY /
+# OPENROUTER_API_KEY). api_server_key blank = auto-generate once and persist
+# (printed to the add-on log so you can copy it into Dashie's API Keys page).
+options:
+  api_server_key: ""
+  anthropic_api_key: ""
+  openai_api_key: ""
+  openrouter_api_key: ""
+schema:
+  api_server_key: str?
+  anthropic_api_key: str?
+  openai_api_key: str?
+  openrouter_api_key: str?
+
+startup: services
+boot: auto

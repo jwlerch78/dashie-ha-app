@@ -1,0 +1,12 @@
+#!/bin/sh
+# dashie-hermes-run — the add-on's CMD. Reached via the upstream main-wrapper
+# (first-arg-executable route), so we arrive venv-activated, with-contenv
+# env applied, and already dropped to the hermes user.
+#
+# main-wrapper hardcodes HOME=/opt/data (the image's anonymous volume);
+# repoint it at the persistent HERMES_HOME so $HOME writes survive updates.
+set -e
+export HOME="${HERMES_HOME:-/data/hermes}"
+cd "$HOME"
+echo "[dashie-hermes] starting gateway (HERMES_HOME=$HOME)"
+exec hermes gateway run
