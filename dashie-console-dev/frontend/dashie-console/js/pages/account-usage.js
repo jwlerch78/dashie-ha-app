@@ -207,6 +207,13 @@ const AccountUsage = {
         return this._fmtCost(amount);
     },
 
+    /** Lowest-level line items (per-call rows, realtime Voice/Text rollups):
+     *  exact 3-decimal cost — never '<$0.01' (John, 2026-07-12). */
+    _fmtCost3(amount) {
+        if (amount == null || !isFinite(amount)) return '$0.000';
+        return '$' + amount.toFixed(3);
+    },
+
     _fmtCount(n) {
         if (n == null) return '—';
         return n.toLocaleString();
@@ -479,7 +486,7 @@ const AccountUsage = {
         const sectionOf = (svc) => (svc === 'tts' || svc === 'stt') ? 'speech'
             : (svc === 'image_search' ? 'web_search' : svc);
         const groups = new Map();
-        for (const r of rows) {
+        for (const r of this._mergeLiveTextRows(rows)) {
             const key = sectionOf(r.service);
             const g = groups.get(key) || [];
             g.push(r);
@@ -516,6 +523,33 @@ const AccountUsage = {
                     </tfoot>
                 </table>
             </div></div>`;
+    },
+
+    /** Fold each Live model's ':text' companion row into its base-model row
+     *  for the by-model summary (John, 2026-07-12). Live billing logs audio
+     *  and text tokens as separate rows (different rates); one turn produces
+     *  both, so costs/tokens sum but call_count stays the base row's. The
+     *  interaction drill-down keeps its Voice/Text detail. Display-only. */
+    _mergeLiveTextRows(rows) {
+        const out = [];
+        const baseByModel = new Map();
+        const textRows = [];
+        for (const r of rows) {
+            if (r.service === 'ai' && typeof r.model === 'string' && r.model.endsWith(':text')) {
+                textRows.push(r);
+                continue;
+            }
+            if (r.service === 'ai' && r.model) baseByModel.set(r.model, { ...r });
+            out.push(r.service === 'ai' && r.model ? baseByModel.get(r.model) : r);
+        }
+        for (const t of textRows) {
+            const base = baseByModel.get(t.model.slice(0, -':text'.length));
+            if (!base) { out.push(t); continue; }   // orphan — show rather than hide
+            base.actual_cost_usd = (Number(base.actual_cost_usd) || 0) + (Number(t.actual_cost_usd) || 0);
+            base.input_tokens = (base.input_tokens || 0) + (t.input_tokens || 0);
+            base.output_tokens = (base.output_tokens || 0) + (t.output_tokens || 0);
+        }
+        return out;
     },
 
     _summaryItemRow(r) {
@@ -821,7 +855,7 @@ const AccountUsage = {
             <tr>
                 <td style="padding: 4px 0; color: var(--text-muted); width: 60px; text-transform: uppercase; font-size: 10px; letter-spacing: 0.5px;">${label}</td>
                 <td style="padding: 4px 8px;">${this._fmtCount(g.inTok)} in / ${this._fmtCount(g.outTok)} out</td>
-                <td style="padding: 4px 0; text-align: right; font-family: ui-monospace, SFMono-Regular, Menlo, monospace;">${this._fmtCostTotal(g.cost)}</td>
+                <td style="padding: 4px 0; text-align: right; font-family: ui-monospace, SFMono-Regular, Menlo, monospace;">${this._fmtCost3(g.cost)}</td>
             </tr>`;
         const has = (g) => g.cost || g.inTok || g.outTok;
         const body = open
@@ -901,7 +935,7 @@ const AccountUsage = {
             <tr>
                 <td style="padding: 4px 0; color: var(--text-muted); width: 60px; text-transform: uppercase; font-size: 10px; letter-spacing: 0.5px;">${this._escape(this._svcLabel(c.service))}</td>
                 <td style="padding: 4px 8px;">${desc}</td>
-                <td style="padding: 4px 0; text-align: right; font-family: ui-monospace, SFMono-Regular, Menlo, monospace;">${this._fmtCostTotal(cost)}</td>
+                <td style="padding: 4px 0; text-align: right; font-family: ui-monospace, SFMono-Regular, Menlo, monospace;">${this._fmtCost3(cost)}</td>
             </tr>`;
     },
 

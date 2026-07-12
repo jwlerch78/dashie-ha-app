@@ -94,16 +94,33 @@ const VoiceAiOptions = {
             label: 'My own AI (local / self-hosted)',
             group: 'Local',
             // BYO-model (Voice Master Plan WS-I): keep Dashie's cards/tools/dialog,
-            // swap the model behind the brain — local Ollama/llama.cpp, a self-hosted
-            // Hermes agent, or any OpenAI-compatible endpoint (remote URLs OK; add a
-            // key for Hermes/remote). Unlisted models bill $0 (managed STT/TTS still metered).
-            description: 'Point the brain at your own model — local Ollama / llama.cpp, a self-hosted Hermes agent, or any OpenAI-compatible endpoint. Dashie keeps its cards, tools & dialog; only the model changes.',
+            // swap the model behind the brain — local Ollama/llama.cpp or any
+            // OpenAI-compatible endpoint (remote URLs OK; add a key for remote).
+            // Unlisted models bill $0 (managed STT/TTS still metered).
+            description: 'Point the brain at your own model — local Ollama / llama.cpp or any OpenAI-compatible endpoint. Dashie keeps its cards, tools & dialog; only the model changes.',
             locality: 'local',
             cost: 'Free',
             configFields: [
-                { key: 'voice.localLlmUrl', label: 'Endpoint URL', placeholder: 'http://192.168.1.50:11434  (or https://your-hermes.example.com)' },
+                { key: 'voice.localLlmUrl', label: 'Endpoint URL', placeholder: 'http://192.168.1.50:11434' },
                 { key: 'voice.localLlmModel', label: 'Model', placeholder: 'qwen3:8b' },
-                { key: 'voice.localLlmKey', label: 'API key (optional)', type: 'password', placeholder: 'for Hermes / remote endpoints' },
+                { key: 'voice.localLlmKey', label: 'API key (optional)', type: 'password', placeholder: 'for remote endpoints' },
+            ],
+        }, {
+            // Hermes Agent gets a first-class row (John, 2026-07-12) — the flagship
+            // BYO-agent path (WS-I), not a generic endpoint. ai.model='hermes' is the
+            // route signal (account-config.js treats it like 'local' → on-prem brain).
+            // Its API key lives on the API Keys page (on-box key store), NOT here.
+            // installGuide links the upstream install docs until the Dashie Hermes
+            // add-on ships (then detection pre-fills the URL like Kokoro, WS-I.3/4).
+            id: 'hermes',
+            label: 'Hermes Agent (self-hosted)',
+            group: 'Local',
+            description: 'Nous Research’s open-source personal agent behind Dashie’s brain — persistent memory and self-built skills, running on your own hardware. Add its API key under API Keys.',
+            locality: 'local',
+            cost: 'Free',
+            installGuide: { url: 'https://hermes-agent.nousresearch.com/docs/getting-started/quickstart' },
+            configFields: [
+                { key: 'voice.hermesUrl', label: 'Hermes endpoint URL', placeholder: 'http://homeassistant.local:8642' },
             ],
         }];
         for (const prov of this._PROVIDER_ORDER) {
@@ -149,9 +166,11 @@ const VoiceAiOptions = {
     // detection finds a Piper engine on HA.
     TTS: [
         // cost is a fallback estimate — applyLiveRates() overwrites the rate from
-        // the server's margined rate card; the "~0.5–1¢/reply" estimate stays static.
-        { id: 'dashie_cloud', label: 'Dashie Cloud (ElevenLabs)', locality: 'cloud', cost: '$0.13/1k chars · ~0.5–1¢/reply',
-          description: 'Premium character voices.' },
+        // the server's margined rate card. Two engines behind one row: the
+        // default Dashie voice runs on Inworld (~4× cheaper per character);
+        // personality voices are premium ElevenLabs.
+        { id: 'dashie_cloud', label: 'Dashie Cloud (ElevenLabs / Inworld)', locality: 'cloud', cost: '$0.03–0.13/1k chars · ~0.1–1¢/reply',
+          description: 'The default Dashie voice (Inworld) is the most economical; personality voices (ElevenLabs) are premium.' },
         { id: 'local_url', label: 'Local TTS (your box)', locality: 'local', cost: 'Free',
           description: 'Kokoro / OpenAI-compatible TTS on your own box (LAN, direct).',
           configFields: [
@@ -314,10 +333,12 @@ const VoiceAiOptions = {
                 const r = rates.find(x => x.service === svc)?.rates?.[0]?.amount;
                 return (typeof r === 'number' && r > 0) ? r : null;
             };
-            const tts = amt('tts');   // USD per 1,000 characters
+            const tts = amt('tts');   // USD per 1,000 characters (premium/ElevenLabs rate)
             if (tts) {
+                // The rate card carries the premium (ElevenLabs) rate; the
+                // Inworld default voice is ~4× cheaper — show it as a ceiling.
                 this.TTS.find(o => o.id === 'dashie_cloud').cost =
-                    `$${tts.toFixed(2)}/1k chars · ~0.5–1¢/reply`;
+                    `up to $${tts.toFixed(2)}/1k chars · ~0.1–1¢/reply`;
             }
             const search = amt('web_search');   // USD per search
             if (search) {

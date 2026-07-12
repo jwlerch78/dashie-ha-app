@@ -290,14 +290,30 @@
           'neural2': 16.00          // $16 per 1M characters
         },
     
-        // ElevenLabs (per 1000 characters) - Verified Jul 2026 against actual usage.
-        // ElevenLabs bills in CREDITS: eleven_flash_v2_5 / eleven_turbo_v2_5 = 0.5
-        // credits/char; Creator tier = $22/100k credits → $0.00022/credit →
-        // effective $0.11 per 1000 chars. (multilingual_v2 = 1 credit/char = $0.22/1k;
-        // Pro+ tiers ≈ $0.165/1k credits → $0.0825/1k chars on flash.)
+        // ElevenLabs ($ per 1000 characters, keyed by model id) - Verified Jul 2026
+        // against actual usage. ElevenLabs bills in CREDITS: flash/turbo = 0.5
+        // credits/char, multilingual_v2 = 1 credit/char; Creator tier = $22/100k
+        // credits → $0.00022/credit. Per-MODEL because the rate doubles on
+        // multilingual — a flat rate silently underbills 2× the moment any voice
+        // (character voices sometimes need multilingual to render well) switches
+        // model. `default` covers unknown/absent model ids at the flash rate.
+        // (Pro+ tiers ≈ $0.165/1k credits → $0.0825/1k chars on flash.)
         elevenlabs: {
-          per1000Chars: 0.11,       // $0.11 per 1000 characters (flash @ Creator tier)
-          per100Chars: 0.011        // $0.011 per 100 characters
+          'eleven_flash_v2_5': 0.11,        // 0.5 credits/char
+          'eleven_turbo_v2_5': 0.11,        // 0.5 credits/char
+          'eleven_multilingual_v2': 0.22,   // 1 credit/char
+          default: 0.11,                    // unknown model id → flash rate
+          // Credits consumed per character, per model — converts Voice Library
+          // creator surcharges (tts_voices.surcharge_per_1k_credits, quoted in
+          // USD per 1,000 CREDITS) into $/1k chars inside ttsCost():
+          //   $/1k chars = modelRate + surcharge × creditsPerChar(model)
+          // e.g. SANTA ($0.15/1k credits) on flash → 0.11 + 0.15×0.5 = $0.185/1k.
+          creditsPerChar: {
+            'eleven_flash_v2_5': 0.5,
+            'eleven_turbo_v2_5': 0.5,
+            'eleven_multilingual_v2': 1.0,
+            default: 0.5
+          }
         },
     
         // Inworld TTS-2 (per 1M characters) - Added Jul 2026.
@@ -407,14 +423,21 @@
         return 0;
     }
 
-    /** USD cost of a TTS call. {provider, characters, voiceTier} → number.
-     *  voiceTier disambiguates Google (standard/wavenet/neural2) and OpenAI
-     *  (tts-1/tts-1-hd). ElevenLabs is flat per-1000-chars. */
-    function ttsCost({ provider, characters = 0, voiceTier }) {
+    /** USD cost of a TTS call. {provider, characters, voiceTier, model,
+     *  surchargePer1kCredits} → number. voiceTier disambiguates Google
+     *  (standard/wavenet/neural2) and OpenAI (tts-1/tts-1-hd). ElevenLabs is
+     *  per-1000-chars keyed by MODEL id (multilingual_v2 is 2× flash);
+     *  unknown/absent model → flash-rate default. surchargePer1kCredits is the
+     *  Voice Library creator surcharge (tts_voices.surcharge_per_1k_credits,
+     *  USD per 1,000 CREDITS) — converted via creditsPerChar(model). */
+    function ttsCost({ provider, characters = 0, voiceTier, model, surchargePer1kCredits = 0 }) {
         const row = TOKEN_COSTS.tts?.[provider];
         if (!row) return 0;
-        if (provider === 'elevenlabs' && typeof row.per1000Chars === 'number') {
-            return (characters / 1000) * row.per1000Chars;
+        if (provider === 'elevenlabs') {
+            const rate = typeof row[model] === 'number' ? row[model] : row.default;
+            if (typeof rate !== 'number') return 0;
+            const cpc = row.creditsPerChar?.[model] ?? row.creditsPerChar?.default ?? 0.5;
+            return (characters / 1000) * (rate + surchargePer1kCredits * cpc);
         }
         // Google / OpenAI: tiered per-1M-char rates keyed by voice/model.
         const tierKey = voiceTier || Object.keys(row).find(k => typeof row[k] === 'number');

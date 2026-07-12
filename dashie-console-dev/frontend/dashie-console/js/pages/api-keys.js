@@ -49,7 +49,7 @@ const ApiKeysPage = {
         },
         {
             id: 'hermes', name: 'Hermes',
-            help: 'API key for a self-hosted Hermes agent. Set its endpoint URL under Voice & AI → AI Model → “My own AI”.',
+            help: 'API key for your self-hosted Hermes agent. Set its endpoint URL under Voice & AI → AI Model → “Hermes Agent”.',
             fields: [{ id: 'key', label: 'API key', placeholder: '', secret: true }],
         },
     ],

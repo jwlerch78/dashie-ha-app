@@ -804,6 +804,8 @@ const DevicesDetailModals = {
         }
         // '' / unset = follow the account default voice (itself '' = the
         // personality's preferred voice). Same inherit sentinel as personality.
+        // Premium flag (John, 2026-07-12): ElevenLabs voices cost ~4× the
+        // default Dashie voice (Inworld) per character — mark them explicitly.
         const current = device.settings?.aiVoice?.voiceKey || '';
         const accountVoice = this._accountDefaults?.voiceKey
             ? this.voiceName(this._accountDefaults.voiceKey)
@@ -812,7 +814,9 @@ const DevicesDetailModals = {
             ['', `Account default${accountVoice ? ` (${accountVoice})` : ''}`],
             ...(this._voiceCatalog || []).map(v => {
                 const key = v.key || v.voice_key;
-                return [key, `${v.name || key}${v.gender ? ` · ${v.gender}` : ''}`];
+                const tier = v.provider === 'elevenlabs' ? ' · premium'
+                    : v.provider === 'inworld' ? ' · most economical' : '';
+                return [key, `${v.name || key}${v.gender ? ` · ${v.gender}` : ''}${tier}`];
             }),
         ];
         const body = `
@@ -822,6 +826,7 @@ const DevicesDetailModals = {
             </div>
             <div style="font-size: var(--font-size-sm); color: var(--text-muted);">
                 “Account default” follows the voice set on the <a href="#voice-ai" onclick="event.preventDefault(); App.navigate('voice-ai')">Voice &amp; AI</a> page; picking one here overrides it for this device only.
+                Premium voices cost about 4× the default Dashie voice per reply.
             </div>`;
         return this._modal('Voice', body, 'DevicesDetailModals.closeVoiceVoice()', this._applyToAllFooter());
     },

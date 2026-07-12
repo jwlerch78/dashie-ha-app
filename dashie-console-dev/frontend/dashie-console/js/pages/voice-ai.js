@@ -291,7 +291,8 @@ const VoiceAiPage = {
             'voice.sttProvider', 'voice.ttsProvider',
             'voice.searchSource', 'voice.sportsSource', 'voice.localLlmUrl', 'voice.localLlmModel',
             'voice.searxngUrl', 'voice.localTtsUrl', 'voice.localTtsVoiceId', 'voice.localSttUrl',
-            'voice.localLlmKey',   // BYO-model API key (Hermes/remote) — WS-I; read server-side by node-io.js
+            'voice.localLlmKey',   // BYO-model API key (remote endpoints) — WS-I; read server-side by node-io.js
+            'voice.hermesUrl',     // Hermes Agent endpoint — WS-I; key lives in the on-box key store (API Keys page)
             // engine-direct HA voice (detection-gated picker, build plan §8)
             'voice.haTtsEngineId', 'voice.haTtsVoiceId', 'voice.haSttEngineId'];
         if (dottedKey === 'ai.conversationTimeout') value = Number(rawValue);
@@ -327,7 +328,7 @@ const VoiceAiPage = {
         if (String(d['voice.controlMethod']) === 'voice_assistant') return 'ha_assist';
         const localVoice = String(d['voice.ttsProvider']) !== 'dashie_cloud'
             && String(d['voice.sttProvider']) !== 'dashie_cloud';
-        if (String(d['ai.model']) === 'local' && localVoice) return 'local';
+        if (['local', 'hermes'].includes(String(d['ai.model'])) && localVoice) return 'local';
         if (localVoice) return 'hybrid';
         return 'cloud';
     },
@@ -375,8 +376,12 @@ const VoiceAiPage = {
             // model (credits or BYO key — the key routing itself is Phase 2).
             // HA Assist has no Dashie brain → ai.model untouched.
             const model = String(d['ai.model'] || '');
-            if (id === 'local' && model !== 'local') this.saveDefault('ai.model', 'local');
-            if (id !== 'local' && model === 'local') this.saveDefault('ai.model', VoiceAiApi.DEFAULTS['ai.model']);
+            // 'local' and 'hermes' are both local-family sentinels — entering the
+            // Local preset must not clobber a Hermes choice, and leaving it resets
+            // either back to the cloud default.
+            const isLocalModel = model === 'local' || model === 'hermes';
+            if (id === 'local' && !isLocalModel) this.saveDefault('ai.model', 'local');
+            if (id !== 'local' && isLocalModel) this.saveDefault('ai.model', VoiceAiApi.DEFAULTS['ai.model']);
         }
         // Voice engines: seed only when the current provider contradicts the
         // preset (it would vanish from the filtered picker otherwise).
