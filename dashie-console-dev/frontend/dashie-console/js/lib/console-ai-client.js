@@ -296,6 +296,7 @@ const ConsoleAiClient = {
             'web_search', 'calendar_events', 'family_members', 'chores', 'rewards',
             'location_events', 'travel_time', 'family_locations', 'weather_data',
             'home_assistant', 'get_current_time', 'dashie_help', 'music',
+            'schedule_action',
         ]);
         if (parsed.type && KNOWN_TOOLS.has(parsed.type) && parsed.type !== 'info_request') {
             return {

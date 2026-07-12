@@ -2029,3 +2029,58 @@
     font-size: var(--font-size-sm);
     color: var(--text-primary);
 }
+
+/* ============ Info tooltip (ⓘ) ============ */
+/* Hover/focus disclosure for setting details — replaces always-visible subtext
+   on compact toggle rows (History tab consent toggles). */
+
+.info-tip {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 16px;
+    height: 16px;
+    border-radius: 50%;
+    background: var(--surface-muted, #f3f4f6);
+    border: 1px solid var(--border, #e5e7eb);
+    color: var(--text-muted);
+    font-size: 10px;
+    font-style: italic;
+    font-weight: 700;
+    font-family: Georgia, serif;
+    cursor: help;
+    position: relative;
+    vertical-align: -2px;
+    margin-left: 6px;
+    user-select: none;
+}
+
+.info-tip::after {
+    content: attr(data-tip);
+    position: absolute;
+    left: 50%;
+    top: calc(100% + 8px);
+    transform: translateX(-50%);
+    width: max-content;
+    max-width: min(320px, 78vw);
+    background: rgba(17, 24, 39, 0.96);
+    color: #fff;
+    padding: 8px 11px;
+    border-radius: 6px;
+    font-family: var(--font-family, inherit);
+    font-size: 12px;
+    font-style: normal;
+    font-weight: 400;
+    line-height: 1.5;
+    text-align: left;
+    white-space: normal;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.12s ease;
+    z-index: 60;
+}
+
+.info-tip:hover::after,
+.info-tip:focus::after {
+    opacity: 1;
+}

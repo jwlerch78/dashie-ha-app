@@ -110,15 +110,21 @@ const VoiceAiOptions = {
             // BYO-agent path (WS-I), not a generic endpoint. ai.model='hermes' is the
             // route signal (account-config.js treats it like 'local' → on-prem brain).
             // Its API key lives on the API Keys page (on-box key store), NOT here.
-            // installGuide links the upstream install docs until the Dashie Hermes
-            // add-on ships (then detection pre-fills the URL like Kokoro, WS-I.3/4).
+            // HA users: Install ↗ deep-links the Dashie Hermes add-on in THEIR HA
+            // (store slug = sha1('https://github.com/jwlerch78/dashie-ha-app')[:8]
+            // + '_dashie_hermes' — supervisor store/utils.py; repository_url makes
+            // the link work even before the repo is added). Non-HA users get the
+            // upstream install docs. Detection/pre-fill is the WS-I.3 follow-up.
             id: 'hermes',
             label: 'Hermes Agent (self-hosted)',
             group: 'Local',
             description: 'Nous Research’s open-source personal agent behind Dashie’s brain — persistent memory and self-built skills, running on your own hardware. Add its API key under API Keys.',
             locality: 'local',
             cost: 'Free',
-            installGuide: { url: 'https://hermes-agent.nousresearch.com/docs/getting-started/quickstart' },
+            installGuide: window.DashieAuth?.isHaUser
+                ? { url: 'https://my.home-assistant.io/redirect/supervisor_addon/?addon=01f10a62_dashie_hermes&repository_url=https%3A%2F%2Fgithub.com%2Fjwlerch78%2Fdashie-ha-app',
+                    label: 'Install add-on ↗' }
+                : { url: 'https://hermes-agent.nousresearch.com/docs/getting-started/quickstart' },
             configFields: [
                 { key: 'voice.hermesUrl', label: 'Hermes endpoint URL', placeholder: 'http://homeassistant.local:8642' },
             ],

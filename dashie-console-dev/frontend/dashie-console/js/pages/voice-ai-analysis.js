@@ -27,6 +27,10 @@ const VoiceAiAnalysis = {
     _error: null,
     _interactions: [],
     _retain: false,
+    // "Share to improve Dashie" consent (user_settings.share_for_improvement column,
+    // beta cohort). Layers on _retain; enabling runs a ConfirmModal consent pop-up.
+    _share: false,
+    _shareBusy: false,
     _clearing: false,
     _expanded: new Set(),
     _expandedDays: new Set(),    // 'YYYY-MM-DD' day groups that are open
@@ -57,6 +61,7 @@ const VoiceAiAnalysis = {
             await this._mergeLocalTranscripts(interactions);
             this._interactions = interactions;
             this._retain = log?.retain === true;
+            this._share = log?.share_for_improvement === true;
             this._loaded = true;
             // Default: current-month day rows visible, newest day expanded so the
             // most recent interactions show without a click (interactions are
@@ -85,10 +90,56 @@ const VoiceAiAnalysis = {
             // Write the authoritative column (not the blob) so a tablet full-blob
             // write can't reset it. See _TECHNICAL_DEBT.md (Option C).
             await DashieAuth.dbRequest('set_retain_transcripts', { enabled });
+            // Sharing layers on keep-history: turning history OFF also revokes
+            // improvement sharing (consent can't outlive the data it covers).
+            if (!enabled && this._share) {
+                this._share = false;
+                DashieAuth.dbRequest('set_share_for_improvement', { enabled: false }).catch(() => {});
+            }
             this.refresh();  // reload so the interaction list reflects the new state
         } catch (e) {
             this._retain = prev;
             Toast.error(`Couldn't update setting: ${e.message}`);
+            App.renderPage();
+        }
+    },
+
+    /** "Share to improve Dashie" (beta cohort). Enabling requires an explicit
+     *  consent confirmation (pop-up with the full details + policy link);
+     *  disabling is immediate — revoke = stop + remove past conversations
+     *  from the improvement corpus (enforced server-side at query time). */
+    async toggleShare(enabled) {
+        if (this._shareBusy || !this._retain) { App.renderPage(); return; }
+        if (enabled) {
+            const ok = await ConfirmModal.confirm({
+                title: 'Share conversations to improve Dashie',
+                messageHtml: `
+                    <p style="margin: 0 0 10px;">When on, your saved conversations — what you said, how
+                    Dashie answered, and which tools it used — may be reviewed by the Dashie team to
+                    improve Dashie’s voice AI.</p>
+                    <ul style="margin: 0 0 10px; padding-left: 18px;">
+                        <li>Calendar conversations are never shared.</li>
+                        <li>Turn this off any time to stop sharing and remove your past conversations
+                        from the improvement program.</li>
+                    </ul>
+                    <p style="margin: 0;"><a href="https://dashieapp.com/privacy-policy.html" target="_blank"
+                    rel="noopener">Privacy Policy ↗</a></p>`,
+                confirmLabel: 'Turn on sharing',
+            });
+            if (!ok) { App.renderPage(); return; }   // re-render resets the checkbox
+        }
+        const prev = this._share;
+        this._share = enabled;
+        this._shareBusy = true;
+        App.renderPage();
+        try {
+            await DashieAuth.dbRequest('set_share_for_improvement', { enabled });
+            if (!enabled) Toast.success('Sharing stopped — your conversations are out of the improvement program.');
+        } catch (e) {
+            this._share = prev;
+            Toast.error(`Couldn't update setting: ${e.message}`);
+        } finally {
+            this._shareBusy = false;
             App.renderPage();
         }
     },
@@ -151,23 +202,40 @@ const VoiceAiAnalysis = {
         return `<div style="max-width: 760px;">${this._renderHeader()}${inner}</div>`;
     },
 
+    /** ⓘ hover/focus tooltip (css .info-tip). Details live here instead of subtext. */
+    _infoTip(text) {
+        return `<span class="info-tip" tabindex="0" data-tip="${this._escape(text)}">i</span>`;
+    },
+
     _renderHeader() {
         const on = this._retain;
+        const retainTip = 'When on, Dashie keeps what you said and how it answered so you can review them here. '
+            + 'Cloud accounts store this securely; Home Assistant kiosks keep it on your own HA box.';
+        const shareTip = 'Off by default. When on, your saved conversations — what you said, how Dashie answered, '
+            + 'and which tools it used — may be reviewed by the Dashie team to improve Dashie’s voice AI. '
+            + 'Calendar conversations are never shared. Turn this off any time to stop sharing and remove your '
+            + 'past conversations from the improvement program. Requires “Save conversation details”.';
+        // Beta cohort only (FeatureGate ladder) — the hand-selected group that already has Voice & AI.
+        const shareVisible = typeof FeatureGate !== 'undefined' && FeatureGate.isBetaUser();
+        const shareRow = shareVisible ? `
+                <div style="display: flex; justify-content: space-between; align-items: center; gap: 16px; margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--border, #e5e7eb);">
+                    <div style="font-weight: 600;">Share conversations to improve Dashie${this._infoTip(shareTip)}</div>
+                    <label class="toggle" style="flex-shrink: 0;${on ? '' : ' opacity: 0.45;'}">
+                        <input type="checkbox" ${this._share ? 'checked' : ''} ${(!on || this._shareBusy) ? 'disabled' : ''}
+                            onchange="VoiceAiAnalysis.toggleShare(this.checked)">
+                        <span class="toggle-slider"></span>
+                    </label>
+                </div>` : '';
         return `
             <div class="card" style="margin-bottom: 16px;"><div class="card-body">
-                <div style="display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; flex-wrap: wrap;">
-                    <div style="flex: 1; min-width: 240px;">
-                        <div style="font-weight: 600; margin-bottom: 4px;">Save conversation details</div>
-                        <div style="color: var(--text-secondary); font-size: 13px; line-height: 1.5;">
-                            When on, Dashie keeps what you said and how it answered so you can review them here.
-                            Cloud accounts store this securely; Home Assistant kiosks keep it on your own HA box.
-                        </div>
-                    </div>
+                <div style="display: flex; justify-content: space-between; align-items: center; gap: 16px;">
+                    <div style="font-weight: 600;">Save conversation details${this._infoTip(retainTip)}</div>
                     <label class="toggle" style="flex-shrink: 0;">
                         <input type="checkbox" ${on ? 'checked' : ''} onchange="VoiceAiAnalysis.toggleRetain(this.checked)">
                         <span class="toggle-slider"></span>
                     </label>
                 </div>
+                ${shareRow}
                 <div style="margin-top: 12px; display: flex; justify-content: flex-end;">
                     <button class="btn btn-secondary btn-sm" ${this._clearing ? 'disabled' : ''}
                         onclick="VoiceAiAnalysis.clearHistory()">

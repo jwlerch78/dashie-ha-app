@@ -235,7 +235,8 @@ const AccountUsage = {
 
     /** Display name for a summary line. Web/image-search rows read as the tool
      *  name; TTS/STT rows carry their direction so the merged Speech section
-     *  stays legible ("elevenlabs (TTS)" / "nova-3-streaming (STT)"). */
+     *  stays legible ("elevenlabs (TTS)" / "nova-3-streaming (STT)"). BYOK rows
+     *  (user's own provider key — recorded, never charged) get "(API key)". */
     _summaryItemName(r) {
         if (r.service === 'web_search' || r.service === 'image_search') {
             const p = r.provider ? r.provider.charAt(0).toUpperCase() + r.provider.slice(1) : (r.service === 'image_search' ? 'Image' : 'Web');
@@ -244,7 +245,8 @@ const AccountUsage = {
         if (r.service === 'tts' || r.service === 'stt') {
             return `${r.model || r.provider || '—'} (${r.service.toUpperCase()})`;
         }
-        return r.model || r.provider || '—';
+        const name = r.model || r.provider || '—';
+        return r.byok ? `${name} (API key)` : name;
     },
 
     // ── admin form ────────────────────────────────────────────
@@ -534,16 +536,19 @@ const AccountUsage = {
         const out = [];
         const baseByModel = new Map();
         const textRows = [];
+        // Key includes byok so a metered row and an API-key row of the same
+        // model never merge (they're separate summary groups server-side too).
+        const keyOf = (r) => `${r.model}|${r.byok ? 'byok' : ''}`;
         for (const r of rows) {
             if (r.service === 'ai' && typeof r.model === 'string' && r.model.endsWith(':text')) {
                 textRows.push(r);
                 continue;
             }
-            if (r.service === 'ai' && r.model) baseByModel.set(r.model, { ...r });
-            out.push(r.service === 'ai' && r.model ? baseByModel.get(r.model) : r);
+            if (r.service === 'ai' && r.model) baseByModel.set(keyOf(r), { ...r });
+            out.push(r.service === 'ai' && r.model ? baseByModel.get(keyOf(r)) : r);
         }
         for (const t of textRows) {
-            const base = baseByModel.get(t.model.slice(0, -':text'.length));
+            const base = baseByModel.get(keyOf({ ...t, model: t.model.slice(0, -':text'.length) }));
             if (!base) { out.push(t); continue; }   // orphan — show rather than hide
             base.actual_cost_usd = (Number(base.actual_cost_usd) || 0) + (Number(t.actual_cost_usd) || 0);
             base.input_tokens = (base.input_tokens || 0) + (t.input_tokens || 0);
@@ -553,7 +558,8 @@ const AccountUsage = {
     },
 
     _summaryItemRow(r) {
-        const cost = this._costForRow(r);
+        // BYOK rows never debit — show the marker, not a misleading $0.00.
+        const costCell = r.byok ? 'API key' : this._fmtCost(this._costForRow(r));
         const subtitle = r.service === 'ai'
             ? `${this._fmtCount(r.input_tokens)} in / ${this._fmtCount(r.output_tokens)} out`
             : (r.service === 'web_search' || r.service === 'image_search')
@@ -564,7 +570,7 @@ const AccountUsage = {
                 <td style="padding: 8px 12px 8px 36px; font-size: 13px; width: 35%;">${this._escape(this._summaryItemName(r))}</td>
                 <td style="padding: 8px 12px; font-size: 12px; color: var(--text-muted);">${this._escape(r.provider || '')}</td>
                 <td style="padding: 8px 12px; font-size: 12px; color: var(--text-muted); text-align: right;">${this._fmtCount(r.call_count)} · ${this._escape(subtitle)}</td>
-                <td style="padding: 8px 12px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; text-align: right;">${this._fmtCost(cost)}</td>
+                <td style="padding: 8px 12px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; text-align: right;">${this._escape(costCell)}</td>
             </tr>`;
     },
 
@@ -834,8 +840,10 @@ const AccountUsage = {
     },
 
     /** Realtime "conversation mode" interaction: collapse the per-modality
-     *  token_usage rows into two billing lines — Voice (the audio model) and
-     *  Text (the `:text` model) — and show the conversation transcript as turns. */
+     *  token_usage rows (audio model + `:text` companion) into ONE "AI" billing
+     *  line — the modality split is a billing detail, not something the user
+     *  should have to decode (John, 2026-07-12) — and show the conversation
+     *  transcript as turns. */
     _renderRealtimeInteractionRow(intr, items, total, open, caret, time) {
         const isText = (m) => typeof m === 'string' && m.endsWith(':text');
         const roll = (filterFn) => items.filter(filterFn).reduce((a, c) => ({
@@ -843,10 +851,9 @@ const AccountUsage = {
             inTok: a.inTok + (c.input_tokens || 0),
             outTok: a.outTok + (c.output_tokens || 0),
         }), { cost: 0, inTok: 0, outTok: 0 });
-        // Voice/Text rollup covers only the AI token rows. Tool calls (image/web
-        // search) are discrete — render each as its own row, like a normal turn.
-        const voice = roll(c => c.service === 'ai' && !isText(c.model));
-        const text = roll(c => c.service === 'ai' && isText(c.model));
+        // One AI rollup over all the token rows. Tool calls (image/web search)
+        // are discrete — render each as its own row, like a normal turn.
+        const ai = roll(c => c.service === 'ai');
         const toolItems = items.filter(c => c.service !== 'ai');
         const turns = intr.turns || [];
         const turnCount = turns.length || items.filter(c => c.service === 'ai' && !isText(c.model)).length;
@@ -862,8 +869,7 @@ const AccountUsage = {
             ? `<div style="padding-left: 24px;">
                  ${this._renderRealtimeTranscript(turns)}
                  <table style="width: 100%; border-collapse: collapse; font-size: 12px; margin: 0 0 6px;"><tbody>
-                    ${has(voice) ? rollupRow('Voice', voice) : ''}
-                    ${has(text) ? rollupRow('Text', text) : ''}
+                    ${has(ai) ? rollupRow('AI', ai) : ''}
                     ${toolItems.map(c => this._renderCallRow(c)).join('')}
                  </tbody></table>
                </div>`
@@ -920,7 +926,7 @@ const AccountUsage = {
         // Per-call time is redundant — the interaction header already shows it
         // (every pass of one turn lands within the same minute).
         const desc = c.service === 'ai'
-            ? `${this._escape(c.model || '—')} (${this._fmtCount(c.input_tokens)} in / ${this._fmtCount(c.output_tokens)} out)`
+            ? `${this._escape(c.model || '—')}${c.byok ? ' (API key)' : ''} (${this._fmtCount(c.input_tokens)} in / ${this._fmtCount(c.output_tokens)} out)`
             : c.service === 'web_search'
                 ? `${this._escape(c.provider || '')} (${this._fmtCount(c.result_count || 0)} results)`
                 : c.service === 'image_search'
@@ -935,7 +941,7 @@ const AccountUsage = {
             <tr>
                 <td style="padding: 4px 0; color: var(--text-muted); width: 60px; text-transform: uppercase; font-size: 10px; letter-spacing: 0.5px;">${this._escape(this._svcLabel(c.service))}</td>
                 <td style="padding: 4px 8px;">${desc}</td>
-                <td style="padding: 4px 0; text-align: right; font-family: ui-monospace, SFMono-Regular, Menlo, monospace;">${this._fmtCost3(cost)}</td>
+                <td style="padding: 4px 0; text-align: right; font-family: ui-monospace, SFMono-Regular, Menlo, monospace;">${c.byok ? 'API key' : this._fmtCost3(cost)}</td>
             </tr>`;
     },
 

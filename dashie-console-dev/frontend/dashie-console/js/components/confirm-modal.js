@@ -27,6 +27,8 @@ const ConfirmModal = {
      * @param {Object} opts
      * @param {string} opts.title         - Header text
      * @param {string} opts.message       - Body text (rendered as text, not HTML)
+     * @param {string} [opts.messageHtml]  - TRUSTED body markup (links, lists). Takes
+     *        precedence over message. Never pass user-generated content here.
      * @param {string} [opts.confirmLabel='Confirm']
      * @param {string} [opts.cancelLabel='Cancel']
      * @param {boolean} [opts.danger=false] - styles the confirm button as destructive
@@ -55,6 +57,7 @@ const ConfirmModal = {
     _render({
         title = 'Confirm',
         message = '',
+        messageHtml = null,
         confirmLabel = 'Confirm',
         cancelLabel = 'Cancel',
         danger = false,
@@ -80,7 +83,7 @@ const ConfirmModal = {
         root.innerHTML = `
             <div role="dialog" aria-modal="true" aria-labelledby="confirm-title" style="background: var(--bg-card, #fff); border-radius: 12px; max-width: 460px; width: 100%; box-shadow: 0 20px 60px rgba(0,0,0,0.3); padding: 20px;">
                 <h2 id="confirm-title" style="margin: 0 0 8px 0; font-size: 17px;">${this._escape(title)}</h2>
-                <div style="color: var(--text-secondary); font-size: 14px; line-height: 1.5; margin-bottom: 20px; white-space: pre-line;">${this._escape(message)}</div>
+                <div style="color: var(--text-secondary); font-size: 14px; line-height: 1.5; margin-bottom: 20px; white-space: pre-line;">${messageHtml != null ? messageHtml : this._escape(message)}</div>
                 ${typedSection}
                 <div style="display: flex; gap: 8px; justify-content: flex-end;">
                     <button class="btn btn-ghost" data-confirm-action="cancel">${this._escape(cancelLabel)}</button>
