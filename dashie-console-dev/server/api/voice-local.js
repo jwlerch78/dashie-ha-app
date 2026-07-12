@@ -13,6 +13,7 @@
 const express = require('express');
 const auth = require('../auth');
 const { getAccountVoiceConfig } = require('../account-config');
+const keyStore = require('../key-store');
 const { createNodeIO } = require('../brain/node-io');
 const brain = require('../brain/voice-brain.bundle.js');
 const { detectVoiceEngines } = require('../voice-engines');
@@ -24,6 +25,30 @@ const router = express.Router();
 // path (§16.7); env stays as a local-dev / pre-config fallback.
 const ENV_ENDPOINT = process.env.LOCAL_LLM_ENDPOINT || 'http://localhost:11434';
 const ENV_MODEL = process.env.LOCAL_LLM_MODEL || 'qwen2.5:3b';
+
+// Hermes Agent (ai.model='hermes', WS-I): its OpenAI-compat API server takes the fixed
+// model id 'hermes-agent' (docs: website/docs/user-guide/features/api-server.md) and
+// requires a bearer (API_SERVER_KEY) — read from the on-box key store, not user_settings.
+const HERMES_MODEL_ID = 'hermes-agent';
+
+/** Resolve the LAN inference target for the account: the dedicated Hermes row or the
+ *  generic BYO endpoint. One resolver so /converse-local and /local-status agree. */
+function resolveLanTarget(acct) {
+  if (acct.model === 'hermes') {
+    return {
+      endpoint: acct.hermesUrl || '',
+      model: HERMES_MODEL_ID,
+      key: keyStore.readKeys().hermes?.key || '',
+      source: acct.hermesUrl ? 'hermes' : 'hermes_unconfigured',
+    };
+  }
+  return {
+    endpoint: acct.localLlmUrl || ENV_ENDPOINT,
+    model: acct.localLlmModel || ENV_MODEL,
+    key: acct.localLlmKey || '',
+    source: acct.localLlmUrl ? 'account' : 'env',
+  };
+}
 
 router.post('/converse-local', express.json(), async (req, res) => {
   // Local inference stays on the LAN — nothing leaves the network and no account credential is
@@ -52,10 +77,16 @@ router.post('/converse-local', express.json(), async (req, res) => {
   // Resolve the LAN target: account config (Console) → env → default. Request options.model
   // still wins (per-turn override, e.g. the test harness).
   const acct = await getAccountVoiceConfig();
-  const endpoint = acct.localLlmUrl || ENV_ENDPOINT;
-  const model = (body.options && body.options.model) || acct.localLlmModel || ENV_MODEL;
-  const key = acct.localLlmKey || '';   // BYO-model bearer (Hermes/remote) — WS-I
-  const io = createNodeIO({ endpoint, model, key });
+  const target = resolveLanTarget(acct);
+  if (!target.endpoint) {
+    // Explicit, never a silent fallback to the metered cloud brain (WS-I.8).
+    return res.status(503).json({
+      error: 'local_brain_unconfigured',
+      message: 'Hermes is selected but no endpoint URL is set. Add it under Voice & AI → AI Model → Hermes Agent.',
+    });
+  }
+  const model = (body.options && body.options.model) || target.model;
+  const io = createNodeIO({ endpoint: target.endpoint, model, key: target.key });
 
   const brainReq = {
     text: body.text,
@@ -80,13 +111,15 @@ router.post('/converse-local', express.json(), async (req, res) => {
 // config if set, else the env/default fallback).
 router.get('/local-status', async (req, res) => {
   const acct = await getAccountVoiceConfig();
+  const target = resolveLanTarget(acct);
   res.json({
     ok: true,
     brain_source_sha: brain.BRAIN_SOURCE_SHA || null,
     route: acct.route,
-    endpoint: acct.localLlmUrl || ENV_ENDPOINT,
-    model: acct.localLlmModel || ENV_MODEL,
-    source: acct.localLlmUrl ? 'account' : 'env',
+    endpoint: target.endpoint,
+    model: target.model,
+    source: target.source,
+    key_set: !!target.key,   // never the key itself
   });
 });
 

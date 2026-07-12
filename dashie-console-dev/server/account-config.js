@@ -6,8 +6,10 @@
 //   - /api/voice/converse-local → endpoint + model for the LAN inference call (M6)
 //   - /api/internal/voice-config → the route the integration should take (M7)
 //
-// The "is this account on a local model?" decision lives here: ai.model === 'local' (the sentinel
-// the Console writes for the "My Local LLM" option) → route 'local'; anything else → 'cloud'.
+// The "is this account on a local model?" decision lives here: ai.model === 'local' (the generic
+// "My own AI" endpoint row) or 'hermes' (the dedicated Hermes Agent row, WS-I) → route 'local';
+// anything else → 'cloud'. Both are local-family sentinels: the model runs on the user's own
+// hardware and the cloud edge fn can't reach it.
 
 const auth = require('./auth');
 const { SUPABASE } = require('./config');
@@ -15,7 +17,7 @@ const { SUPABASE } = require('./config');
 const TTL_MS = 30_000; // user_settings changes rarely; a short cache keeps converse latency low.
 let _cache = null; // { at, value }
 
-const SAFE_DEFAULT = { model: null, route: 'cloud', localLlmUrl: '', localLlmModel: '', localLlmKey: '', retainTranscripts: false, agentMode: '', retrievePictures: null, defaultPersonalityId: '', defaultVoiceKey: '', defaultWakeWord: '' };
+const SAFE_DEFAULT = { model: null, route: 'cloud', localLlmUrl: '', localLlmModel: '', localLlmKey: '', hermesUrl: '', retainTranscripts: false, agentMode: '', retrievePictures: null, defaultPersonalityId: '', defaultVoiceKey: '', defaultWakeWord: '' };
 
 /**
  * Resolve the account's voice routing config.
@@ -43,13 +45,16 @@ async function getAccountVoiceConfig() {
         const model = settings?.ai?.model || null;
         value = {
           model,
-          route: model === 'local' ? 'local' : 'cloud',
+          route: (model === 'local' || model === 'hermes') ? 'local' : 'cloud',
           localLlmUrl: settings?.voice?.localLlmUrl || '',
           localLlmModel: settings?.voice?.localLlmModel || '',
-          // BYO-model API key (WS-I) — bearer for a Hermes/remote OpenAI-compatible
+          // BYO-model API key (WS-I) — bearer for a remote OpenAI-compatible
           // endpoint. Console-only key (user_settings.voice.localLlmKey); passed to
           // node-io.js. Blank for keyless local Ollama/llama.cpp.
           localLlmKey: settings?.voice?.localLlmKey || '',
+          // Hermes Agent endpoint (dedicated row, ai.model='hermes'). Its API key is
+          // NOT in user_settings — it lives in the on-box key store ('hermes' provider).
+          hermesUrl: settings?.voice?.hermesUrl || '',
           retainTranscripts: row.retain_transcripts === true,
           // Household conversation agent mode (live|dialog|single) — the console's Voice & AI
           // page writes user_settings.voice.agentMode (ACCOUNT_VOICE_KEYS). Carried to
