@@ -683,6 +683,7 @@ const DevicesPage = {
             ${DevicesDetailModals.renderSleepModal()}
             ${DevicesDetailModals.renderThemeModal()}
             ${DevicesDetailModals.renderVoicePersonalityModal()}
+            ${DevicesDetailModals.renderVoiceVoiceModal()}
             ${DevicesDetailModals.renderPhotosModal()}
         `;
     },

@@ -36,6 +36,11 @@ const VoiceAiPresetPicker = {
     _card(p, selected, available, isAddonMode) {
         const O = window.VoiceAiOptions;
         const costColor = p.needsCreditsOrKey ? O.COLOR.cloud : O.COLOR.local;
+        // Mixed presets color each tagline half by its locality (Hybrid:
+        // "Cloud AI" orange · "local voice" green); others use one color.
+        const tagline = Array.isArray(p.taglineParts)
+            ? p.taglineParts.map(t => `<span style="color: ${O.COLOR[t.locality] || costColor};">${this._esc(t.text)}</span>`).join(' · ')
+            : `<span style="color: ${costColor};">${this._esc(p.tagline)}</span>`;
         const ring = selected
             ? `box-shadow: 0 0 0 2px var(--accent); border-color: var(--accent);`
             : '';
@@ -56,7 +61,7 @@ const VoiceAiPresetPicker = {
                     <div style="font-weight: 700; font-size: 14px;">${this._esc(p.label)}</div>
                     ${check}
                 </div>
-                <div style="font-size: 11px; font-weight: 600; color: ${costColor}; margin-top: 2px;">${this._esc(p.tagline)}</div>
+                <div style="font-size: 11px; font-weight: 600; margin-top: 2px;">${tagline}</div>
                 <div style="font-size: 11px; color: var(--text-muted); margin-top: 6px; line-height: 1.45;">${this._esc(p.description)}</div>
                 <div style="font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 10px; color: var(--text-muted); margin-top: 8px;">${this._esc(p.cost)}</div>
                 ${prompt}

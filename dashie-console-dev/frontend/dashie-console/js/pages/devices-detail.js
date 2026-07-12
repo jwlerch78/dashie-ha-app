@@ -122,6 +122,7 @@ const DevicesDetail = {
             ${DevicesDetailModals.renderScreensaverModal()}
             ${DevicesDetailModals.renderAdvancedDisplayModal()}
             ${DevicesDetailModals.renderVoicePersonalityModal()}
+            ${DevicesDetailModals.renderVoiceVoiceModal()}
             ${DevicesDetailModals.renderWakeWordModal()}
             ${DevicesDetailModals.renderPinModal()}
         `;
@@ -632,7 +633,9 @@ const DevicesDetail = {
     _renderVoiceSection(device, aiVoice, voice) {
         const idAttr = DevicesPage._escape(device.device_id);
         const voiceEnabled = voice.enabled !== false;
-        const personality = aiVoice.personalityId || aiVoice['aiVoice.personality'] || 'dashie';
+        // Unset = follows the account default (WS-G) — personalityName('')
+        // renders it as "Account default".
+        const personality = aiVoice.personalityId || aiVoice['aiVoice.personality'] || '';
         // Resolve id → catalog name (handles custom-personality uuids + multi-word
         // built-in names); falls back to a prettified id until the catalog loads.
         const personalityLabel = DevicesDetailModals.personalityName(personality);
@@ -644,12 +647,22 @@ const DevicesDetail = {
             ? (DevicesDetailModals.WAKE_WORDS.find(([v]) => v === wakeWordValue)?.[1] || wakeWordValue)
             : '—';
 
+        // Voice (aiVoice.voiceKey) — separate from personality (WS-G): unset =
+        // account default; a fixed-voice effective personality locks it.
+        const effP = DevicesDetailModals.personalityRecord(DevicesDetailModals.effectivePersonalityId(device));
+        const voiceKey = aiVoice.voiceKey || '';
+        const voiceLabel = (effP && effP.voice_mode === 'fixed')
+            ? `${DevicesDetailModals.voiceName(effP.voice)} (locked)`
+            : (voiceKey ? DevicesDetailModals.voiceName(voiceKey) : 'Account default');
+
         const rows = [
             DevicesDetailModals._toggleRow(device, 'voice', 'enabled', 'Enable Voice', voiceEnabled),
             DevicesDetailModals._summaryRow('Wake Word', wakeWordLabel,
                 `DevicesDetailModals.openWakeWord('${idAttr}')`),
             DevicesDetailModals._summaryRow('Personality', personalityLabel,
                 `DevicesDetailModals.openVoicePersonality('${idAttr}')`),
+            DevicesDetailModals._summaryRow('Voice', voiceLabel,
+                `DevicesDetailModals.openVoiceVoice('${idAttr}')`),
         ].join('');
 
         return this._section('voice-ai', 'Voice & AI', `

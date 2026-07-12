@@ -41,6 +41,9 @@ const VoiceAiOptions = {
           description: 'Premium cloud AI and voices, ready out of the box.' },
         { id: 'hybrid', label: 'Hybrid', locality: 'mixed', cost: 'Credits or your AI key', needsCreditsOrKey: true,
           tagline: 'Cloud AI · local voice',
+          // Two-tone tagline: the cloud half renders in the cloud swatch, the
+          // local half in the local swatch (picker falls back to `tagline`).
+          taglineParts: [{ text: 'Cloud AI', locality: 'cloud' }, { text: 'local voice', locality: 'local' }],
           description: 'Cloud-quality AI with free, private voice engines on your own hardware.' },
         { id: 'local', label: 'Local', locality: 'local', cost: 'Free',
           tagline: 'Free & private',

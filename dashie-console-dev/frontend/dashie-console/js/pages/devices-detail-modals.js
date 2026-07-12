@@ -636,6 +636,7 @@ const DevicesDetailModals = {
     // custom). Cached for the session; prefetched by DevicesPage on load.
 
     _personalityCatalog: null,  // [[id, name], …] templates (by key) + custom (by uuid)
+    _personalityRecords: null,  // raw rows (voice_mode/voice) — for the voice-lock check (WS-G)
 
     async loadPersonalityCatalog() {
         if (this._personalityCatalog || typeof VoiceAiApi === 'undefined') return this._personalityCatalog;
@@ -645,23 +646,72 @@ const DevicesDetailModals = {
                 VoiceAiApi.listCustom().catch(() => []),
             ]);
             const opts = [];
+            const records = new Map();
             for (const t of templates || []) {
                 const key = t.key || t.id;
-                if (key) opts.push([String(key), t.name || DevicesDetail._titleCase(key)]);
+                if (!key) continue;
+                opts.push([String(key), t.name || DevicesDetail._titleCase(key)]);
+                records.set(String(key), t);
             }
             for (const c of custom || []) {
-                if (c.id) opts.push([String(c.id), c.name || 'Custom personality']);
+                if (!c.id) continue;
+                opts.push([String(c.id), c.name || 'Custom personality']);
+                records.set(String(c.id), c);
             }
             this._personalityCatalog = opts;
-        } catch { this._personalityCatalog = []; }
+            this._personalityRecords = records;
+        } catch { this._personalityCatalog = []; this._personalityRecords = new Map(); }
         return this._personalityCatalog;
+    },
+
+    personalityRecord(id) {
+        return (this._personalityRecords || new Map()).get(String(id)) || null;
+    },
+
+    // ── Voice catalog + account defaults (shared by the WS-G modals) ──
+
+    _voiceCatalog: null,          // tts_voices rows ({key, name, gender, …})
+    _accountDefaults: null,       // { personalityId, voiceKey } — ai.default*
+
+    async _loadVoiceCatalog() {
+        if (this._voiceCatalog || typeof VoiceAiApi === 'undefined') return this._voiceCatalog;
+        try { this._voiceCatalog = await VoiceAiApi.listVoices(); }
+        catch { this._voiceCatalog = []; }
+        return this._voiceCatalog;
+    },
+
+    async _loadAccountDefaults() {
+        try {
+            const d = await VoiceAiApi.loadAiDefaults();
+            this._accountDefaults = {
+                personalityId: String(d['ai.defaultPersonalityId'] || 'dashie'),
+                voiceKey: String(d['ai.defaultVoiceKey'] || ''),
+            };
+        } catch { /* labels render without names */ }
+        return this._accountDefaults;
+    },
+
+    /** Resolve a voice key → display name (falls back to a prettified key). */
+    voiceName(key) {
+        if (!key) return '';
+        const v = (this._voiceCatalog || []).find(x => (x.key || x.voice_key) === key);
+        return v?.name || (key.charAt(0) + key.slice(1).toLowerCase());
+    },
+
+    /** The personality a device EFFECTIVELY runs: its own override, else the
+     *  account default (WS-G resolution rule — mirrored here for display/lock). */
+    effectivePersonalityId(device) {
+        return device.settings?.aiVoice?.personalityId
+            || this._accountDefaults?.personalityId
+            || 'dashie';
     },
 
     /** Resolve a stored personalityId → display name. Falls back to a prettified
      *  id when the catalog hasn't loaded yet or the id is unknown (e.g. a custom
-     *  personality that was deleted). Returns 'Default' for an empty id. */
+     *  personality that was deleted). An empty id = the device follows the
+     *  account default (WS-G unset-=-inherit). */
     personalityName(id) {
-        if (!id) return 'Default';
+        if (!id) return 'Account default';
         const hit = (this._personalityCatalog || []).find(([v]) => v === String(id));
         return hit ? hit[1] : DevicesDetail._titleCase(id);
     },
@@ -676,11 +726,10 @@ const DevicesDetailModals = {
         this._personalityOpen = true;
         this._personalityDeviceId = deviceId;
         App.renderPage();
-        // Lazy-load the account's personality catalog if it wasn't prefetched.
-        if (!this._personalityCatalog) {
-            await this.loadPersonalityCatalog();
-            App.renderPage();
-        }
+        // Lazy-load the personality catalog + the account defaults (labels the
+        // "Account default (<name>)" inherit option). Best-effort.
+        await Promise.all([this.loadPersonalityCatalog(), this._loadAccountDefaults()]);
+        App.renderPage();
     },
 
     closeVoicePersonality() { this._personalityOpen = false; App.renderPage(); },
@@ -689,12 +738,17 @@ const DevicesDetailModals = {
         if (!this._personalityOpen) return '';
         const device = DevicesPage._findDevice(this._personalityDeviceId);
         if (!device) return '';
-        const current = device.settings?.aiVoice?.personalityId || 'dashie';
+        // '' / unset = follow the account default (WS-G). Runtime resolution is
+        // device ?? account default; until Round B ships it, an inheriting
+        // device behaves as the app default (Dashie).
+        const current = device.settings?.aiVoice?.personalityId || '';
+        const defaultName = this._accountDefaults?.personalityId
+            ? ` (${this.personalityName(this._accountDefaults.personalityId)})` : '';
         // Ensure the currently-stored personality is always selectable, even if
         // the catalog is still loading or the id is no longer in the catalog —
         // otherwise the <select> would silently snap to the first option and a
         // stray change-event could overwrite a valid value.
-        const catalog = this._personalityCatalog || [];
+        const catalog = [['', `Account default${defaultName}`], ...(this._personalityCatalog || [])];
         const options = catalog.some(([v]) => v === String(current))
             ? catalog
             : [[String(current), this.personalityName(current)], ...catalog];
@@ -704,10 +758,72 @@ const DevicesDetailModals = {
                 ${DevicesDetail._settingSelectRaw(device, 'aiVoice', 'personalityId', String(current), options)}
             </div>
             <div style="font-size: var(--font-size-sm); color: var(--text-muted);">
-                Manage personalities (create, edit) on the <a href="#voice-ai" onclick="event.preventDefault(); App.navigate('voice-ai')">Voice & AI</a> page.
+                “Account default” follows the personality set on the <a href="#voice-ai" onclick="event.preventDefault(); App.navigate('voice-ai')">Voice & AI</a> page; picking one here overrides it for this device only.
             </div>
         `;
         return this._modal('Personality', body, 'DevicesDetailModals.closeVoicePersonality()', this._applyToAllFooter());
+    },
+
+    // ── Voice picker (device-level aiVoice.voiceKey — WS-G) ───────
+    // Separate from personality: the device speaks the account default voice
+    // unless overridden here. Voice lock wins — when the device's EFFECTIVE
+    // personality (override ?? account default) fixes its voice, there is no
+    // picker, just the locked explanation.
+
+    _voiceOpen: false,
+    _voiceDeviceId: null,
+
+    async openVoiceVoice(deviceId) {
+        this._applyAllArmed = false;
+        this._voiceOpen = true;
+        this._voiceDeviceId = deviceId;
+        App.renderPage();
+        await Promise.all([this.loadPersonalityCatalog(), this._loadVoiceCatalog(), this._loadAccountDefaults()]);
+        App.renderPage();
+    },
+
+    closeVoiceVoice() { this._voiceOpen = false; App.renderPage(); },
+
+    renderVoiceVoiceModal() {
+        if (!this._voiceOpen) return '';
+        const device = DevicesPage._findDevice(this._voiceDeviceId);
+        if (!device) return '';
+        const effectiveId = this.effectivePersonalityId(device);
+        const p = this.personalityRecord(effectiveId);
+        if (p && p.voice_mode === 'fixed') {
+            const body = `
+                <div style="font-size: 14px; margin-bottom: 8px;">
+                    ${DevicesPage._escape(this.voiceName(p.voice))}
+                    <span style="font-size: 11px; font-weight: 600; color: var(--text-muted); background: var(--bg-muted, #f4f4f5); border-radius: 999px; padding: 2px 8px; margin-left: 8px;">locked by ${DevicesPage._escape(p.name || 'personality')}</span>
+                </div>
+                <div style="font-size: var(--font-size-sm); color: var(--text-muted);">
+                    ${DevicesPage._escape(p.name || 'This personality')} always speaks in this voice.
+                    Choose a voice-flexible personality (here or on the Voice &amp; AI page) to pick a voice.
+                </div>`;
+            return this._modal('Voice', body, 'DevicesDetailModals.closeVoiceVoice()');
+        }
+        // '' / unset = follow the account default voice (itself '' = the
+        // personality's preferred voice). Same inherit sentinel as personality.
+        const current = device.settings?.aiVoice?.voiceKey || '';
+        const accountVoice = this._accountDefaults?.voiceKey
+            ? this.voiceName(this._accountDefaults.voiceKey)
+            : (p?.voice ? this.voiceName(p.voice) : '');
+        const options = [
+            ['', `Account default${accountVoice ? ` (${accountVoice})` : ''}`],
+            ...(this._voiceCatalog || []).map(v => {
+                const key = v.key || v.voice_key;
+                return [key, `${v.name || key}${v.gender ? ` · ${v.gender}` : ''}`];
+            }),
+        ];
+        const body = `
+            <div class="form-group">
+                <label class="form-label">Voice</label>
+                ${DevicesDetail._settingSelectRaw(device, 'aiVoice', 'voiceKey', String(current), options)}
+            </div>
+            <div style="font-size: var(--font-size-sm); color: var(--text-muted);">
+                “Account default” follows the voice set on the <a href="#voice-ai" onclick="event.preventDefault(); App.navigate('voice-ai')">Voice &amp; AI</a> page; picking one here overrides it for this device only.
+            </div>`;
+        return this._modal('Voice', body, 'DevicesDetailModals.closeVoiceVoice()', this._applyToAllFooter());
     },
 
     // ── Photos picker (device-level photos.sourceType + album) ────
@@ -1051,6 +1167,7 @@ const DevicesDetailModals = {
         theme:       { idKey: '_themeDeviceId',       keys: [['display', 'themeFamily'], ['display', 'darkMode']] },
         sleep:       { idKey: '_sleepDeviceId',       keys: [['sleep', 'enabled'], ['sleep', 'sleepMethod'], ['sleep', 'sleepTime'], ['sleep', 'wakeTime'], ['sleep', 'resleepTimeout'], ['sleep', 'inactivityTimeout']] },
         personality: { idKey: '_personalityDeviceId', keys: [['aiVoice', 'personalityId'], ['aiVoice', 'voiceKey']] },
+        voice:       { idKey: '_voiceDeviceId',       keys: [['aiVoice', 'voiceKey']] },
         photos:      { idKey: '_photosDeviceId',      keys: [['photos', 'sourceType'], ['photos', 'albumId'], ['photos', 'albumName'], ['photos', 'slideshowInterval']] },
     },
 
@@ -1059,6 +1176,7 @@ const DevicesDetailModals = {
         if (this._themeOpen)       return this._APPLY_ALL_KEYS.theme;
         if (this._sleepOpen)       return this._APPLY_ALL_KEYS.sleep;
         if (this._personalityOpen) return this._APPLY_ALL_KEYS.personality;
+        if (this._voiceOpen)       return this._APPLY_ALL_KEYS.voice;
         if (this._photosOpen)      return this._APPLY_ALL_KEYS.photos;
         return null;
     },

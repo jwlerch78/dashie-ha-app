@@ -188,6 +188,12 @@
             SEARCH_RESULTS: JSON.stringify(data, null, 2)
           };
 
+        case 'dashie-help':
+          return {
+            ...baseValues,
+            DASHIE_HELP_DATA: JSON.stringify(data, null, 2)
+          };
+
         case 'chores':
           return {
             ...baseValues,

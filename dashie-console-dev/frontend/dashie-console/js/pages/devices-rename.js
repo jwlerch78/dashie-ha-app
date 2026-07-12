@@ -244,7 +244,7 @@ const DevicesRename = {
                 }, 1500);
             } catch (e) {
                 console.warn('[DevicesRename] HA rename failed (Supabase succeeded):', e.message);
-                if (!silent) Toast.warning(`Saved in Dashie. HA rename failed: ${e.message}`);
+                if (!silent) Toast.error(`Saved in Dashie. HA rename failed: ${e.message}`);
             }
         }
     },

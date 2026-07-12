@@ -52,6 +52,10 @@ const Toast = {
     success(message, duration = 3000) { return this.show(message, 'success', duration); },
     error(message, duration = 6000) { return this.show(message, 'error', duration); },
     info(message, duration = 4000) { return this.show(message, 'info', duration); },
+    // Partial-failure heads-up (e.g. "2 devices couldn't be added"). Was CALLED by
+    // devices-claim.js but never defined → "Toast.warning is not a function" crashed the
+    // handler and hid the real error. Styled like info if no .toast-warning CSS exists.
+    warning(message, duration = 6000) { return this.show(message, 'warning', duration); },
 
     _dismiss(toast) {
         if (!toast || !toast.parentNode) return;

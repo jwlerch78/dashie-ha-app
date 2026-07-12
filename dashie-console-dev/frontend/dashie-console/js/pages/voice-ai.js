@@ -24,6 +24,7 @@ const VoiceAiPage = {
     _templates: null,       // built-in personality rows
     _custom: null,          // custom personality rows
     _overrides: null,       // {template_key: {family_notes}}
+    _voices: null,          // tts_voices catalog — for the default-voice picker (WS-G)
     _loading: false,
     _error: null,
     _savingKey: null,       // dotted key currently saving (for inline "saving…")
@@ -199,6 +200,8 @@ const VoiceAiPage = {
                 // BYO-key booleans (add-on API Keys page) — gate the Cloud/Hybrid
                 // presets on credits OR a key. Best-effort — null on failure.
                 this._fetchKeyStatus(),
+                // Voice catalog for the account default-voice picker (WS-G).
+                VoiceAiApi.listVoices().then(v => { this._voices = v; }).catch(() => { this._voices = []; }),
             ]);
             this._defaults = defaults;
             // Household sharing opt-in lives in the add-on only — fetch it so the
@@ -266,6 +269,14 @@ const VoiceAiPage = {
         }
     },
 
+    /** The account's default-personality record (template by key, custom by
+     *  uuid) for the voice-lock check — null while the catalog loads or when
+     *  the stored id no longer exists (deleted custom → treat as flexible). */
+    _defaultPersonality() {
+        const id = String(this._defaults?.['ai.defaultPersonalityId'] || 'dashie');
+        return this.getTemplate(id) || this.getCustom(id);
+    },
+
     getCustom(id) {
         return (this._custom || []).find(p => p.id === id) || null;
     },
@@ -284,6 +295,7 @@ const VoiceAiPage = {
         let value = rawValue;
         const STRING_KEYS = ['ai.model', 'voice.controlMethod', 'voice.conversationModel', 'voice.agentMode',
             'voice.pipelinePreset',   // cloud | hybrid | local | ha_assist (Open Brain §6)
+            'ai.defaultPersonalityId', 'ai.defaultVoiceKey',   // account defaults (WS-G Round A)
             'voice.sttProvider', 'voice.ttsProvider',
             'voice.searchSource', 'voice.sportsSource', 'voice.localLlmUrl', 'voice.localLlmModel',
             'voice.searxngUrl', 'voice.localTtsUrl', 'voice.localTtsVoiceId', 'voice.localSttUrl',
@@ -378,20 +390,41 @@ const VoiceAiPage = {
         this._seedProvider(id, 'stt', 'voice.sttProvider');
     },
 
-    /** If the stored provider isn't in the preset's filtered option list, pick
-     *  the preset's natural default: dashie_cloud for Cloud; for Hybrid/Local a
-     *  detected HA engine when available, else Android voice (works everywhere,
-     *  no config). */
+    /** Seed a stage's provider to the preset's natural default (John, 2026-07-11):
+     *  - Cloud: both stages → dashie_cloud (when the current choice isn't cloud).
+     *  - Hybrid: voice goes LOCAL — TTS flips to detected Piper, else Android
+     *    voice; STT flips to detected Whisper, else STAYS on Deepgram (Android
+     *    STT would be a quality downgrade nobody asked for).
+     *  - Local: cloud rows are filtered out, so anything cloud/invalid reseeds
+     *    to the detected HA engine, else Android voice.
+     *  A current choice that's already valid-and-local for the preset is never
+     *  overridden (e.g. own-box Kokoro/Whisper URLs stay picked). */
     _seedProvider(presetId, stageKey, dottedKey) {
         const O = window.VoiceAiOptions;
         const all = stageKey === 'tts' ? O.ttsOptions(this._engines) : O.sttOptions(this._engines);
         const opts = O.presetFilter(presetId, this._haFilter(all)).filter(o => !o.install);
         const current = String(this._defaults[dottedKey] || '');
-        if (opts.some(o => o.id === current)) return;
+        const has = id => opts.some(o => o.id === id);
+        const currentValid = has(current);
+        const hasHaEngine = has('ha_engine');
+
+        if (presetId === 'hybrid') {
+            const currentIsLocal = currentValid && current !== 'dashie_cloud';
+            if (currentIsLocal) return;   // deliberate local choice — keep it
+            if (stageKey === 'tts') {
+                this._selectProvider('tts', hasHaEngine ? 'ha_engine' : 'android_voice');
+            } else if (hasHaEngine) {
+                this._selectProvider('stt', 'ha_engine');
+            } else if (!currentValid) {
+                this._selectProvider('stt', 'dashie_cloud');
+            }
+            return;
+        }
+        if (currentValid) return;
         const seed = presetId === 'cloud'
             ? 'dashie_cloud'
-            : (opts.some(o => o.id === 'ha_engine') ? 'ha_engine' : 'android_voice');
-        if (!opts.some(o => o.id === seed)) return;
+            : (hasHaEngine ? 'ha_engine' : 'android_voice');
+        if (!has(seed)) return;
         this._selectProvider(stageKey, seed);
     },
 
@@ -562,6 +595,13 @@ const VoiceAiPage = {
         // Web-search-source card shows "Google" instead. Applies in dialog/single.
         const isGeminiAiModel = String(d['ai.model'] || '').startsWith('gemini-');
         const searchOn = d['ai.webSearchEnabled'] === true;
+        // Prune expanded-state for cards that are no longer rendered (Customize
+        // off, preset switch, Live hiding the pipeline). A stale entry keeps
+        // anyExpanded true and dims every visible card indefinitely.
+        const visibleStages = new Set(isHaAssist ? [] : ['model', ...(showPipeline ? ['tts', 'stt', 'search'] : [])]);
+        for (const k of [...this._expandedCards]) {
+            if (!visibleStages.has(k)) this._expandedCards.delete(k);
+        }
         const cfg = k => d[k];
         const card = (title, stageKey, options, selectedId) => VoiceAiCards.render({
             title, stageKey, options, selectedId,
@@ -571,10 +611,21 @@ const VoiceAiPage = {
         });
         const filtered = (stage, all) => O.presetFilter(preset, this._haFilter(all));
         const P = window.VoiceAiPresetPicker;
+        const D = window.VoiceAiDefaultsCards;
+        // Account default voice (WS-G): a Dashie-Cloud-TTS concern — local
+        // engines pick their voice in the TTS card's config fields, Live speaks
+        // Google. Voice lock wins: fixed-voice personalities render locked.
+        const defaultPersonality = this._defaultPersonality();
+        const showVoiceDefault = !isLive && String(d['voice.ttsProvider'] || 'dashie_cloud') === 'dashie_cloud';
         const body = isHaAssist ? P.renderHaAssistCard() : `
             ${P.renderCustomizeRow(customPipeline, !isLive)}
             ${this._renderLocalityLegend()}
             ${card('AI Model', 'model', this._modelOptions(preset), this._selectedModelId(agentMode))}
+            ${D.renderPersonalityCard({
+                templates: this._templates, custom: this._custom,
+                currentId: String(d['ai.defaultPersonalityId'] || 'dashie'),
+                saving: this._savingKey === 'ai.defaultPersonalityId',
+            })}
             ${isLive ? P.renderLiveNote() : P.renderDialogCard({
                 dialogOn: agentMode === 'dialog',
                 saving: this._savingKey === 'voice.agentMode',
@@ -585,9 +636,17 @@ const VoiceAiPage = {
 
             ${showPipeline ? this._renderEngineDetectionRow() : ''}
             ${showPipeline ? card('Text-to-speech (Voice)', 'tts', filtered('tts', O.ttsOptions(this._engines)), String(d['voice.ttsProvider'])) : ''}
+            ${showVoiceDefault ? D.renderVoiceCard({
+                voices: this._voices || [],
+                currentKey: String(d['ai.defaultVoiceKey'] || ''),
+                personality: defaultPersonality,
+                saving: this._savingKey === 'ai.defaultVoiceKey',
+            }) : ''}
             ${showPipeline ? card('Speech-to-text', 'stt', filtered('stt', O.sttOptions(this._engines)), String(d['voice.sttProvider'])) : ''}
-            ${showPipeline ? card('Web search source', 'search', isGeminiAiModel ? this._googleSearchOption() : filtered('search', O.SEARCH), isGeminiAiModel ? 'google' : String(d['voice.searchSource'])) : ''}
-            ${showPipeline ? card('Sports source', 'sports', filtered('sports', O.SPORTS), String(d['voice.sportsSource'])) : ''}`;
+            ${showPipeline ? card('Web search source', 'search', isGeminiAiModel ? this._googleSearchOption() : filtered('search', O.SEARCH), isGeminiAiModel ? 'google' : String(d['voice.searchSource'])) : ''}`;
+            // Sports source card hidden for now (John, 2026-07-11) — ESPN is the
+            // only option. Re-add via card('Sports source', 'sports', …) when a
+            // second source exists.
         return `
             ${this._sectionHeader('Voice & AI Defaults', 'Apply to every device signed into this account.')}
             ${VoiceAiPresetPicker.render({

@@ -21,6 +21,8 @@ const VoiceAiApi = {
      *  in the blob is preserved verbatim. */
     AI_DEFAULT_KEYS: [
         ['ai', 'model'],
+        ['ai', 'defaultPersonalityId'],
+        ['ai', 'defaultVoiceKey'],
         ['voice', 'pipelinePreset'],
         ['voice', 'controlMethod'],
         ['voice', 'agentMode'],
@@ -48,6 +50,10 @@ const VoiceAiApi = {
 
     DEFAULTS: {
         'ai.model': 'gemini-2.5-flash',
+        // Account defaults (WS-G): devices follow these unless overridden on
+        // the Devices page. '' voice = the personality's own preferred voice.
+        'ai.defaultPersonalityId': 'dashie',
+        'ai.defaultVoiceKey': '',
         // '' = preset not chosen yet — the page derives one from the granular
         // keys (display-only) and persists on the user's first preset click.
         'voice.pipelinePreset': '',

@@ -385,8 +385,11 @@ const DevicesClaim = {
                 Toast.success(`Added ${added} device${added === 1 ? '' : 's'}`);
             }
             if (failures.length > 0) {
-                const which = failures.map(f => f.name).join(', ');
-                Toast.warning(`${failures.length} device${failures.length === 1 ? "" : 's'} couldn't be added: ${which}`);
+                // Surface the per-device reason (e.g. "already claimed by another
+                // Dashie account") — Toast has no .warning; that typo crashed here
+                // and swallowed the reason entirely.
+                const detail = failures.map(f => `${f.name}: ${f.reason}`).join(' · ');
+                Toast.error(`${failures.length} device${failures.length === 1 ? "" : 's'} couldn't be added — ${detail}`, 9000);
                 console.warn('[DevicesClaim] add failures:', failures);
             }
 
