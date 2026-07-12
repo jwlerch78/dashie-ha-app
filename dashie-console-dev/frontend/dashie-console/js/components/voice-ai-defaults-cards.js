@@ -27,9 +27,29 @@ const VoiceAiDefaultsCards = {
         return String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
     },
 
+    // Borderless <select> styled as bold row text — reads like the collapsed
+    // pipeline rows ("Claude Sonnet 4.6") but is still a native dropdown.
+    // The row's own ▾ provides the affordance the hidden native arrow loses.
+    SELECT_STYLE: 'flex: 1; border: none; background: transparent; font-weight: 600; font-size: 13px; color: var(--text-primary); cursor: pointer; padding: 0; -webkit-appearance: none; -moz-appearance: none; appearance: none;',
+
     /**
-     * Default-personality row — matches the collapsed pipeline-card row style
-     * (caps label left, control right).
+     * Compact control row — caps label (aligned with the collapsed pipeline
+     * cards) + an inline control + a ▾. Shared by the Default-personality and
+     * Voice rows.
+     * @param {object} o { label, saving, controlHtml, caret=true }
+     */
+    renderControlRow(o) {
+        return `
+            <div class="card" style="margin-bottom: 10px;"><div class="card-body" style="display: flex; align-items: center; gap: 10px; padding: 10px 14px;">
+                <span style="font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; color: var(--text-muted); min-width: 170px;">${this._esc(o.label)} ${o.saving ? '<span style="font-weight: 400; text-transform: none;">· saving…</span>' : ''}</span>
+                ${o.controlHtml}
+                ${o.caret === false ? '' : '<span style="color: var(--text-muted); font-size: 13px;">▾</span>'}
+            </div></div>`;
+    },
+
+    /**
+     * Default-personality row — bold borderless dropdown styled like the
+     * collapsed pipeline rows.
      * @param {object} o { templates, custom, currentId, saving }
      */
     renderPersonalityCard(o) {
@@ -39,11 +59,11 @@ const VoiceAiDefaultsCards = {
         if (customOpts) groups.push(`<optgroup label="Custom">${customOpts}</optgroup>`);
         const templateOpts = (o.templates || []).map(t => opt(t.key || t.id, t.name || t.key)).join('');
         groups.push(`<optgroup label="Built-in">${templateOpts}</optgroup>`);
-        return `
-            <div class="card" style="margin-bottom: 10px;"><div class="card-body" style="display: flex; align-items: center; gap: 10px; padding: 8px 14px;">
-                <span style="font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; color: var(--text-muted); min-width: 150px;">Default personality ${o.saving ? '<span style="font-weight: 400; text-transform: none;">· saving…</span>' : ''}</span>
-                <select class="form-select" style="flex: 1;" onchange="VoiceAiPage.saveDefault('ai.defaultPersonalityId', this.value)">${groups.join('')}</select>
-            </div></div>`;
+        return this.renderControlRow({
+            label: 'Default personality',
+            saving: o.saving,
+            controlHtml: `<select style="${this.SELECT_STYLE}" onchange="VoiceAiPage.saveDefault('ai.defaultPersonalityId', this.value)">${groups.join('')}</select>`,
+        });
     },
 };
 

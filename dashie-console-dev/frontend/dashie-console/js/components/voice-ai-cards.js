@@ -31,13 +31,27 @@ const VoiceAiCards = {
         const sel = opts.find(x => x.id === o.selectedId) || opts[0];
         if (!sel) return '';
 
-        // Single-option tool (e.g. Sports = ESPN only): a static info row, no expand.
+        // Single option (the preset filtered everything else out, e.g. Cloud →
+        // only Dashie Cloud TTS/STT): the SAME compact row as a collapsed
+        // multi-option card — minus the caret/click, with the cost where the
+        // caret would sit — so presets don't render visibly different card
+        // styles (Cloud vs Hybrid inconsistency, 2026-07-12).
         if (opts.length === 1) {
+            const O = window.VoiceAiOptions;
+            const color = O.COLOR[sel.locality] || 'var(--text-muted)';
+            const tag = sel.locality
+                ? `<span style="font-size:10px; font-weight:700; text-transform:uppercase; letter-spacing:0.4px; color:${color};">${O.LABEL[sel.locality] || ''}</span>`
+                : '';
+            const config = sel.configFields ? `<div style="padding: 0 14px 12px;">${this._config(sel, o.getConfig)}</div>` : '';
             return `
-                <div style="margin-bottom: 16px;">
-                    <div style="margin-bottom: 6px; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; color: var(--text-muted);">${this._esc(o.title)}</div>
+                <div style="margin-bottom: 10px; transition: opacity 120ms ease; ${o.anyExpanded ? 'opacity: 0.45;' : ''}">
                     <div class="card"><div class="card-body" style="padding: 0;">
-                        ${this._row(sel, true, o.stageKey, o.getConfig, true, 'static')}
+                        <div style="display: flex; align-items: center; gap: 10px; padding: 10px 14px;">
+                            <span style="font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; color: var(--text-muted); min-width: 170px;">${this._esc(o.title)}</span>
+                            <span style="flex: 1; font-weight: 600; font-size: 13px; display: flex; align-items: center; gap: 8px;">${this._esc(sel.label)} ${tag}</span>
+                            <span style="font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; color: var(--text-muted);">${this._esc(sel.cost || '')}</span>
+                        </div>
+                        ${config}
                     </div></div>
                 </div>`;
         }
@@ -58,7 +72,7 @@ const VoiceAiCards = {
                     <div class="card"><div class="card-body" style="padding: 0;">
                         <div onclick="VoiceAiPage.toggleCard('${o.stageKey}')"
                             style="cursor: pointer; display: flex; align-items: center; gap: 10px; padding: 10px 14px;">
-                            <span style="font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; color: var(--text-muted); min-width: 150px;">${this._esc(o.title)}</span>
+                            <span style="font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; color: var(--text-muted); min-width: 170px;">${this._esc(o.title)}</span>
                             <span style="flex: 1; font-weight: 600; font-size: 13px; display: flex; align-items: center; gap: 8px;">${this._esc(sel.label)} ${tag}</span>
                             <span style="color: var(--text-muted); font-size: 13px;">▸</span>
                         </div>
@@ -108,6 +122,12 @@ const VoiceAiCards = {
         const installBadge = isInstall
             ? `<span style="font-size:10px; font-weight:700; text-transform:uppercase; letter-spacing:0.4px; color:#fff; background: var(--accent); padding: 2px 8px; border-radius: 9px;">Install ↗</span>`
             : '';
+        // Install-guide badge: same look as the install-row badge, but on a row
+        // that STAYS selectable (self-hosted engine with no HA add-on to deep-link,
+        // e.g. SearXNG). Anchor + stopPropagation so the row's select still works.
+        const guide = x.installGuide
+            ? `<a href="${this._esc(x.installGuide.url)}" target="_blank" rel="noopener" onclick="event.stopPropagation()" style="font-size:10px; font-weight:700; text-transform:uppercase; letter-spacing:0.4px; color:#fff; background: var(--accent); padding: 2px 8px; border-radius: 9px; text-decoration: none;">${this._esc(x.installGuide.label || 'Install ↗')}</a>`
+            : '';
         // Collapsed (expand mode) always shows ▾ to click-to-open, even for a stale
         // install selection; the Install badge only shows in the expanded option list.
         const right = mode === 'expand'
@@ -134,7 +154,7 @@ const VoiceAiCards = {
                 style="cursor: ${(isStatic && !isInstall) ? 'default' : 'pointer'}; padding: 12px 14px; ${topBorder} background: ${bg}; border-left: 3px solid ${(!isInstall && selected) ? color : 'transparent'};">
                 <div style="display:flex; justify-content:space-between; align-items:baseline; gap: 10px;">
                     <div style="font-weight: 600; font-size: 14px; display:flex; align-items:center; gap: 8px; flex-wrap: wrap;">
-                        ${this._esc(x.label)} ${localityTag} ${soon}
+                        ${this._esc(x.label)} ${localityTag} ${soon} ${guide}
                     </div>
                     <div style="display:flex; align-items:center; gap: 10px; flex-shrink: 0;">
                         <span style="font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; color: var(--text-muted);">${this._esc(x.cost || '')}</span>
@@ -149,11 +169,22 @@ const VoiceAiCards = {
 
     _config(x, getConfig) {
         const get = typeof getConfig === 'function' ? getConfig : () => '';
-        const fields = x.configFields.map(f => `
+        const fields = x.configFields.map(f => {
+            // URL fields with a `probe` kind get a Test button — server-side
+            // reachability check via the add-on (browser can't hit LAN engines).
+            const control = f.probe
+                ? `<div style="display: flex; gap: 8px; align-items: center;">
+                       ${this._field(f, get)}
+                       <button class="btn btn-secondary btn-sm" style="flex-shrink: 0;"
+                           onclick="event.stopPropagation(); VoiceAiPage.testLocalUrl('${f.key}', '${f.probe}', this)">Test</button>
+                   </div>`
+                : this._field(f, get);
+            return `
             <label style="display:flex; flex-direction:column; gap: 3px; font-size: 11px; color: var(--text-muted);">
                 ${this._esc(f.label)}
-                ${this._field(f, get)}
-            </label>`).join('');
+                ${control}
+            </label>`;
+        }).join('');
         // stopPropagation so editing a field doesn't trigger the row's select/collapse.
         return `<div onclick="event.stopPropagation()" style="margin-top: 10px; display: grid; gap: 8px;">${fields}</div>`;
     },
@@ -178,9 +209,10 @@ const VoiceAiCards = {
             return `<select onchange="VoiceAiPage.saveLocalField('${f.key}', this.value)" style="${inputStyle}">${opts}</select>`;
         }
         // Credentials (API keys) render masked; everything else is plain text.
+        // The id lets the Test button read a just-typed URL straight from the DOM.
         const inputType = f.type === 'password' ? 'password' : 'text';
-        return `<input type="${inputType}" value="${this._esc(cur)}" placeholder="${this._esc(f.placeholder || '')}"
-                    autocomplete="off" onchange="VoiceAiPage.saveLocalField('${f.key}', this.value)" style="${inputStyle}">`;
+        return `<input type="${inputType}" id="cfg-${this._esc(f.key)}" value="${this._esc(cur)}" placeholder="${this._esc(f.placeholder || '')}"
+                    autocomplete="off" onchange="VoiceAiPage.saveLocalField('${f.key}', this.value)" style="${inputStyle} ${f.probe ? 'flex: 1;' : ''}">`;
     },
 };
 

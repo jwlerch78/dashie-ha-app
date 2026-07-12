@@ -590,7 +590,6 @@ const VoiceAiPage = {
     _renderAiDefaults() {
         const d = this._defaults;
         const O = window.VoiceAiOptions;
-        const memoryOn = d['ai.conversationContextEnabled'] === true;
         const preset = this._activePreset();
         const isHaAssist = preset === 'ha_assist';
         const agentMode = this._agentMode();
@@ -627,6 +626,21 @@ const VoiceAiPage = {
             { id: 'none', label: 'None', cost: '', description: 'Web search off — Dashie answers without searching the web.' },
         ];
         const searchSelected = !searchOn ? 'none' : (isGeminiAiModel ? 'google' : String(d['voice.searchSource']));
+        // Voice split out of the TTS card (John, 2026-07-12): the voice-id
+        // config field renders as its own row under Text-to-speech, only for
+        // engines with a selectable voice (Piper ha_engine / Kokoro local_url).
+        // The URL/other fields stay in the card.
+        const VOICE_FIELD_KEYS = ['voice.haTtsVoiceId', 'voice.localTtsVoiceId'];
+        const ttsAll = filtered('tts', O.ttsOptions(this._engines));
+        const ttsSelected = ttsAll.find(x => x.id === String(d['voice.ttsProvider'])) || null;
+        const voiceField = (ttsSelected && ['ha_engine', 'local_url'].includes(ttsSelected.id))
+            ? (ttsSelected.configFields || []).find(f => VOICE_FIELD_KEYS.includes(f.key)) || null
+            : null;
+        const ttsCardOpts = ttsAll.map(x => {
+            if (!x.configFields) return x;
+            const rest = x.configFields.filter(f => !VOICE_FIELD_KEYS.includes(f.key));
+            return { ...x, configFields: rest.length ? rest : undefined };
+        });
         const body = isHaAssist ? P.renderHaAssistCard() : `
             ${P.renderCustomizeRow(customPipeline, !isLive)}
             ${card('AI Model', 'model', this._modelOptions(preset), this._selectedModelId(agentMode))}
@@ -637,7 +651,8 @@ const VoiceAiPage = {
             })}
             ${isLive ? P.renderLiveNote() : ''}
             ${showPipeline ? this._renderEngineDetectionRow() : ''}
-            ${showPipeline ? card('Text-to-speech (Voice)', 'tts', filtered('tts', O.ttsOptions(this._engines)), String(d['voice.ttsProvider'])) : ''}
+            ${showPipeline ? card('Text-to-speech', 'tts', ttsCardOpts, String(d['voice.ttsProvider'])) : ''}
+            ${showPipeline && voiceField ? this._renderVoiceRow(voiceField, d) : ''}
             ${showPipeline ? card('Speech-to-text', 'stt', filtered('stt', O.sttOptions(this._engines)), String(d['voice.sttProvider'])) : ''}
             ${showPipeline ? card('Web search source', 'search', searchOptions, searchSelected) : ''}`;
             // Sports source card hidden for now (John, 2026-07-11) — ESPN is the
@@ -660,12 +675,78 @@ const VoiceAiPage = {
             ${this._sectionHeader('AI Tools & Settings', '')}
             <div class="card"><div class="card-body">
                 ${(!isHaAssist && !isLive) ? this._renderDialogRows(d, agentMode) : ''}
-                ${this._toggleRow('Retrieve pictures', 'Let the assistant pull family photos into responses.', 'ai.retrievePicturesEnabled', d['ai.retrievePicturesEnabled'])}
-                ${this._toggleRow('Conversation memory', 'Remember the prior conversation for follow-ups.', 'ai.conversationContextEnabled', d['ai.conversationContextEnabled'])}
-                ${memoryOn ? this._selectRow('Memory duration', 'ai.conversationTimeout', this.MEMORY_OPTIONS, String(d['ai.conversationTimeout'])) : ''}
+                ${this._toggleRow('Retrieve pictures', `Allow the AI to show pictures with its responses. Uses web image search (${O.imageSearchCost}/search).`, 'ai.retrievePicturesEnabled', d['ai.retrievePicturesEnabled'])}
                 ${FeatureGate.shouldShow('chores') ? this._toggleRow('Always use AI for chores', 'Disable the fast path — routes all chore commands through AI (uses more tokens).', 'voice.alwaysUseAI', d['voice.alwaysUseAI']) : ''}
             </div></div>
         `;
+        // Conversation memory (+ duration) hidden for now (John, 2026-07-12) —
+        // not in use yet. Re-add via ai.conversationContextEnabled /
+        // ai.conversationTimeout toggle+select rows when it ships.
+    },
+
+    /** The Voice row under Text-to-speech (Piper/Kokoro only): a detection-
+     *  populated dropdown rendered borderless-bold to match the compact rows,
+     *  or a plain text input when no voice list is available. */
+    _renderVoiceRow(voiceField, d) {
+        const D = window.VoiceAiDefaultsCards;
+        const cur = String(d[voiceField.key] || '');
+        let control;
+        let caret = true;
+        if (voiceField.type === 'select' && Array.isArray(voiceField.options)) {
+            const known = voiceField.options.some(v => v.value === cur);
+            const opts = [
+                `<option value="" ${cur ? '' : 'selected'} disabled>— pick a voice —</option>`,
+                ...voiceField.options.map(v =>
+                    `<option value="${this._escape(v.value)}" ${v.value === cur ? 'selected' : ''}>${this._escape(v.label)}</option>`),
+                (cur && !known) ? `<option value="${this._escape(cur)}" selected>${this._escape(cur)} (current)</option>` : '',
+            ].join('');
+            control = `<select style="${D.SELECT_STYLE}" onchange="VoiceAiPage.saveLocalField('${voiceField.key}', this.value)">${opts}</select>`;
+        } else {
+            caret = false;
+            control = `<input type="text" value="${this._escape(cur)}" placeholder="${this._escape(voiceField.placeholder || '')}"
+                autocomplete="off" onchange="VoiceAiPage.saveLocalField('${voiceField.key}', this.value)"
+                style="flex: 1; padding: 7px 9px; border: 1px solid var(--border, #d1d5db); border-radius: 5px; font-size: 13px;">`;
+        }
+        return D.renderControlRow({
+            label: 'Voice',
+            saving: this._savingKey === voiceField.key,
+            controlHtml: control,
+            caret,
+        });
+    },
+
+    /** Reachability test for the own-box engine URLs (Local TTS / Local
+     *  Whisper). Add-on mode proxies through the box (the browser can't reach
+     *  a LAN engine cross-origin); elsewhere a best-effort direct fetch. */
+    async testLocalUrl(fieldKey, kind, btn) {
+        const input = document.getElementById(`cfg-${fieldKey}`);
+        const url = String(input?.value || this._defaults?.[fieldKey] || '').trim();
+        if (!url) { Toast.info('Enter the URL first.'); return; }
+        const restore = () => { if (btn) { btn.disabled = false; btn.textContent = 'Test'; } };
+        if (btn) { btn.disabled = true; btn.textContent = 'Testing…'; }
+        try {
+            let result;
+            if (DashieAuth.isAddonMode) {
+                const r = await fetch(DashieAuth._addonUrl('/api/voice/probe'), {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ url, kind }),
+                });
+                // A 404 = the add-on predates the probe endpoint — fall through
+                // to a direct attempt rather than reporting a bogus failure.
+                result = r.status === 404 ? null : await r.json();
+            }
+            if (!result) {
+                const path = kind === 'tts' ? '/v1/audio/voices' : '/v1/models';
+                const r = await fetch(url.replace(/\/+$/, '') + path, { signal: AbortSignal.timeout(5000) });
+                result = { ok: r.ok, detail: `HTTP ${r.status}` };
+            }
+            if (result.ok) Toast.success(`Reachable ✓ ${result.detail || ''}`);
+            else Toast.error(`Not reachable — ${result.detail || 'no response'}`);
+        } catch (e) {
+            Toast.error(`Not reachable — ${e?.message || e}`);
+        }
+        restore();
     },
 
     /** Conversation-dialog rows at the top of AI Tools & Settings (moved from

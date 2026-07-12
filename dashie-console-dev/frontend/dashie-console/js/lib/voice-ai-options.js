@@ -17,6 +17,9 @@
      first), active once the L3 add-on brain ships.
    - configFields: revealed when the option is selected; each
      persists to its own account-level user_settings key.
+   - installGuide: { url, label? } — renders an "Install ↗" badge-link
+     on a still-selectable row. Used when there's no HA add-on to
+     deep-link via _installRow (e.g. SearXNG — self-hosted anywhere).
 
    Model list + cost come live from window.AiModelCatalog so they
    never drift; STT/TTS/Search are small static tables here.
@@ -130,7 +133,7 @@ const VoiceAiOptions = {
         { id: 'local_stt_url', label: 'Local Whisper (your box)', locality: 'local', cost: 'Free',
           description: 'Whisper server on your own box (OpenAI-compatible, LAN, direct).',
           configFields: [
-            { key: 'voice.localSttUrl', label: 'Whisper box URL', placeholder: 'http://192.168.1.50:8000' },
+            { key: 'voice.localSttUrl', label: 'Whisper box URL', placeholder: 'http://192.168.1.50:8000', probe: 'stt' },
           ] },
         { id: 'va_default', label: 'Home Assistant', locality: 'local', cost: 'Free', haOnly: true,
           description: "Your Home Assistant voice pipeline's speech-to-text." },
@@ -149,7 +152,7 @@ const VoiceAiOptions = {
         { id: 'local_url', label: 'Local TTS (your box)', locality: 'local', cost: 'Free',
           description: 'Kokoro / OpenAI-compatible TTS on your own box (LAN, direct).',
           configFields: [
-            { key: 'voice.localTtsUrl', label: 'TTS box URL', placeholder: 'http://192.168.1.50:8880' },
+            { key: 'voice.localTtsUrl', label: 'TTS box URL', placeholder: 'http://192.168.1.50:8880', probe: 'tts' },
             { key: 'voice.localTtsVoiceId', label: 'Voice', placeholder: 'af_heart' },
           ] },
         { id: 'va_default', label: 'Home Assistant', locality: 'local', cost: 'Free', haOnly: true,
@@ -262,9 +265,16 @@ const VoiceAiOptions = {
     SEARCH: [
         { id: 'dashie', label: 'Dashie (Tavily)', locality: 'cloud', cost: '~0.8¢/search',
           description: 'Managed web search — no setup.' },
-        { id: 'searxng', label: 'SearXNG (self-hosted)', locality: 'local', cost: 'Free', comingSoon: true,
-          description: 'Your own metasearch instance — private, no per-search cost.',
-          configFields: [{ key: 'voice.searxngUrl', label: 'SearXNG instance URL', placeholder: 'http://192.168.1.50:8080' }] },
+        // SearXNG hidden for MVP (John, 2026-07-12): it's a "your box"-style
+        // self-hosted install (no HA add-on to deep-link, no detection) and isn't
+        // wired to the runtime yet (search is Tavily-only until the L3 add-on
+        // brain). Re-enable by uncommenting — the cards' installGuide support
+        // (Install ↗ docs badge on a selectable row) stays in place.
+        // { id: 'searxng', label: 'SearXNG (self-hosted)', locality: 'local', cost: 'Free', comingSoon: true,
+        //   description: 'Your own metasearch instance — private, no per-search cost.',
+        //   installGuide: { url: 'https://docs.searxng.org/admin/installation.html' },
+        //   note: 'Enable the JSON API on your instance — add "json" to search.formats in settings.yml — so Dashie can query it.',
+        //   configFields: [{ key: 'voice.searxngUrl', label: 'SearXNG instance URL', placeholder: 'http://192.168.1.50:8080' }] },
     ],
 
     // Sports has a single source today (free ESPN). Listing it makes clear that
@@ -273,6 +283,11 @@ const VoiceAiOptions = {
         { id: 'espn', label: 'ESPN', locality: 'cloud', cost: 'Free — not billed',
           description: 'Live scores & schedules. Sports questions use ESPN, not web search.' },
     ],
+
+    // Image-search (Serper / Google Images) per-search cost string for the
+    // "Retrieve pictures" toggle. Fallback from the raw catalog ($1/1000,
+    // pre-margin); applyLiveRates overwrites with the margined rate card.
+    imageSearchCost: '~0.1¢',
 
     // ── live rate card ───────────────────────────────────────
 
@@ -305,6 +320,8 @@ const VoiceAiOptions = {
             if (search) {
                 this.SEARCH.find(o => o.id === 'dashie').cost = `${this._cents(search)}/search`;
             }
+            const image = amt('image_search');  // USD per image search
+            if (image) this.imageSearchCost = this._cents(image);
             this._liveRatesApplied = true;
         } catch (e) {
             console.warn('[VoiceAiOptions] rate card unavailable, keeping fallback estimates:', e?.message || e);

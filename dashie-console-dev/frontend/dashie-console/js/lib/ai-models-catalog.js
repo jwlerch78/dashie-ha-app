@@ -258,12 +258,16 @@
         }
       },
     
-      // Speech-to-Text (STT) costs - Verified Oct 2025
+      // Speech-to-Text (STT) costs - Verified Jul 2026 (deepgram.com/pricing)
       stt: {
-        // Deepgram Nova-3 (per minute of audio) - Pre-recorded pricing
+        // Deepgram Nova-3 (per minute of audio). Streaming and pre-recorded are
+        // DIFFERENT rates — the deepgram-stt-stream proxy bills perMinuteStreaming
+        // (sttCost({streaming:true})), the deepgram-stt REST fn bills perMinute.
+        // Deepgram itself bills per-second, so byte-derived durations map exactly.
         deepgram: {
-          perMinute: 0.0043,        // $0.0043 per minute (pre-recorded)
-          per5Seconds: 0.00036      // ~$0.00036 per 5-second command
+          perMinute: 0.0043,          // $0.0043 per minute (pre-recorded)
+          perMinuteStreaming: 0.0077, // $0.0077 per minute (streaming, nova-3 monolingual PAYG)
+          per5Seconds: 0.00036        // ~$0.00036 per 5-second command (pre-recorded)
         },
     
         // OpenAI Whisper (per minute of audio)
@@ -389,11 +393,16 @@
         return [costs.input, costs.output];
     }
 
-    /** USD cost of an STT call. {provider, seconds} → number.
+    /** USD cost of an STT call. {provider, seconds, streaming} → number.
+     *  streaming:true uses the provider's streaming rate when it has one
+     *  (Deepgram bills streaming higher than pre-recorded).
      *  Falls back to 0 (free) for unknown providers / native paths. */
-    function sttCost({ provider, seconds = 0 }) {
+    function sttCost({ provider, seconds = 0, streaming = false }) {
         const row = TOKEN_COSTS.stt?.[provider];
         if (!row) return 0;
+        if (streaming && typeof row.perMinuteStreaming === 'number') {
+            return (seconds / 60) * row.perMinuteStreaming;
+        }
         if (typeof row.perMinute === 'number') return (seconds / 60) * row.perMinute;
         return 0;
     }
