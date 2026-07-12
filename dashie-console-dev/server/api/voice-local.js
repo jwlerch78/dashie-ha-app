@@ -110,4 +110,42 @@ router.get('/engines', async (req, res) => {
   }
 });
 
+// POST /api/voice/probe  { url, kind: 'tts' | 'stt' }
+// Reachability test behind the Console's "Test" button on the own-box engine
+// URL fields (Local TTS / Local Whisper). Runs server-side because the browser
+// can't hit a LAN engine cross-origin. tts → GET /v1/audio/voices (Kokoro /
+// OpenAI-compat); stt → GET /v1/models, falling back to /health. 5s timeout
+// per path; never 500s — { ok, detail } either way.
+router.post('/probe', express.json(), async (req, res) => {
+  const { url, kind } = req.body || {};
+  if (!/^https?:\/\//i.test(String(url || ''))) {
+    return res.json({ ok: false, detail: 'enter a full http:// URL (with port)' });
+  }
+  const base = String(url).replace(/\/+$/, '');
+  const paths = kind === 'tts' ? ['/v1/audio/voices'] : ['/v1/models', '/health'];
+  let lastDetail = 'no response';
+  for (const p of paths) {
+    const ctl = new AbortController();
+    const timer = setTimeout(() => ctl.abort(), 5000);
+    try {
+      const resp = await fetch(base + p, { signal: ctl.signal });
+      clearTimeout(timer);
+      if (resp.ok) {
+        let detail = `HTTP ${resp.status}`;
+        try {
+          const j = await resp.json();
+          if (Array.isArray(j?.voices)) detail = `${j.voices.length} voices found`;
+          else if (Array.isArray(j?.data)) detail = `${j.data.length} models found`;
+        } catch (_) { /* non-JSON body is still a reachable server */ }
+        return res.json({ ok: true, detail });
+      }
+      lastDetail = `HTTP ${resp.status} on ${p}`;
+    } catch (e) {
+      clearTimeout(timer);
+      lastDetail = e?.name === 'AbortError' ? 'timed out (5s)' : (e?.cause?.code || e?.message || 'fetch failed');
+    }
+  }
+  res.json({ ok: false, detail: lastDetail });
+});
+
 module.exports = router;
