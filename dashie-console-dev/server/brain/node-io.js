@@ -102,8 +102,12 @@ function createNodeIO({ endpoint, model, key = '', log = console.log }) {
     runWebSearch: async (query) => ({ provider: 'none', query, results: [], result_count: 0, latency: 0 }),
     runSports: async (query) => ({ provider: 'none', query, games: [], result_count: 0, latency: 0 }),
     resolvePersonality: async () => null,
-    // Capture on-prem turns in the Console (mirrors the cloud logging.ts). Local model = $0 debit.
-    logInteraction: (token, data) => postDbOp(token, 'log_ai_interaction', data),
+    // Capture on-prem turns in the Console (mirrors the cloud logging.ts). byok:true =
+    // this brain runs on the user's own key/model, so the server records the row but
+    // NEVER debits — required for cataloged model ids (a BYO Gemini key running
+    // gemini-*-flash would otherwise bill Dashie credits), and it renders as
+    // "model (API key)" in the usage views instead of a charge.
+    logInteraction: (token, data) => postDbOp(token, 'log_ai_interaction', { ...data, byok: true }),
     logWebSearch: (token, data) => postDbOp(token, 'log_web_search', data),
     logSports: (token, data) => postDbOp(token, 'log_sports', data),
     getDefaultModel: async () => model,
