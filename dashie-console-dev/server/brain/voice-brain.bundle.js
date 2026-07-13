@@ -4,7 +4,7 @@
    The voice-conversation brain core, bundled for the Node add-on (on-prem L3).
    ONE core, TWO runtimes: the cloud Deno edge fn runs the TS source directly;
    this CJS bundle is the add-on's copy of the SAME source. Never hand-edit.
-   Source git SHA: c51a3380fe1d1663ccd64dd0d498a79b620aa1f1
+   Source git SHA: e4757e634ad83b77b80724cc7ce64853c31d12d6
    Regenerate:  node scripts/build-node-brain.mjs && ./sync-brain-bundle.sh
    Contract:    supabase/functions/voice-conversation/README.md + build plan §13.16
    ============================================================ */
@@ -30,6 +30,7 @@ var __toCommonJS = (mod) => __copyProps(__defProp({}, "__esModule", { value: tru
 var orchestrator_exports = {};
 __export(orchestrator_exports, {
   runOrchestration: () => runOrchestration,
+  runSports: () => runSports,
   wantsGameDetail: () => wantsGameDetail
 });
 module.exports = __toCommonJS(orchestrator_exports);
@@ -1470,7 +1471,7 @@ var AVAILABLE_TOOLS_LIST = `- calendar_events: query: {time_range: "today|tomorr
 - web_search: query: "search string" - Current events, news, external info (IMPORTANT: query is a STRING)
 - chores: query: {hint: "task description", member_hint: "name"} - When someone reports completing a chore
 - rewards: query: {} - Rewards catalog and redemption status
-- schedule_action: query: {time: "HH:MM" (24h local), recurrence: "once"|"daily", prompt: "instruction Dashie runs at that time, phrased as a user request", label: "short confirmation e.g. 'check whether the garage door is open'"} - Schedule Dashie to do/check something at a specific clock time ("tell me at 9:30 every night if...", "at 6am remind me..."). NOT for relative delays ("in 20 minutes") or sensor thresholds.
+- schedule_action: query: {time: "HH:MM" (24h local, for a clock time) OR delay_minutes: number (for a relative delay \u2014 "in 5 minutes" \u2192 5, "in 2 hours" \u2192 120), recurrence: "once"|"daily" (daily only valid with time), prompt: "instruction Dashie runs then, phrased as a user request", label: "short confirmation e.g. 'tell you a joke'"} - Schedule Dashie to do/check/say something LATER \u2014 at a clock time ("at 9:30 tonight tell me if the garage is open", "at 6am...") or after a relative delay ("in 5 minutes tell me a joke", "in 2 hours check the pool"). NOT for plain "remind me <text>" reminders (handled elsewhere) or sensor thresholds.
 - location_events: query: {member_name: "Mary", location_name: "home", timeframe: "today|yesterday|last_night", event_type: "arrive|depart"} - Arrival/departure history
 - travel_time: query: {event_title: "game", member_name: "Jack"} - When to leave for an event
 - family_locations: query: {member_name: "Mary"} - Current GPS location ("where is X right now?")
@@ -1780,6 +1781,11 @@ function buildPrompt({ userRequest, inquiryType, retrievedData, context = {} }) 
     prompt += "\n\n" + fillTemplate(RESPONSE_FORMAT_FULL, baseValues);
   } else {
     prompt += "\n\n" + fillTemplate(RESPONSE_FORMAT_INITIAL, baseValues);
+  }
+  if (context.retrievePicturesEnabled === false) {
+    prompt += `
+
+IMAGE DISPLAY IS UNAVAILABLE: always set "image": null, and never say you are showing or displaying a picture. If asked for a picture, say you can't show pictures right now.`;
   }
   if (personalityConfig && personalityConfig.responseSuffix) {
     prompt += personalityConfig.responseSuffix;
@@ -2226,6 +2232,31 @@ function templateSlate(result, query, opts) {
 }
 
 // supabase/functions/_shared/tools/sports.ts
+function envVar(key) {
+  try {
+    const d = globalThis.Deno;
+    if (d?.env?.get) return d.env.get(key) ?? "";
+  } catch {
+  }
+  try {
+    return globalThis.process?.env?.[key] ?? "";
+  } catch {
+  }
+  return "";
+}
+async function runSports(query, ctx) {
+  const url = ctx?.supabaseUrl || envVar("SUPABASE_URL");
+  const key = ctx?.anonKey || envVar("SUPABASE_ANON_KEY");
+  const provider = ctx?.provider ?? "auto";
+  const resp = await fetch(`${url}/functions/v1/sports-gateway`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", apikey: key, Authorization: `Bearer ${key}` },
+    body: JSON.stringify({ provider, query })
+  });
+  const body = await resp.json().catch(() => ({}));
+  if (!resp.ok) throw new Error(body.error || body.message || `HTTP ${resp.status}`);
+  return body;
+}
 function resolveWhen(query) {
   const w = String(query?.when ?? "").toLowerCase();
   if (w === "last" || w === "next" || w === "live") return w;
@@ -2282,19 +2313,12 @@ function soccerHighlights(g) {
   return out;
 }
 var isBaseball = (g) => /mlb|baseball/i.test(g.league || "");
-function baseballLines(g) {
-  const s = (n) => n == null ? "" : String(n);
-  const out = [
-    { label: "R", home: s(g.homeScore), away: s(g.awayScore) },
-    { label: "H", home: s(g.homeHits), away: s(g.awayHits) },
-    { label: "E", home: s(g.homeErrors), away: s(g.awayErrors) }
-  ];
-  return g.homeHits != null || g.awayHits != null ? out : [];
-}
-function baseballHighlights(g) {
+function leaderHighlights(g) {
+  const line = (ls) => (ls || []).filter((l) => l.player).map((l) => `${l.player} ${l.line}`).join(" \xB7 ");
   const out = [];
-  if (g.homeLeader?.player) out.push({ label: g.home || "Home", detail: `${g.homeLeader.player} \u2014 ${g.homeLeader.line}` });
-  if (g.awayLeader?.player) out.push({ label: g.away || "Away", detail: `${g.awayLeader.player} \u2014 ${g.awayLeader.line}` });
+  const h = line(g.homeLeaders), a = line(g.awayLeaders);
+  if (h) out.push({ label: g.home || "Home", detail: h });
+  if (a) out.push({ label: g.away || "Away", detail: a });
   return out;
 }
 function pitcherHighlights(g) {
@@ -2317,6 +2341,7 @@ function tidyDetail(detail) {
   if (!d) return "";
   d = d.replace(/^(Mon|Tue|Wed|Thu|Fri|Sat|Sun)\b/, (_m, abbr) => WEEKDAYS[abbr] || abbr);
   d = d.replace(/\s+([A-Z]{2,4})\.?$/, (m, abbr) => abbr === "AM" || abbr === "PM" ? m : "");
+  d = d.replace(/(\d+(?:st|nd|rd|th))\s+(?:Quarter|Inning|Period|Half)\b/gi, "$1");
   return d.trim();
 }
 function ymdInTz(d, tz) {
@@ -2376,12 +2401,13 @@ function card(g, state, tz) {
     home: { name: g.home || "", score: state === "pre" ? null : g.homeScore ?? null, record: g.homeRecord, logo: g.homeLogo, color: g.homeColor },
     away: { name: g.away || "", score: state === "pre" ? null : g.awayScore ?? null, record: g.awayRecord, logo: g.awayLogo, color: g.awayColor },
     winner: g.winner ?? null,
-    // Per-sport population of the generic stats. Baseball → R/H/E + standout batting
-    // lines; soccer → goals grouped by team. Other sports: empty until added.
-    // Never on a PRE/future game — there are no runs/hits/errors yet (a 0–0 R/H/E box
-    // on an upcoming game is meaningless and misleading).
-    lines: state !== "pre" && isBaseball(g) ? baseballLines(g) : [],
-    highlights: isBaseball(g) ? state === "pre" ? pitcherHighlights(g) : baseballHighlights(g) : soccerHighlights(g),
+    // Per-sport population of the generic stats. Standout leader lines render for every
+    // sport whose provider fills home/awayLeader (baseball batting, basketball PTS,
+    // hockey PTS, football YDS); soccer keeps its goal-event highlights; pre-game
+    // baseball shows probable pitchers. R/H/E lines REMOVED 2026-07-12 (user: a
+    // single-line R/H/E doesn't attribute which team had what).
+    lines: [],
+    highlights: isBaseball(g) ? state === "pre" ? pitcherHighlights(g) : leaderHighlights(g) : soccerHighlights(g).length ? soccerHighlights(g) : state !== "pre" ? leaderHighlights(g) : [],
     scorers: groupScorers(g)
     // legacy — drop once all renderers read highlights
   };
@@ -2444,9 +2470,21 @@ function templateSports(result, query, opts) {
 }
 
 // supabase/functions/_shared/tools/image_search.ts
+function envVar2(key) {
+  try {
+    const d = globalThis.Deno;
+    if (d?.env?.get) return d.env.get(key) ?? "";
+  } catch {
+  }
+  try {
+    return globalThis.process?.env?.[key] ?? "";
+  } catch {
+  }
+  return "";
+}
 async function runImageSearch(query, ctx) {
-  const url = ctx?.supabaseUrl ?? Deno.env.get("SUPABASE_URL") ?? "";
-  const anon = ctx?.anonKey ?? Deno.env.get("SUPABASE_ANON_KEY") ?? "";
+  const url = ctx?.supabaseUrl || envVar2("SUPABASE_URL");
+  const anon = ctx?.anonKey || envVar2("SUPABASE_ANON_KEY");
   const auth = ctx?.jwt ? `Bearer ${ctx.jwt}` : `Bearer ${anon}`;
   const resp = await fetch(`${url}/functions/v1/serper-image-search`, {
     method: "POST",
@@ -3551,11 +3589,13 @@ async function orchestrate(deps, io, voiceCtx) {
     };
   }
   if (!rateLimit.allowed) return rateLimitedTurn(t0, rateLimit.retryAfterSeconds);
-  if (!spend.spendable) return insufficientCreditsTurn(t0, spend.balance);
+  const byokBrain = io.billing === "byok";
+  if (!spend.spendable && !byokBrain) return insufficientCreditsTurn(t0, spend.balance);
+  const paidToolsOk = spend.spendable;
   const modelId = req.options?.model || account.model || await io.getDefaultModel(supabase);
   const provider = providerForModel(modelId);
-  const webSearchAllowed = account.webSearchEnabled !== false;
-  const retrievePictures = req.retrieve_pictures ?? (account.retrievePicturesEnabled ?? false);
+  const webSearchAllowed = account.webSearchEnabled !== false && paidToolsOk;
+  const retrievePictures = (req.retrieve_pictures ?? (account.retrievePicturesEnabled ?? false)) && paidToolsOk;
   const callerMode = req.options?.retain_mode === "caller";
   const retain = {
     serverPersist: retainEnabled && !callerMode,
@@ -3579,6 +3619,9 @@ async function orchestrate(deps, io, voiceCtx) {
     timezone: req.timezone,
     // client IANA zone → correct "today" in the prompt (server is UTC)
     webSearchEnabled: promptWebSearch,
+    // false → buildPrompt appends the image-unavailable instruction so the model can't
+    // claim to show a picture the enrichment layer will drop.
+    retrievePicturesEnabled: retrievePictures,
     caps
   };
   const forced = webSearchAllowed ? detectMutableEntity(req.text) : null;
@@ -3631,7 +3674,7 @@ async function orchestrate(deps, io, voiceCtx) {
   if (!p1Parsed || p1Parsed.type === "response" || p1Parsed.type === "action") {
     const sportsCard = providedSports && p1Parsed?.type === "response" ? templateSports(providedSports, providedSports.query || {}).structured_data : void 0;
     const imageHint = !sportsCard && retrievePictures && p1Parsed?.type === "response" ? p1Parsed.image : void 0;
-    const imageCard = imageHint?.searchTerms ? await resolveImageHint(p1Parsed, token, sessionId) : void 0;
+    const imageCard = imageHint?.searchTerms ? await resolveImageHint(p1Parsed, token, sessionId, io.toolConn) : void 0;
     const card2 = sportsCard ?? imageCard;
     const calendarUsed = !!(providedCalendar && !sportsCard && !imageCard && p1Parsed?.type === "response");
     const logMeta = sportsCard ? {
@@ -4013,13 +4056,13 @@ async function secondPass(io, deps, t0, inquiryType, retrievedData, priorStages,
   const usage = sumUsage([pass1.raw?.usage, pass2.raw.usage]);
   return finalize({ t0, parsed, raw: pass2.raw, stages: [...priorStages, p2Stage], usage, latency: pass1.latency_ms + pass2.latency_ms, retain, sessionId, route });
 }
-async function resolveImageHint(parsed, token, sessionId) {
+async function resolveImageHint(parsed, token, sessionId, conn) {
   const hint = parsed?.image;
   if (!hint?.searchTerms) return void 0;
   try {
-    let synth = await synthesizeImage(hint.searchTerms, hint.criteria, { jwt: token, sessionId });
+    let synth = await synthesizeImage(hint.searchTerms, hint.criteria, { ...conn, jwt: token, sessionId });
     if (!synth.card && hint.fallback && hint.fallback !== hint.searchTerms) {
-      synth = await synthesizeImage(hint.fallback, hint.criteria, { jwt: token, sessionId });
+      synth = await synthesizeImage(hint.fallback, hint.criteria, { ...conn, jwt: token, sessionId });
     }
     return synth.card ?? void 0;
   } catch (_e) {
@@ -4211,6 +4254,7 @@ function toolMeta(parsed, route, caps) {
 // Annotate the CommonJS export names for ESM import in node:
 0 && (module.exports = {
   runOrchestration,
+  runSports,
   wantsGameDetail
 });
-module.exports.BRAIN_SOURCE_SHA = "c51a3380fe1d1663ccd64dd0d498a79b620aa1f1";
+module.exports.BRAIN_SOURCE_SHA = "e4757e634ad83b77b80724cc7ce64853c31d12d6";

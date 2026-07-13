@@ -111,6 +111,7 @@ router.post('/converse-local', express.json(), async (req, res) => {
     model,
     key: target.key,
     providerLabel: target.providerLabel || '',
+    accountToken: token,   // BYOK tool gate: checkSpendable reads the balance under the account
   });
 
   const brainReq = {

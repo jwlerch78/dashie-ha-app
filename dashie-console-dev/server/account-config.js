@@ -19,7 +19,7 @@ const TTL_MS = 30_000; // user_settings changes rarely; a short cache keeps conv
 let _cache = null; // { at, value }
 
 const EMPTY_PIPELINE = { sttProvider: '', ttsProvider: '', haSttEngineId: '', haTtsEngineId: '', haTtsVoiceId: '', controlMethod: '', searchSource: '', pipelinePreset: '', customizePipeline: false };
-const SAFE_DEFAULT = { model: null, route: 'cloud', localLlmUrl: '', localLlmModel: '', localLlmKey: '', hermesUrl: '', retainTranscripts: false, agentMode: '', retrievePictures: null, defaultPersonalityId: '', defaultVoiceKey: '', defaultWakeWord: '', pipeline: EMPTY_PIPELINE };
+const SAFE_DEFAULT = { model: null, route: 'cloud', localLlmUrl: '', localLlmModel: '', localLlmKey: '', hermesUrl: '', retainTranscripts: false, agentMode: '', retrievePictures: null, webSearchEnabled: null, zipCode: '', defaultPersonalityId: '', defaultVoiceKey: '', defaultWakeWord: '', pipeline: EMPTY_PIPELINE };
 
 /** Coerce a settings value to a string, '' when absent/non-string. */
 function str(v) { return typeof v === 'string' ? v : ''; }
@@ -69,6 +69,12 @@ async function getAccountVoiceConfig() {
           // omits the image_search tool when false/unset). null = unset.
           retrievePictures: typeof settings?.ai?.retrievePicturesEnabled === 'boolean'
             ? settings.ai.retrievePicturesEnabled : null,
+          // ai.webSearchEnabled + the ZIP SSOT (family.zipCode canon → general mirror) —
+          // consumed by node-io.readAccountAiConfig so the add-on brain honors the same
+          // account tool toggles the cloud brain does (BYOK tool parity, 2026-07-13).
+          webSearchEnabled: typeof settings?.ai?.webSearchEnabled === 'boolean'
+            ? settings.ai.webSearchEnabled : null,
+          zipCode: str(settings?.family?.zipCode) || str(settings?.general?.zipCode),
           // WS-G §13.2: household account defaults — anon kiosks resolve the
           // household-sharing account's defaults (locked decision), still
           // overridable on-device. '' = unset → kiosk/app defaults

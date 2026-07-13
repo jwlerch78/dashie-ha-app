@@ -9,10 +9,22 @@
 // `callGateway` forwards the assembled prompt to a LAN model over an OpenAI-compatible endpoint
 // (/v1/chat/completions) — L3's inference hop. `logInteraction`/`logWebSearch`/`logSports` mirror
 // the cloud's logging.ts: they POST to database-operations under the account JWT so on-prem turns
-// show up in the Console's interaction/intelligence log. A LOCAL model isn't in the cost catalog,
-// so log_ai_interaction logs it but debits $0 (handleLogAIInteraction only debits when cost>0) —
-// i.e. captured-but-free, per §11. Still STUBBED: web search / sports (tools land in M3; cloud
-// SearXNG/sports later), personality (null = base prompt), retain transcripts (false).
+// show up in the Console's interaction/intelligence log. The AI tokens run on the user's own
+// key/model, so log_ai_interaction carries byok:true (recorded, never debited).
+//
+// TOOL PARITY (2026-07-13, "no technical reason BYOK shouldn't support all tools"):
+//   - web search  → the SAME web-search-gateway edge fn the cloud brain's gather.ts hits
+//                   (Tavily on Dashie's key). The core logs it via logWebSearch → the edge
+//                   debit path, so Dashie-funded searches still bill credits on BYOK turns.
+//   - sports      → bound straight from the brain bundle (pure keyless ESPN fetch).
+//   - image search→ runs in the CORE (synthesizeImage → serper-image-search edge fn, which
+//                   meters + bills itself); node-io supplies toolConn (no Deno env here).
+//   - account config → getAccountVoiceConfig (ai.model/webSearchEnabled/retrievePictures),
+//                   so the console toggles govern the add-on brain like the cloud one.
+//   - credits     → checkSpendable reads the balance via get_credit_balance; with
+//                   billing:'byok' the core does NOT reject an out-of-credits turn (the AI
+//                   is free) — it disables the Dashie-funded tools for the turn instead.
+// Still stubbed: personality (null = base prompt).
 // Target an OpenAI-compatible endpoint, NOT Ollama specifically (llama.cpp/LM Studio/vLLM/Ollama all
 // expose /v1/chat/completions) — build plan §13.12.
 
@@ -48,10 +60,12 @@ async function postDbOp(token, operation, data) {
  * @param {string} [opts.providerLabel]  Human name ('OpenAI', 'Gemini', …) prefixed onto HTTP
  *                                 errors so a bad BYO key reads as "OpenAI: Incorrect API key…",
  *                                 attributing the failure to the user's provider, not Dashie.
+ * @param {string} [opts.accountToken]  The account JWT for this request — used by
+ *                                 checkSpendable (balance read). '' → fail-open spendable.
  * @param {function} [opts.log]   Optional logger (defaults to console.log).
  * @returns {object} an OrchestratorIO
  */
-function createNodeIO({ endpoint, chatUrl: chatUrlOpt, model, key = '', providerLabel = '', log = console.log }) {
+function createNodeIO({ endpoint, chatUrl: chatUrlOpt, model, key = '', providerLabel = '', accountToken = '', log = console.log }) {
   const chatUrl = chatUrlOpt || (String(endpoint).replace(/\/+$/, '') + '/v1/chat/completions');
   // BYO-model (WS-I): send a bearer when the account configured a key — required
   // for a Hermes API server or any remote OpenAI-compatible endpoint. Local
@@ -106,11 +120,82 @@ function createNodeIO({ endpoint, chatUrl: chatUrlOpt, model, key = '', provider
 
   return {
     callGateway,
-    // ── Stubs (M1). Shapes match the brain's WebSearchResult / SportsResult so the loop never
-    //    crashes even if a model emits a tool request; real impls land in M3. ──
-    runWebSearch: async (query) => ({ provider: 'none', query, results: [], result_count: 0, latency: 0 }),
-    runSports: async (query) => ({ provider: 'none', query, games: [], result_count: 0, latency: 0 }),
+    // Web search: the SAME gateway edge fn the cloud brain's gather.ts calls (anon-key
+    // request; the CORE bills it afterward via logWebSearch → the user's debit). Throws
+    // on failure — the core's web_search branch already degrades a failed search.
+    runWebSearch: async (query, opts = {}) => {
+      const { provider = 'tavily', count = 10 } = opts;
+      const t0 = Date.now();
+      const resp = await fetch(`${SUPABASE.url}/functions/v1/web-search-gateway`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          apikey: SUPABASE.anonKey,
+          Authorization: `Bearer ${SUPABASE.anonKey}`,
+        },
+        body: JSON.stringify({ provider, query, options: { count } }),
+      });
+      const body = await resp.json().catch(() => ({}));
+      if (!resp.ok) throw new Error(body.error || body.message || `HTTP ${resp.status}`);
+      if (typeof body.latency !== 'number') body.latency = Date.now() - t0;
+      return body;
+    },
+    // Sports: bound straight from the brain bundle (it calls the sports-gateway edge fn
+    // — free/unbilled). Pass the Supabase conn explicitly: there is no Deno env here.
+    // Falls back to the empty stub on an old bundle.
+    runSports: async (query) => {
+      const brain = require('./voice-brain.bundle.js');
+      if (typeof brain.runSports === 'function') {
+        return brain.runSports(query, { supabaseUrl: SUPABASE.url, anonKey: SUPABASE.anonKey });
+      }
+      return { provider: 'none', query, games: [], result_count: 0, latency: 0 };
+    },
     resolvePersonality: async () => null,
+    // CR1 balance read for the BYOK tool gate. The core (billing:'byok') never rejects
+    // the turn on !spendable — it just disables the Dashie-funded tools — so fail-open
+    // here only risks a paid tool call that debitBalance floors later. get_credit_balance
+    // is the same read the console uses.
+    checkSpendable: async () => {
+      const failOpen = { spendable: true, balance: Number.POSITIVE_INFINITY, floor: 0, low: false };
+      if (!accountToken) return failOpen;
+      try {
+        const resp = await fetch(`${SUPABASE.url}/functions/v1/database-operations`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            apikey: SUPABASE.anonKey,
+            Authorization: `Bearer ${accountToken}`,
+          },
+          body: JSON.stringify({ operation: 'get_credit_balance', data: {} }),
+        });
+        const body = await resp.json().catch(() => ({}));
+        const balance = Number(body?.data?.balance ?? body?.balance);
+        if (!resp.ok || !isFinite(balance)) return failOpen;
+        return { spendable: balance > 0, balance, floor: 0, low: balance > 0 && balance < 1 };
+      } catch { return failOpen; }
+    },
+    // Account tool toggles (T3 parity with the cloud brain's ai-settings.ts): without
+    // this the core resolved retrieve_pictures to FALSE and the model hallucinated
+    // "Here's a picture of Oslo" with no way to show one (2026-07-13). model stays null:
+    // on this runtime the model is already resolved by voice-local (ai.model here can be
+    // a routing sentinel like 'local'/'hermes', which must not leak into a turn).
+    readAccountAiConfig: async () => {
+      try {
+        const a = await getAccountVoiceConfig();
+        return {
+          model: null,
+          webSearchEnabled: a.webSearchEnabled ?? null,
+          retrievePicturesEnabled: a.retrievePictures ?? null,
+          zipCode: a.zipCode || null,
+        };
+      } catch {
+        return { model: null, webSearchEnabled: null, retrievePicturesEnabled: null, zipCode: null };
+      }
+    },
+    // BYOK billing mode + the Supabase connection for core-side tools (image search) —
+    // there is no Deno env in Node, so the core must get the URL/key from here.
+    billing: 'byok',
+    toolConn: { supabaseUrl: SUPABASE.url, anonKey: SUPABASE.anonKey },
     // Capture on-prem turns in the Console (mirrors the cloud logging.ts). byok:true =
     // this brain runs on the user's own key/model, so the server records the row but
     // NEVER debits — required for cataloged model ids (a BYO Gemini key running
