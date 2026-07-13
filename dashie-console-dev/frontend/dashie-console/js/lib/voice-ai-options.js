@@ -191,7 +191,7 @@ const VoiceAiOptions = {
     // engine-direct row (ha_engine, labeled "Whisper (Home Assistant)") is
     // injected by sttOptions() when /api/voice/engines finds a Whisper engine.
     STT: [
-        { id: 'dashie_cloud', label: 'Dashie Cloud (Deepgram)', locality: 'cloud', cost: '$0.0043/min · ~0.04¢/command',
+        { id: 'dashie_cloud', label: 'Dashie Cloud (Deepgram)', locality: 'cloud', cost: '$0.036/min · ~0.3¢/command',
           description: 'Streaming, premium accuracy.' },
         { id: 'local_stt_url', label: 'Local Whisper (your box)', locality: 'local', cost: 'Free',
           description: 'Whisper server on your own box (OpenAI-compatible, LAN, direct).',
@@ -212,7 +212,7 @@ const VoiceAiOptions = {
         // the server's margined rate card. Two engines behind one row: the
         // default Dashie voice runs on Inworld (~4× cheaper per character);
         // personality voices are premium ElevenLabs.
-        { id: 'dashie_cloud', label: 'Dashie Cloud (ElevenLabs / Inworld)', locality: 'cloud', cost: '$0.03–0.13/1k chars · ~0.1–1¢/reply',
+        { id: 'dashie_cloud', label: 'Dashie Cloud (ElevenLabs / Inworld)', locality: 'cloud', cost: '$0.09–0.33/1k chars · ~0.5–1.9¢/reply',
           description: 'The default Dashie voice (Inworld) is the most economical; personality voices (ElevenLabs) are premium.' },
         { id: 'local_url', label: 'Local TTS (your box)', locality: 'local', cost: 'Free',
           description: 'Kokoro / OpenAI-compatible TTS on your own box (LAN, direct).',
@@ -376,7 +376,7 @@ const VoiceAiOptions = {
     // Image-search (Serper / Google Images) per-search cost string for the
     // "Retrieve pictures" toggle. Fallback from the raw catalog ($1/1000,
     // pre-margin); applyLiveRates overwrites with the margined rate card.
-    imageSearchCost: '~0.1¢',
+    imageSearchCost: '~0.9¢',
 
     // ── live rate card ───────────────────────────────────────
 
@@ -398,24 +398,43 @@ const VoiceAiOptions = {
                 this._liveModelRates = res.models;
             }
             const rates = res?.rates;
-            if (!Array.isArray(rates)) return;
             const amt = (svc) => {
+                if (!Array.isArray(rates)) return null;
                 const r = rates.find(x => x.service === svc)?.rates?.[0]?.amount;
                 return (typeof r === 'number' && r > 0) ? r : null;
             };
-            const tts = amt('tts');   // USD per 1,000 characters (premium/ElevenLabs rate)
-            if (tts) {
-                // The rate card carries the premium (ElevenLabs) rate; the
-                // Inworld default voice is ~4× cheaper — show it as a ceiling.
+            // Value-based charge rates (server `charge_rates`) are the price we
+            // actually bill — the single source of truth. Format them into the
+            // per-reply / per-command estimates the option rows show, so a rate
+            // hot-edit flows straight through here (no more hardcoded drift).
+            // Reference lengths for the estimate: a typical spoken reply/command.
+            const REPLY_CHARS = 57, CMD_SEC = 5;
+            const cr = res?.charge_rates;
+            const t = cr?.tts;
+            if (t && typeof t.inworld_per_1k === 'number' && typeof t.character_per_1k === 'number') {
+                // Basic (Inworld) → character (surcharged ElevenLabs) span. Per-reply
+                // from a typical reply length; the /1k rate is the exact billed unit.
+                const lo = this._cents(t.inworld_per_1k * REPLY_CHARS / 1000);
+                const hi = this._cents(t.character_per_1k * REPLY_CHARS / 1000);
                 this.TTS.find(o => o.id === 'dashie_cloud').cost =
-                    `up to $${tts.toFixed(2)}/1k chars · ~0.1–1¢/reply`;
+                    `$${t.inworld_per_1k.toFixed(2)}–$${t.character_per_1k.toFixed(2)}/1k chars · ${lo}–${hi}/reply`;
+            } else {
+                const tts = amt('tts');
+                if (tts) this.TTS.find(o => o.id === 'dashie_cloud').cost = `up to $${tts.toFixed(2)}/1k chars · ~0.1–1¢/reply`;
             }
-            const search = amt('web_search');   // USD per search
-            if (search) {
-                this.SEARCH.find(o => o.id === 'dashie').cost = `${this._cents(search)}/search`;
+            if (typeof cr?.stt?.per_min === 'number') {
+                const perCmd = this._cents(cr.stt.per_min * CMD_SEC / 60);
+                const stt = this.STT.find(o => o.id === 'dashie_cloud');
+                if (stt) stt.cost = `$${cr.stt.per_min.toFixed(3)}/min · ${perCmd}/command`;
             }
-            const image = amt('image_search');  // USD per image search
-            if (image) this.imageSearchCost = this._cents(image);
+            if (typeof cr?.image_search?.per_unit === 'number') {
+                this.imageSearchCost = this._cents(cr.image_search.per_unit);
+            } else {
+                const image = amt('image_search');
+                if (image) this.imageSearchCost = this._cents(image);
+            }
+            const search = amt('web_search');   // web search stays cost-plus (not in charge_rates)
+            if (search) this.SEARCH.find(o => o.id === 'dashie').cost = `${this._cents(search)}/search`;
             this._liveRatesApplied = true;
         } catch (e) {
             console.warn('[VoiceAiOptions] rate card unavailable, keeping fallback estimates:', e?.message || e);
