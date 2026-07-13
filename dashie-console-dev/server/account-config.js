@@ -93,17 +93,12 @@ async function getAccountVoiceConfig() {
             haSttEngineId: str(settings?.voice?.haSttEngineId),
             haTtsEngineId: str(settings?.voice?.haTtsEngineId),
             haTtsVoiceId: str(settings?.voice?.haTtsVoiceId),
-            // controlMethod is the runtime's engine-domain key that the anon-kiosk
-            // mirror routes on (Cloud vs HA Assist). The console only persists it
-            // when it differs from the display default, so a cloud account often
-            // has it BLANK in user_settings while pipelinePreset='cloud'. Derive it
-            // from the preset when empty — mirrors on-device VoicePresetSeeder
-            // (cloud/hybrid/local → dashie_cloud, ha_assist → voice_assistant) so
-            // the kiosk actually switches instead of keeping its HA-Assist default.
-            controlMethod: str(settings?.voice?.controlMethod)
-              || (str(settings?.voice?.pipelinePreset)
-                    ? (settings.voice.pipelinePreset === 'ha_assist' ? 'voice_assistant' : 'dashie_cloud')
-                    : ''),
+            // controlMethod — served raw from user_settings. The console now persists
+            // it UNCONDITIONALLY on preset select (voice-ai.js selectPreset), so it's
+            // no longer blank for default-preset accounts and the add-on no longer
+            // derives it (the 2026-07-13 derivation workaround was retired once the
+            // console became the single source of truth — kiosk-voice-mirror Option A).
+            controlMethod: str(settings?.voice?.controlMethod),
             searchSource: str(settings?.voice?.searchSource),
             pipelinePreset: str(settings?.voice?.pipelinePreset),
             customizePipeline: settings?.voice?.customizePipeline === true,
