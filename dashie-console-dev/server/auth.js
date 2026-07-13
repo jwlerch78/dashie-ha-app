@@ -65,6 +65,22 @@ function writeStoredJwt({ jwt, userId, userEmail, userName, userPicture }) {
     userName     = userName     ?? prev.userName     ?? payload.name    ?? meta.name    ?? meta.full_name ?? null;
     userPicture  = userPicture  ?? prev.userPicture  ?? payload.picture ?? meta.picture ?? meta.avatar_url ?? null;
 
+    // Account CHANGED (signed in as a different account — including a wiped-and-recreated
+    // account, which gets a brand-new auth user id). Household Sharing lives in
+    // settings-store on the add-on's /data volume — PER INSTANCE, not per account — so
+    // without this the new account silently inherits the previous account's sharing state,
+    // and the first-open "turn on Household Sharing" prompt (gated on sharing being off)
+    // never fires. Sign-out resets it too, but a re-signup without an explicit sign-out
+    // would otherwise slip through. Lazy require: keeps auth.js free of a load-time dep.
+    if (prev.userId && userId && prev.userId !== userId) {
+        try {
+            require('./settings-store').writeSettings({ householdSharing: false });
+            console.log(`[auth] account changed (${String(prev.userId).slice(0, 8)}… → ${String(userId).slice(0, 8)}…) — reset householdSharing=false`);
+        } catch (e) {
+            console.warn('[auth] household-sharing reset on account change failed (non-fatal):', e.message);
+        }
+    }
+
     const data = { jwt, expiry, userId, userEmail, userName, userPicture, savedAt: Date.now() };
     const tmp = JWT_FILE + '.tmp';
     fs.writeFileSync(tmp, JSON.stringify(data, null, 2));
