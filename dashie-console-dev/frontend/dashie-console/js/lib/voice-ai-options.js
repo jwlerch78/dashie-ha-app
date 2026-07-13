@@ -83,7 +83,45 @@ const VoiceAiOptions = {
      *  local-LLM route. Cost prefers the live margined rate card (applyLiveRates)
      *  — what the user actually pays — falling back to the bundled raw catalog
      *  (AiModelCatalog.pricingFor) when the card hasn't loaded. */
-    models() {
+    // Hermes add-on install/store deep-link (into the user's OWN HA — repository_url
+    // makes it resolve even before the Dashie repo is added). Slug hash =
+    // sha1('https://github.com/jwlerch78/dashie-ha-app')[:8] (supervisor store/utils.py).
+    _HERMES_ADDON_URL: 'https://my.home-assistant.io/redirect/supervisor_addon/?addon=01f10a62_dashie_hermes&repository_url=https%3A%2F%2Fgithub.com%2Fjwlerch78%2Fdashie-ha-app',
+    _HERMES_DOCS_URL: 'https://hermes-agent.nousresearch.com/docs/getting-started/quickstart',
+
+    /** State-driven extras for the Hermes row (WS-I.3). `detection.hermes` comes from
+     *  GET /api/voice/engines ({ installed, running, reachable, authed, url }); null in
+     *  the website console (no add-on to probe). Returns { installGuide?, note? } that
+     *  models() spreads onto the row so the badge + selected-row note track reality:
+     *    not installed  → Install badge (add-on link for HA users, docs otherwise)
+     *    installed/off  → "Open add-on ↗" (start it there) + note
+     *    running/unreach→ "starting…" note (Re-scan)
+     *    reachable/401  → "add API key" note (the bearer lives on the API Keys page)
+     *    authed         → "✓ Ready" note (+ detected url). */
+    _hermesRowExtras(detection) {
+        const h = detection?.hermes;
+        if (h?.installed) {
+            if (!h.running) {
+                return {
+                    installGuide: { url: this._HERMES_ADDON_URL, label: 'Open add-on ↗' },
+                    note: 'Add-on installed — open it, press Start, then add your Hermes API key under API Keys.',
+                };
+            }
+            if (!h.reachable) return { note: 'Add-on starting… give it a moment, then Re-scan.' };
+            if (!h.authed)   return { note: 'Add-on running — add your Hermes API key under API Keys to connect.' };
+            return { note: `✓ Detected and ready${h.url ? ` at ${h.url}` : ''}.` };
+        }
+        // Not installed (add-on mode, detection ran) OR website console (no detection):
+        // HA users get the add-on deep-link, everyone else the upstream install docs.
+        if (DashieAuth?.isAddonMode || DashieAuth?.isHaUser) {
+            return { installGuide: { url: this._HERMES_ADDON_URL, label: 'Install add-on ↗' } };
+        }
+        return { installGuide: { url: this._HERMES_DOCS_URL } };
+    },
+
+    /** @param {object} [detection] GET /api/voice/engines result — drives the Hermes
+     *  row's install/setup state (add-on mode). Absent on the website console. */
+    models(detection) {
         const C = window.AiModelCatalog;
         const all = C?.AI_MODEL_CATALOG || [];
         // "My Local LLM" leads the list — the privacy/local-first option (build plan §16.4).
@@ -110,27 +148,16 @@ const VoiceAiOptions = {
             // BYO-agent path (WS-I), not a generic endpoint. ai.model='hermes' is the
             // route signal (account-config.js treats it like 'local' → on-prem brain).
             // Its API key lives on the API Keys page (on-box key store), NOT here.
-            // HA users: Install ↗ deep-links the Dashie Hermes add-on in THEIR HA
-            // (store slug = sha1('https://github.com/jwlerch78/dashie-ha-app')[:8]
-            // + '_dashie_hermes' — supervisor store/utils.py; repository_url makes
-            // the link work even before the repo is added). Non-HA users get the
-            // upstream install docs. Detection/pre-fill is the WS-I.3 follow-up.
+            // installGuide (badge) + note are state-driven by _hermesRowExtras from the
+            // add-on detection block — Install ↗ when absent, Open add-on ↗ when installed
+            // but stopped, then inline setup notes once it's running (WS-I.3).
             id: 'hermes',
             label: 'Hermes Agent (self-hosted)',
             group: 'Local',
             description: 'Nous Research’s open-source personal agent behind Dashie’s brain — persistent memory and self-built skills, running on your own hardware. Add its API key under API Keys.',
             locality: 'local',
             cost: 'Free',
-            // isAddonMode first: it's synchronous (set at boot), and the add-on
-            // console is by definition an HA context — isHaUser is an async
-            // profile flag that can be false at first render (badge raced it).
-            // BARE DashieAuth, not window.DashieAuth: it's a top-level `const`
-            // (console-auth.js) so it lives in script scope, NOT on window —
-            // window.DashieAuth is undefined and silently falsy'd the gate.
-            installGuide: (DashieAuth?.isAddonMode || DashieAuth?.isHaUser)
-                ? { url: 'https://my.home-assistant.io/redirect/supervisor_addon/?addon=01f10a62_dashie_hermes&repository_url=https%3A%2F%2Fgithub.com%2Fjwlerch78%2Fdashie-ha-app',
-                    label: 'Install add-on ↗' }
-                : { url: 'https://hermes-agent.nousresearch.com/docs/getting-started/quickstart' },
+            ...this._hermesRowExtras(detection),
             configFields: [
                 { key: 'voice.hermesUrl', label: 'Hermes endpoint URL', placeholder: 'http://homeassistant.local:8642' },
             ],

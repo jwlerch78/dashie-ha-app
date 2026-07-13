@@ -828,7 +828,7 @@ const VoiceAiPage = {
      *  cloud provider groups). */
     _modelOptions(preset) {
         const O = window.VoiceAiOptions;
-        const catalog = O.presetFilter(preset, O.models());
+        const catalog = O.presetFilter(preset, O.models(this._engines));
         if (preset !== 'cloud') return catalog;
         const live = this._liveModelOptions().map(o => ({ ...o, group: 'Live · realtime conversation' }));
         return [...live, ...catalog];
