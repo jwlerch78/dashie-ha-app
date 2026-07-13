@@ -18,7 +18,7 @@ const { resolveBrainRoute } = require('./brain/providers');
 const TTL_MS = 30_000; // user_settings changes rarely; a short cache keeps converse latency low.
 let _cache = null; // { at, value }
 
-const EMPTY_PIPELINE = { sttProvider: '', ttsProvider: '', haSttEngineId: '', haTtsEngineId: '', haTtsVoiceId: '', controlMethod: '', searchSource: '', pipelinePreset: '', customizePipeline: false };
+const EMPTY_PIPELINE = { sttProvider: '', ttsProvider: '', haSttEngineId: '', haTtsEngineId: '', haTtsVoiceId: '', controlMethod: '', searchSource: '', pipelinePreset: '', customizePipeline: false, alwaysOpenDialog: false };
 const SAFE_DEFAULT = { model: null, route: 'cloud', localLlmUrl: '', localLlmModel: '', localLlmKey: '', hermesUrl: '', retainTranscripts: false, agentMode: '', retrievePictures: null, webSearchEnabled: null, zipCode: '', defaultPersonalityId: '', defaultVoiceKey: '', defaultWakeWord: '', householdSharing: false, pipeline: EMPTY_PIPELINE };
 
 /** Coerce a settings value to a string, '' when absent/non-string. */
@@ -109,6 +109,11 @@ async function getAccountVoiceConfig() {
             searchSource: str(settings?.voice?.searchSource),
             pipelinePreset: str(settings?.voice?.pipelinePreset),
             customizePipeline: settings?.voice?.customizePipeline === true,
+            // DLG-6 "keep dialog open" (user_settings.voice.alwaysOpenDialog) — rides the
+            // pipeline block rather than a new top-level field so the integration forwards
+            // it as-is (it passes `pipeline` through wholesale), no integration release
+            // needed. The applier writes VoicePreferences.alwaysOpenDialog.
+            alwaysOpenDialog: settings?.voice?.alwaysOpenDialog === true,
           },
         };
       }
