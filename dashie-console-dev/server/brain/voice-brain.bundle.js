@@ -4,7 +4,7 @@
    The voice-conversation brain core, bundled for the Node add-on (on-prem L3).
    ONE core, TWO runtimes: the cloud Deno edge fn runs the TS source directly;
    this CJS bundle is the add-on's copy of the SAME source. Never hand-edit.
-   Source git SHA: 88d54fb5906948955b07af4f61656ce2a1fb6d28
+   Source git SHA: c51a3380fe1d1663ccd64dd0d498a79b620aa1f1
    Regenerate:  node scripts/build-node-brain.mjs && ./sync-brain-bundle.sh
    Contract:    supabase/functions/voice-conversation/README.md + build plan §13.16
    ============================================================ */
@@ -29,7 +29,8 @@ var __toCommonJS = (mod) => __copyProps(__defProp({}, "__esModule", { value: tru
 // supabase/functions/voice-conversation/orchestrator.ts
 var orchestrator_exports = {};
 __export(orchestrator_exports, {
-  runOrchestration: () => runOrchestration
+  runOrchestration: () => runOrchestration,
+  wantsGameDetail: () => wantsGameDetail
 });
 module.exports = __toCommonJS(orchestrator_exports);
 
@@ -37,6 +38,10 @@ module.exports = __toCommonJS(orchestrator_exports);
 var BASE_CONTEXT = `# Base Context
 
 You are generating responses for a voice-controlled family assistant. Your output will be spoken aloud directly to the user.
+
+You are Dashie \u2014 the voice assistant built into Dashie, a smart home dashboard for families. Dashie runs on wall-mounted tablets, TVs, and web browsers and turns a screen into a shared family hub: a customizable widget dashboard (calendar, photos, weather, clock, chores and rewards), a photo screensaver, timers, a "Hey Dashie" voice assistant, and Home Assistant integration for smart-home control.
+
+If the user asks who or what you are, or about Dashie in general ("tell me about yourself", "what is Dashie", "what can you do"), answer directly from the description above in one or two friendly sentences \u2014 do NOT call a tool or search the web for it. You are Dashie: never describe yourself as a large language model and never name an underlying AI model or provider. For detailed questions about Dashie's settings, how-to steps, or troubleshooting, use the dashie_help tool if it is offered. Never web-search questions about Dashie itself, and never guess about settings locations or prices \u2014 if you cannot find the answer, say so and suggest emailing support@dashieapp.com (that exact address).
 
 Current date and time: {{DATE_TIME}}
 
@@ -1419,17 +1424,62 @@ Sports results (live from the sports provider):
   couldn't find that game \u2014 do NOT invent a score or scorers.
 - Keep the spoken \`voice\` answer under 25 words and natural to hear aloud.
 `;
-var AVAILABLE_TOOLS_LIST = `- calendar_events: query: {time_range: "today|tomorrow|this_week|next_week|weekend|next_30_days|next_60_days"} - Family calendar events
+var INQUIRY_DASHIE_HELP = `# Inquiry Context: Dashie Product Help
+
+The user asked about Dashie itself \u2014 its features, settings, how to do something, or how to fix a
+problem. Curated product documentation has been retrieved below. It is the ONLY trustworthy source
+about Dashie: answer from it, never from your general knowledge or the web.
+
+## Response Guidelines
+
+- **Answer only from the documentation below.** If it covers the question, lead with the direct
+  answer in one or two sentences.
+- **Never invent** settings locations, menu names, steps, prices, or features. Wrong directions
+  are worse than no answer.
+- **Spoken-friendly** \u2014 conversational plain sentences; no lists, headings, or markdown. Turn
+  written steps like "Settings \u2192 Display \u2192 Manage Themes" into speech: "open Settings, then
+  Display, then Manage Themes."
+- **Keep beta caveats** \u2014 if the documentation says a feature is newer or may not be on the
+  user's plan yet, keep that caveat in your answer.
+- **If \`found\` is false or the documentation doesn't actually answer the question**, say you're
+  not sure about that one, and that they can email support@dashieapp.com \u2014 do not guess, and do
+  not offer to search the web for it. When you give the support address, say it EXACTLY:
+  **support@dashieapp.com** \u2014 never shorten or alter the domain (it is not "dashie.com").
+
+## Example Questions and Responses
+
+**"How do I add a calendar?"**
+- Voice: "Open Settings, then Calendar, then Add Calendar \u2014 you can connect a Google or Outlook account from there."
+
+**"What can you do?"**
+- Voice: "I can help with your family calendar, weather, chores, timers, smart-home control, and questions like this one \u2014 just ask."
+
+**"How much does Dashie cost?"** (not covered)
+- Voice: "I'm not sure about pricing, honestly \u2014 the team at support@dashieapp.com can give you a current answer."
+
+## Retrieved Product Documentation
+
+\`\`\`json
+{{DASHIE_HELP_DATA}}
+\`\`\`
+
+Provide a helpful, spoken-friendly response based only on this documentation.
+`;
+var AVAILABLE_TOOLS_LIST = `- calendar_events: query: {time_range: "today|tomorrow|this_week|next_week|weekend|next_weekend|next_30_days|next_60_days|next_12_months|date_range|<weekday e.g. wednesday for that specific day>", start_date?: "YYYY-MM-DD", end_date?: "YYYY-MM-DD", member_name?: "name (for a specific person)", query?: "keyword to find ONE specific event e.g. physical therapy (for "what time is X")", tags?: ["soccer"], mode?: "next|list"} - Family calendar events. Set member_name when the question is about one person; use "weekend" for "this weekend" and "next_weekend" for "next weekend"; use mode "next" for a single upcoming event ("when is the next game"), "list" (default) for an overview ("what's on this weekend"). For a NAMED month or explicit period ("in December", "the week of the 20th") use time_range "date_range" WITH start_date + end_date covering it (a named month = its NEXT occurrence). For "when is X" with NO period named ("when is Veeva Break"), use query + mode "next" + time_range "next_12_months" so the search can't miss a far-out event
 - family_members: query: {} - Info about family members (age, relationship, etc.)
 - web_search: query: "search string" - Current events, news, external info (IMPORTANT: query is a STRING)
 - chores: query: {hint: "task description", member_hint: "name"} - When someone reports completing a chore
 - rewards: query: {} - Rewards catalog and redemption status
+- schedule_action: query: {time: "HH:MM" (24h local), recurrence: "once"|"daily", prompt: "instruction Dashie runs at that time, phrased as a user request", label: "short confirmation e.g. 'check whether the garage door is open'"} - Schedule Dashie to do/check something at a specific clock time ("tell me at 9:30 every night if...", "at 6am remind me..."). NOT for relative delays ("in 20 minutes") or sensor thresholds.
 - location_events: query: {member_name: "Mary", location_name: "home", timeframe: "today|yesterday|last_night", event_type: "arrive|depart"} - Arrival/departure history
 - travel_time: query: {event_title: "game", member_name: "Jack"} - When to leave for an event
 - family_locations: query: {member_name: "Mary"} - Current GPS location ("where is X right now?")
-- weather_data: query: {show_overlay: true} - Weather forecast for family location
+- weather_data: query: {timeframe: "current|today|tonight|weekend|this_week|<weekday e.g. saturday>", location?: "city or place, ONLY if the user names one \u2014 omit for the family's home location"} - Current conditions or forecast. Use timeframe to capture what they asked ("right now" \u2192 current, "this weekend" \u2192 weekend, "will it rain today" \u2192 today)
 - home_assistant: query: {command_hint: "transcript"} - Smart home control (lights, thermostat, garage, etc.)
-- sports: query: {sport: "soccer|football|basketball|baseball|hockey", league: "nfl|nba|mlb|nhl|college-football|world-cup|premier-league|...", team: "team or country name", date: "YYYY-MM-DD (optional)", type: "score|schedule"} - Live game scores and schedules for a specific team/league (prefer over web_search for any game result, score, or upcoming game)`;
+- sports: query: {sport: "soccer|football|basketball|baseball|hockey", league: "nfl|nba|mlb|nhl|college-football|world-cup|premier-league|...", team: "team or country name", date: "YYYY-MM-DD (optional)", type: "score|schedule"} - Live game scores and schedules for a specific team/league (prefer over web_search for any game result, score, or upcoming game)
+- get_current_time: query: {} - The CURRENT local date, time, and day of week. Call for "what time is it", "what's the date", "what day is it", AND to anchor any today/tomorrow/this-week/next reasoning. Authoritative \u2014 use it instead of your own clock, which is UTC and wrong for the user.
+- music: query: {action: "now_playing|search|play|pause|resume|stop|next|previous|volume_up|volume_down", query?: "song/artist/album text (for search or play)", uri?: "exact uri from a prior search result (for play)", speaker?: "speaker name, ONLY if the user names one"} - Music: what's playing now (action "now_playing" \u2014 "what song is this", "who sings this"), find music ("search" \u2014 returns matches to disambiguate), play it ("play" with the chosen uri, or a query), and transport \u2014 "stop the music"\u2192stop, "pause"\u2192pause, "turn it up/down"\u2192volume_up/volume_down, "next/skip"\u2192next. NEVER use "search" for a transport phrase
+- dashie_help: query: {question: "the user's question"} - Detailed help on Dashie ITSELF: settings and where to find them, how-to steps, troubleshooting ("how do I add a calendar", "where do I change the theme", "why is my screen black"). Do NOT use for who/what-are-you or general "about Dashie" questions \u2014 answer those directly from your identity context. Never web_search Dashie product questions`;
 function fillTemplate(template, values) {
   return template.replace(/\{\{(\w+)\}\}/g, (_match, key) => {
     const v = values[key];
@@ -1547,7 +1597,8 @@ var INQUIRY_BY_TYPE = {
   "travel-time": INQUIRY_TRAVEL_TIME,
   "family-locations": INQUIRY_FAMILY_LOCATIONS,
   "weather": INQUIRY_WEATHER,
-  "sports": INQUIRY_SPORTS
+  "sports": INQUIRY_SPORTS,
+  "dashie-help": INQUIRY_DASHIE_HELP
 };
 function languageNameFor(code) {
   return {
@@ -1568,6 +1619,17 @@ function languageNameFor(code) {
     // deno-lint-ignore no-explicit-any
   }[code] || code;
 }
+function toolsListFor(context) {
+  return context.webSearchEnabled === false ? AVAILABLE_TOOLS_LIST.split("\n").filter((l) => !l.trimStart().startsWith("- web_search:")).join("\n") : AVAILABLE_TOOLS_LIST;
+}
+function offeredToolNames(context) {
+  const names = [];
+  for (const line of toolsListFor(context).split("\n")) {
+    const m = line.match(/^\s*-\s*([A-Za-z0-9_]+)\s*:/);
+    if (m) names.push(m[1]);
+  }
+  return names;
+}
 function buildInquiryValues(inquiryType, data, baseValues) {
   switch (inquiryType) {
     case "calendar-events":
@@ -1583,6 +1645,8 @@ function buildInquiryValues(inquiryType, data, baseValues) {
       return { ...baseValues, FAMILY_DATA: JSON.stringify(data, null, 2) };
     case "web-search":
       return { ...baseValues, SEARCH_RESULTS: JSON.stringify(data, null, 2) };
+    case "dashie-help":
+      return { ...baseValues, DASHIE_HELP_DATA: JSON.stringify(data, null, 2) };
     case "chores":
       return {
         ...baseValues,
@@ -1644,6 +1708,37 @@ function buildInquiryValues(inquiryType, data, baseValues) {
       return baseValues;
   }
 }
+var PROVIDED_SPORTS_BLOCK = `## Pre-fetched Sports Data
+Sports data has ALREADY been retrieved for the user's question \u2014 do NOT request it again:
+\`\`\`json
+{{PROVIDED_SPORTS}}
+\`\`\`
+If this data answers the question, reply with type "response", leading with the result **in your personality's voice** (a greeting or flourish is welcome; keep the score itself factual). If the data is the wrong game/team or empty, instead reply with type "info_request", tool "sports", and a corrected query.`;
+var PROVIDED_CALENDAR_BLOCK = `## Pre-fetched Calendar Data
+The family calendar for {{TIME_RANGE}} has ALREADY been retrieved for the user's question \u2014 do NOT request it again:
+\`\`\`json
+{{PROVIDED_CALENDAR}}
+\`\`\`
+{{MEMBERS_SECTION}}Answer from this data with type "response", in your personality's voice:
+- Attribute events to people using each event's \`assigned_to\` matched against the family members \u2014 say "Charlie's soccer practice", not the raw calendar name. Use nicknames when present.
+- ONE event: describe it naturally in one sentence \u2014 whose it is, what, and when. Mention the location only if it's a real place name (never a URL or meeting link).
+- MULTIPLE events: an intelligent digest in at most two sentences \u2014 the count, the shape of the schedule (a busy morning, a free evening, back-to-back appointments), and one or two notable items. NEVER read the full list aloud \u2014 the events are already shown on screen.
+- If \`truncated\` is true, this list is only the FIRST \`events.length\` of \`total\` events \u2014 NEVER say something isn't on the calendar; if you don't see what was asked about, say the schedule is packed and you don't see it among the first ones, and point to the on-screen list.
+- Otherwise this data is the complete calendar for {{TIME_RANGE}}: if nothing matches what was asked, say so plainly \u2014 do not guess.
+- If the user asked about a time window this data does NOT cover, instead reply with type "info_request", tool "calendar_events", and the correct query.`;
+function providedCalendarBlock(provided) {
+  const cal = provided ?? {};
+  const timeRange = cal.time_range || "the requested period";
+  const members = Array.isArray(cal.members) && cal.members.length ? `Family members (for attribution):
+\`\`\`json
+${JSON.stringify(cal.members, null, 2)}
+\`\`\`
+` : "";
+  const events = cal.events ?? [];
+  const payload = { total: cal.total ?? events.length, events };
+  if (cal.truncated) payload.truncated = true;
+  return PROVIDED_CALENDAR_BLOCK.replaceAll("{{TIME_RANGE}}", timeRange).replace("{{PROVIDED_CALENDAR}}", JSON.stringify(payload, null, 2)).replace("{{MEMBERS_SECTION}}", members);
+}
 function buildPrompt({ userRequest, inquiryType, retrievedData, context = {} }) {
   const dateTime = formatDateTime(context.timezone);
   let personalityConfig = null;
@@ -1657,17 +1752,24 @@ function buildPrompt({ userRequest, inquiryType, retrievedData, context = {} }) 
   }
   const languageCode = context.language || "system";
   const languageInstruction = languageCode && languageCode !== "system" ? `Respond in ${languageNameFor(languageCode)}.` : "";
+  const toolsList = toolsListFor(context);
   const baseValues = {
     DATE_TIME: dateTime,
     USER_REQUEST: userRequest,
     CHAT_HISTORY: context.chatHistory || "",
-    AVAILABLE_TOOLS_LIST,
+    AVAILABLE_TOOLS_LIST: toolsList,
     LANGUAGE_INSTRUCTION: languageInstruction,
     ...context
   };
   let prompt = fillTemplate(BASE_CONTEXT, baseValues);
   if (personalityConfig) {
     prompt = (personalityConfig.responsePrefix || "") + "\n\n" + prompt;
+  }
+  if (!inquiryType && context.providedSports) {
+    prompt += "\n\n" + PROVIDED_SPORTS_BLOCK.replace("{{PROVIDED_SPORTS}}", JSON.stringify(context.providedSports, null, 2));
+  }
+  if (!inquiryType && context.providedCalendar) {
+    prompt += "\n\n" + providedCalendarBlock(context.providedCalendar);
   }
   if (inquiryType && retrievedData) {
     const inquiryTemplate = INQUIRY_BY_TYPE[inquiryType];
@@ -1683,6 +1785,91 @@ function buildPrompt({ userRequest, inquiryType, retrievedData, context = {} }) 
     prompt += personalityConfig.responseSuffix;
   }
   return prompt;
+}
+
+// supabase/functions/voice-conversation/redact-args.ts
+var PASS_KEYS = /* @__PURE__ */ new Set([
+  "time_range",
+  "mode",
+  "timeframe",
+  "when",
+  "type",
+  "sport",
+  "league",
+  "event_type",
+  "date",
+  "resolved"
+]);
+var MAX_ENUM_LEN = 40;
+var encoder = new TextEncoder();
+function readSalt() {
+  try {
+    const d = globalThis.Deno;
+    if (d?.env?.get) return d.env.get("ARG_HASH_SALT") ?? "";
+  } catch {
+  }
+  try {
+    return globalThis.process?.env?.ARG_HASH_SALT ?? "";
+  } catch {
+  }
+  return "";
+}
+var keyPromise = null;
+function hmacKey() {
+  if (!keyPromise) {
+    keyPromise = (async () => {
+      const salt = readSalt();
+      const subtle = globalThis.crypto?.subtle;
+      if (!salt || !subtle) return null;
+      try {
+        return await subtle.importKey(
+          "raw",
+          encoder.encode(salt),
+          { name: "HMAC", hash: "SHA-256" },
+          false,
+          ["sign"]
+        );
+      } catch {
+        return null;
+      }
+    })();
+  }
+  return keyPromise;
+}
+async function hmac12(value) {
+  const key = await hmacKey();
+  if (!key) return "";
+  try {
+    const sig = await globalThis.crypto.subtle.sign("HMAC", key, encoder.encode(value));
+    return Array.from(new Uint8Array(sig).slice(0, 6)).map((b) => b.toString(16).padStart(2, "0")).join("");
+  } catch {
+    return "";
+  }
+}
+async function redactString(value) {
+  return `[redacted:${await hmac12(value)}:${value.length}]`;
+}
+async function redactValue(key, value) {
+  if (value === null || value === void 0) return value ?? null;
+  if (typeof value === "boolean" || typeof value === "number") return value;
+  if (typeof value === "string") {
+    if (key !== null && PASS_KEYS.has(key) && value.length <= MAX_ENUM_LEN) return value;
+    return await redactString(value);
+  }
+  if (Array.isArray(value)) {
+    return await Promise.all(value.map((v) => redactValue(null, v)));
+  }
+  if (typeof value === "object") {
+    const out = {};
+    for (const [k, v] of Object.entries(value)) {
+      out[k] = await redactValue(k, v);
+    }
+    return out;
+  }
+  return null;
+}
+async function redactToolArgs(args) {
+  return await redactValue(null, args);
 }
 
 // supabase/functions/voice-conversation/parse.ts
@@ -1728,12 +1915,18 @@ function normalizeParsedShape(parsed) {
     "travel_time",
     "family_locations",
     "weather_data",
-    "home_assistant"
+    "home_assistant",
+    "get_current_time",
+    "dashie_help",
+    "music",
+    "schedule_action"
   ]);
-  if (parsed.type && KNOWN_TOOLS.has(parsed.type) && parsed.type !== "info_request") {
+  const TERMINAL_TYPES = /* @__PURE__ */ new Set(["response", "action", "info_request"]);
+  const tool = parsed.type && KNOWN_TOOLS.has(parsed.type) && parsed.type !== "info_request" ? parsed.type : typeof parsed.tool === "string" && KNOWN_TOOLS.has(parsed.tool) && !TERMINAL_TYPES.has(parsed.type) ? parsed.tool : null;
+  if (tool) {
     return {
       type: "info_request",
-      tool: parsed.type,
+      tool,
       query: parsed.query,
       context: parsed.context,
       processing_message: parsed.processing_message
@@ -1797,6 +1990,44 @@ function repairTruncatedJson(s) {
   prefix = prefix.replace(/,(\s*)$/, "$1");
   const closers = stack.map((c) => c === "{" ? "}" : "]").reverse().join("");
   return prefix + closers;
+}
+
+// supabase/functions/voice-conversation/dialog-policy.ts
+var NOISE_REPLY = "Sorry, I didn't catch that.";
+var END_INTENT_PHRASES = [
+  "thanks",
+  "thank you",
+  "that's all",
+  "thats all",
+  "never mind",
+  "nevermind",
+  "ok thanks",
+  "okay thanks",
+  "ok thank you",
+  "okay thank you",
+  "stop",
+  "done",
+  "goodbye",
+  "nothing",
+  "shut up",
+  "stop talking",
+  "be quiet",
+  "quiet",
+  "shush",
+  "stop it",
+  "enough",
+  "that's enough"
+];
+var HARD_STOP_PHRASES = ["shut up", "stop talking"];
+var normalize = (t) => (t || "").toLowerCase().replace(/[.!?,]+/g, " ").replace(/\s+/g, " ").trim();
+function isEndIntent(text) {
+  const t = normalize(text);
+  if (!t) return false;
+  if (END_INTENT_PHRASES.includes(t)) return true;
+  return HARD_STOP_PHRASES.some((p) => t.includes(p));
+}
+function isMissReply(voice) {
+  return !!voice && /\bdidn.?t (?:quite )?catch that\b/i.test(voice);
 }
 
 // supabase/functions/voice-conversation/models.ts
@@ -1899,7 +2130,102 @@ function detectMutableEntity(text) {
   return null;
 }
 
-// supabase/functions/voice-conversation/synthesis/sports.ts
+// supabase/functions/_shared/tools/sports-slate.ts
+var MAX_SLATE = 60;
+var STATE_RANK = { in: 0, pre: 1, post: 2 };
+function compareGames(a, b) {
+  const sa = deriveState(a), sb = deriveState(b);
+  if (STATE_RANK[sa] !== STATE_RANK[sb]) return STATE_RANK[sa] - STATE_RANK[sb];
+  const ta = Date.parse(a.startTime || "") || 0;
+  const tb = Date.parse(b.startTime || "") || 0;
+  return sa === "post" ? tb - ta : ta - tb;
+}
+function entryFor(g, tz) {
+  const state = deriveState(g);
+  const date = relativeDay(g.startTime, tz);
+  const detail = state === "pre" ? scheduleWhen(g, tz) || tidyDetail(g.detail) : state === "post" ? date ? `Final \xB7 ${date}` : tidyDetail(g.detail) || "Final" : tidyDetail(g.detail) || "";
+  return {
+    state,
+    detail,
+    startTime: g.startTime,
+    // A PRE/future game has no score — force null even when the provider sends 0 (ESPN → "0"),
+    // so a slate row shows the kickoff time, not a misleading "0". Mirrors the single-card rule.
+    // short/abbr = compact display forms for the stacked slate rows ("Diamondbacks"/"ARI").
+    home: { name: g.home || "", score: state === "pre" ? null : g.homeScore ?? null, logo: g.homeLogo, short: g.homeShort, abbr: g.homeAbbr },
+    away: { name: g.away || "", score: state === "pre" ? null : g.awayScore ?? null, logo: g.awayLogo, short: g.awayShort, abbr: g.awayAbbr },
+    winner: g.winner ?? null
+  };
+}
+var LEAGUE_LABELS = {
+  mlb: "MLB",
+  nba: "NBA",
+  nfl: "NFL",
+  nhl: "NHL",
+  wnba: "WNBA",
+  mls: "MLS",
+  "world-cup": "World Cup",
+  "premier-league": "Premier League",
+  epl: "Premier League",
+  "champions-league": "Champions League",
+  ucl: "Champions League",
+  "la-liga": "La Liga"
+};
+function leagueLabel(league) {
+  const key = String(league || "").toLowerCase().trim().replace(/\s+/g, "-");
+  if (LEAGUE_LABELS[key]) return LEAGUE_LABELS[key];
+  if (!key) return "";
+  return key.split("-").map((w) => w.charAt(0).toUpperCase() + w.slice(1)).join(" ");
+}
+function sharedDayLabel(games, tz) {
+  const days = new Set(games.map((g) => relativeDay(g.startTime, tz)).filter(Boolean));
+  if (days.size !== 1) return "";
+  const d = [...days][0];
+  if (d === "Today") return "today";
+  if (d === "Tomorrow") return "tomorrow";
+  if (d === "Yesterday") return "yesterday";
+  return `on ${d.replace(/^\w{3}, /, "")}`;
+}
+function clause(g, tz) {
+  const state = deriveState(g);
+  const away = g.away || "TBD", home = g.home || "TBD";
+  if (state === "in") return `${away} ${g.awayScore ?? 0}, ${home} ${g.homeScore ?? 0}`;
+  if (state === "post") {
+    const hs = g.homeScore ?? 0, as = g.awayScore ?? 0;
+    if (hs === as && !g.winner) return `${away} and ${home} tied ${as}\u2013${hs}`;
+    const homeWon = g.winner ? g.winner === "home" : hs > as;
+    const [w, ws, l, ls] = homeWon ? [home, hs, away, as] : [away, as, home, hs];
+    return `${w} beat ${l} ${ws}\u2013${ls}`;
+  }
+  const t = clockTime(g.startTime, tz);
+  return `${away} vs ${home}${t ? ` at ${t}` : ""}`;
+}
+function slateVoice(games, query, tz) {
+  const total = games.length;
+  const team = String(query?.team ?? "").trim();
+  const label = leagueLabel(query?.league);
+  const day = sharedDayLabel(games, tz);
+  const noun = `game${total === 1 ? "" : "s"}`;
+  const head = team ? `${team} have ${total} ${day ? "" : "upcoming "}${noun}${day ? ` ${day}` : ""}`.replace(/\s+/g, " ") : `There ${total === 1 ? "is" : "are"} ${total} ${label ? `${label} ` : ""}${noun}${day ? ` ${day}` : ""}`;
+  const picks = games.slice(0, 2).map((g) => clause(g, tz)).filter(Boolean);
+  if (picks.length === 0) return `${head}.`;
+  const list = picks.length >= 2 ? `${picks[0]}, and ${picks[1]}` : picks[0];
+  return `${head}: ${list}.`;
+}
+function templateSlate(result, query, opts) {
+  const tz = opts?.timezone;
+  const all = Array.isArray(result?.games) ? result.games : [];
+  if (all.length === 0) return { voice: "", structured_data: null };
+  const sorted = all.slice().sort(compareGames);
+  const card2 = {
+    type: "sports",
+    league: String(query?.league ?? "") || void 0,
+    games: sorted.slice(0, MAX_SLATE).map((g) => entryFor(g, tz)),
+    total: sorted.length
+  };
+  return { voice: slateVoice(sorted, query, tz), structured_data: card2 };
+}
+
+// supabase/functions/_shared/tools/sports.ts
 function resolveWhen(query) {
   const w = String(query?.when ?? "").toLowerCase();
   if (w === "last" || w === "next" || w === "live") return w;
@@ -1942,6 +2268,41 @@ function scorersText(g) {
   const list = scorers.map((s) => `${s.player}${s.clocks.length ? ` (${s.clocks.join(", ")})` : ""}`).join(", ");
   return `Scorers: ${list}`;
 }
+function soccerHighlights(g) {
+  const scorers = groupScorers(g);
+  if (!scorers.length) return [];
+  const fmt = (list) => list.map((s) => `${s.player}${s.clocks.length ? ` (${s.clocks.join(", ")})` : ""}`).join(", ");
+  const out = [];
+  const home = scorers.filter((s) => s.side === "home");
+  const away = scorers.filter((s) => s.side === "away");
+  const neutral = scorers.filter((s) => !s.side);
+  if (home.length) out.push({ label: g.home || "Home", detail: fmt(home) });
+  if (away.length) out.push({ label: g.away || "Away", detail: fmt(away) });
+  if (neutral.length) out.push({ label: "Scorers", detail: fmt(neutral) });
+  return out;
+}
+var isBaseball = (g) => /mlb|baseball/i.test(g.league || "");
+function baseballLines(g) {
+  const s = (n) => n == null ? "" : String(n);
+  const out = [
+    { label: "R", home: s(g.homeScore), away: s(g.awayScore) },
+    { label: "H", home: s(g.homeHits), away: s(g.awayHits) },
+    { label: "E", home: s(g.homeErrors), away: s(g.awayErrors) }
+  ];
+  return g.homeHits != null || g.awayHits != null ? out : [];
+}
+function baseballHighlights(g) {
+  const out = [];
+  if (g.homeLeader?.player) out.push({ label: g.home || "Home", detail: `${g.homeLeader.player} \u2014 ${g.homeLeader.line}` });
+  if (g.awayLeader?.player) out.push({ label: g.away || "Away", detail: `${g.awayLeader.player} \u2014 ${g.awayLeader.line}` });
+  return out;
+}
+function pitcherHighlights(g) {
+  const out = [];
+  if (g.awayProbable) out.push({ label: g.away || "Away", detail: `${g.awayProbable} (P)` });
+  if (g.homeProbable) out.push({ label: g.home || "Home", detail: `${g.homeProbable} (P)` });
+  return out;
+}
 var WEEKDAYS = {
   Mon: "Monday",
   Tue: "Tuesday",
@@ -1955,28 +2316,87 @@ function tidyDetail(detail) {
   let d = (detail || "").trim();
   if (!d) return "";
   d = d.replace(/^(Mon|Tue|Wed|Thu|Fri|Sat|Sun)\b/, (_m, abbr) => WEEKDAYS[abbr] || abbr);
-  d = d.replace(/\s+[A-Z]{2,4}\.?$/, "");
+  d = d.replace(/\s+([A-Z]{2,4})\.?$/, (m, abbr) => abbr === "AM" || abbr === "PM" ? m : "");
   return d.trim();
 }
-function scheduleWhen(g) {
+function ymdInTz(d, tz) {
+  return new Intl.DateTimeFormat("en-CA", { ...tz ? { timeZone: tz } : {}, year: "numeric", month: "2-digit", day: "2-digit" }).format(d);
+}
+function relativeDay(startTime, tz) {
+  if (!startTime) return "";
+  const d = new Date(startTime);
+  if (isNaN(d.getTime())) return "";
+  const gameYmd = ymdInTz(d, tz);
+  const nowYmd = ymdInTz(/* @__PURE__ */ new Date(), tz);
+  const diff = Math.round((Date.parse(`${gameYmd}T00:00:00Z`) - Date.parse(`${nowYmd}T00:00:00Z`)) / 864e5);
+  if (diff === 0) return "Today";
+  if (diff === 1) return "Tomorrow";
+  if (diff === -1) return "Yesterday";
+  try {
+    return new Intl.DateTimeFormat("en-US", { ...tz ? { timeZone: tz } : {}, weekday: "short", month: "short", day: "numeric" }).format(d);
+  } catch {
+    return "";
+  }
+}
+function clockTime(startTime, tz) {
+  if (!tz || !startTime) return "";
+  const d = new Date(startTime);
+  if (isNaN(d.getTime())) return "";
+  try {
+    return new Intl.DateTimeFormat("en-US", { timeZone: tz, hour: "numeric", minute: "2-digit" }).format(d).replace(/[\u202f\u00a0]/g, " ");
+  } catch {
+    return "";
+  }
+}
+function scheduleWhen(g, tz) {
+  const day = relativeDay(g.startTime, tz);
+  const time = clockTime(g.startTime, tz);
+  if (day && time) return `${day}, ${time}`;
+  if (day) return day;
   const d = tidyDetail(g.detail);
   return d && /\d/.test(d) ? d : "";
 }
-function card(g, state) {
+function formatGameDate(startTime, tz) {
+  return relativeDay(startTime, tz);
+}
+function card(g, state, tz) {
+  const date = formatGameDate(g.startTime, tz);
+  const pens = g.homeShootout != null || g.awayShootout != null || state === "post" && !!g.winner && (g.homeScore ?? 0) === (g.awayScore ?? 0);
+  const finalLabel = pens ? "Final (Pens)" : "Final";
+  const detail = state === "pre" ? scheduleWhen(g, tz) || tidyDetail(g.detail) || g.startTime : state === "post" ? date ? `${finalLabel} \xB7 ${date}` : tidyDetail(g.detail) || finalLabel : tidyDetail(g.detail) || g.startTime;
   return {
     type: "sports",
     league: g.league,
     state,
-    detail: tidyDetail(g.detail) || g.startTime,
-    home: { name: g.home || "", score: g.homeScore ?? null, record: g.homeRecord, logo: g.homeLogo, color: g.homeColor },
-    away: { name: g.away || "", score: g.awayScore ?? null, record: g.awayRecord, logo: g.awayLogo, color: g.awayColor },
+    detail,
+    venue: g.venue,
+    // A PRE/future game has NO score — force null even when the provider sends 0 (ESPN returns
+    // "0"/"0" for a scheduled game), so the card never shows a misleading "0 – 0". `?? null` alone
+    // keeps a numeric 0; the state gate is what suppresses it. (Mirrors the no-R/H/E-lines rule.)
+    home: { name: g.home || "", score: state === "pre" ? null : g.homeScore ?? null, record: g.homeRecord, logo: g.homeLogo, color: g.homeColor },
+    away: { name: g.away || "", score: state === "pre" ? null : g.awayScore ?? null, record: g.awayRecord, logo: g.awayLogo, color: g.awayColor },
     winner: g.winner ?? null,
+    // Per-sport population of the generic stats. Baseball → R/H/E + standout batting
+    // lines; soccer → goals grouped by team. Other sports: empty until added.
+    // Never on a PRE/future game — there are no runs/hits/errors yet (a 0–0 R/H/E box
+    // on an upcoming game is meaningless and misleading).
+    lines: state !== "pre" && isBaseball(g) ? baseballLines(g) : [],
+    highlights: isBaseball(g) ? state === "pre" ? pitcherHighlights(g) : baseballHighlights(g) : soccerHighlights(g),
     scorers: groupScorers(g)
+    // legacy — drop once all renderers read highlights
   };
 }
 function finalLine(g) {
   const hs = g.homeScore ?? 0, as = g.awayScore ?? 0;
-  if (hs === as) return `${g.home} and ${g.away} tied ${hs} to ${as}.`;
+  if (hs === as) {
+    if (g.winner) {
+      const homeWon2 = g.winner === "home";
+      const w2 = homeWon2 ? g.home : g.away;
+      const ps = g.homeShootout != null && g.awayShootout != null ? `, ${homeWon2 ? g.homeShootout : g.awayShootout} to ${homeWon2 ? g.awayShootout : g.homeShootout}` : "";
+      return `${g.home} and ${g.away} drew ${hs} to ${as}, but ${w2} won on penalties${ps}.`;
+    }
+    return `${g.home} and ${g.away} tied ${hs} to ${as}.`;
+  }
   const homeWon = g.winner ? g.winner === "home" : hs > as;
   const [w, ws, l, ls] = homeWon ? [g.home, hs, g.away, as] : [g.away, as, g.home, hs];
   return `${w} beat ${l} ${ws} to ${ls}.`;
@@ -1986,27 +2406,28 @@ function liveLine(g) {
   const when = tidyDetail(g.detail) ? `, ${tidyDetail(g.detail)}` : "";
   return `${g.away} ${as}, ${g.home} ${hs}${when}.`;
 }
-function scheduledLine(g, team) {
+function scheduledLine(g, team, tz) {
   const teamName = team && (g.away || "").toLowerCase().includes(team) ? g.away : g.home;
   const opp = teamName === g.home ? g.away : g.home;
-  const when = scheduleWhen(g);
+  const when = scheduleWhen(g, tz);
   return `${teamName} play ${opp}${when ? `, ${when}` : ""}.`;
 }
 function noGamesLine(query) {
   const team = String(query?.team ?? "").trim();
   return team ? `I couldn't find a game for ${team}.` : `I couldn't find that game.`;
 }
-function noRecentResultLine(g, query) {
+function noRecentResultLine(g, query, tz) {
   const team = String(query?.team ?? "").trim() || g.home || "that team";
   const opp = (g.home || "").toLowerCase().includes(team.toLowerCase()) ? g.away : g.home;
-  const when = scheduleWhen(g);
+  const when = scheduleWhen(g, tz);
   return `I couldn't find a recent ${team} result \u2014 their next game is${when ? ` ${when}` : ""} vs ${opp}.`;
 }
-function templateSports(result, query) {
+function templateSports(result, query, opts) {
+  const tz = opts?.timezone;
   const games = Array.isArray(result?.games) ? result.games : [];
   const team = String(query?.team ?? "").toLowerCase();
   const when = resolveWhen(query);
-  if (!team) {
+  if (!team && !when) {
     return { voice: "", text: null, structured_data: null, fallback: true };
   }
   if (games.length === 0) {
@@ -2015,12 +2436,926 @@ function templateSports(result, query) {
   const game = pickGame(games, team, when);
   const state = deriveState(game);
   if (when === "last" && state === "pre") {
-    return { voice: noRecentResultLine(game, query), text: null, structured_data: card(game, state) };
+    return { voice: noRecentResultLine(game, query, tz), text: null, structured_data: card(game, state, tz) };
   }
-  const voice = state === "post" ? finalLine(game) : state === "in" ? liveLine(game) : scheduledLine(game, team);
+  const voice = state === "post" ? finalLine(game) : state === "in" ? liveLine(game) : scheduledLine(game, team, tz);
   const text = state === "pre" ? null : scorersText(game);
-  return { voice, text, structured_data: card(game, state) };
+  return { voice, text, structured_data: card(game, state, tz) };
 }
+
+// supabase/functions/_shared/tools/image_search.ts
+async function runImageSearch(query, ctx) {
+  const url = ctx?.supabaseUrl ?? Deno.env.get("SUPABASE_URL") ?? "";
+  const anon = ctx?.anonKey ?? Deno.env.get("SUPABASE_ANON_KEY") ?? "";
+  const auth = ctx?.jwt ? `Bearer ${ctx.jwt}` : `Bearer ${anon}`;
+  const resp = await fetch(`${url}/functions/v1/serper-image-search`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", apikey: anon, Authorization: auth },
+    body: JSON.stringify({ query, perPage: 10, sessionId: ctx?.sessionId ?? null })
+  });
+  const body = await resp.json().catch(() => ({}));
+  if (!resp.ok) throw new Error(body.error || body.message || `HTTP ${resp.status}`);
+  return { images: Array.isArray(body?.images) ? body.images : [] };
+}
+var OFFICIAL_LOGO_URL = "https://dashieapp.com/artwork/Dashie_Full_Logo_Orange_Transparent.png";
+function officialImage(query) {
+  const q = query.toLowerCase();
+  if (/dashie\s*(games|xp)/.test(q)) return null;
+  if (!/\bdashie('s)?\b/.test(q) || !/\b(logo|icon|brand|branding)\b/.test(q)) return null;
+  return {
+    type: "image",
+    url: OFFICIAL_LOGO_URL,
+    thumbnail: OFFICIAL_LOGO_URL,
+    description: "The Dashie logo",
+    source: "dashie-official",
+    attribution: { photographer: "Dashie", photographerUrl: "https://dashieapp.com" }
+  };
+}
+function selectImage(images, criteria) {
+  const valid = images.filter((i) => i && i.imageUrl);
+  if (valid.length === 0) return null;
+  if (!criteria || valid.length === 1) return valid[0];
+  const keywords = criteria.toLowerCase().split(/\s+/).filter(Boolean);
+  let best = valid[0];
+  let bestScore = -Infinity;
+  valid.forEach((img, index) => {
+    const text = [img.title, img.source, img.domain].filter(Boolean).join(" ").toLowerCase();
+    let score = 0;
+    for (const k of keywords) if (text.includes(k)) score += 1;
+    if (img.title && String(img.title).length > 10) score += 0.5;
+    score += Math.max(0, 10 - index) * 0.01;
+    if (score > bestScore) {
+      bestScore = score;
+      best = img;
+    }
+  });
+  return best;
+}
+function buildImageCard(img) {
+  return {
+    type: "image",
+    url: img.imageUrl,
+    thumbnail: img.thumbnailUrl || img.imageUrl,
+    description: img.title || "",
+    source: "serper",
+    attribution: {
+      photographer: img.source || img.domain || "Google Images",
+      photographerUrl: img.link || null
+    }
+  };
+}
+async function synthesizeImage(query, criteria, ctx) {
+  const official = officialImage(query);
+  if (official) {
+    return {
+      result: { found: true, description: official.description, source: "Dashie" },
+      card: official
+    };
+  }
+  const { images } = await runImageSearch(query, ctx);
+  const picked = selectImage(images, criteria);
+  if (!picked) return { result: { found: false }, card: null };
+  const card2 = buildImageCard(picked);
+  return {
+    result: { found: true, description: card2.description, source: card2.attribution?.photographer ?? null },
+    card: card2
+  };
+}
+
+// supabase/functions/_shared/tools/current_time.ts
+var currentTimeTool = {
+  name: "get_current_time",
+  description: `Get the CURRENT local date, time, and day of week for the user. Call this for any question about the current time, date, or day ("what time is it", "what's today's date", "what day is it"), and to anchor any today/tomorrow/this-week/next reasoning. It is authoritative \u2014 use it instead of your own internal clock, which is UTC and wrong for the user. Read the date/time back in the user's local zone; never say UTC.`,
+  parameters: { type: "object", properties: {} },
+  // deno-lint-ignore require-await
+  async execute(_args, ctx) {
+    const tz = ctx.timezone || "UTC";
+    const now = /* @__PURE__ */ new Date();
+    const fmt = (opts) => new Intl.DateTimeFormat("en-US", { timeZone: tz, ...opts }).format(now);
+    const day = fmt({ weekday: "long" });
+    const date = fmt({ weekday: "long", month: "long", day: "numeric", year: "numeric" });
+    const time = fmt({ hour: "numeric", minute: "2-digit" });
+    return {
+      result: {
+        found: true,
+        day,
+        // "Saturday"
+        date,
+        // "Saturday, June 27, 2026"
+        time,
+        // "11:55 PM"
+        timezone: tz,
+        // "America/New_York"
+        spoken: `${date}, ${time}`
+        // ready-to-read: "Saturday, June 27, 2026, 11:55 PM"
+      }
+    };
+  }
+};
+
+// supabase/functions/_shared/tools/dashie-kb.generated.ts
+var KB_CHUNKS = [
+  {
+    "id": "faq:how-is-dashie-different-from-fully-kiosk-browser",
+    "file": "faq.md",
+    "title": "How is Dashie different from Fully Kiosk Browser?",
+    "topic": "faq",
+    "status": "ga",
+    "page": null,
+    "action": null,
+    "body": 'Dashie is purpose-built for Home Assistant rather than being a generic kiosk browser. Compared to\nFully Kiosk, Dashie adds a "Hey Dashie" voice assistant, a native music overlay, camera/face wake,\nauto-discovery and a URL builder for setup, and a Fully Kiosk\u2013compatible REST API. And you can sign\nin to turn the same app into a full family dashboard \u2014 no reinstall.'
+  },
+  {
+    "id": "faq:which-calendars-and-photo-sources-are-supported",
+    "file": "faq.md",
+    "title": "Which calendars and photo sources are supported?",
+    "topic": "faq",
+    "status": "ga",
+    "page": null,
+    "action": null,
+    "body": 'Calendars: Google and Outlook accounts, plus Home Assistant and CalDAV calendars, merged into one\nview. Photos come from several sources \u2014 Home Assistant media, a local folder, Immich, Google\nPhotos, Google Drive, and Dropbox \u2014 and you can also upload photos straight from your phone (see\n"How do I add my own photos?").'
+  },
+  {
+    "id": "faq:can-multiple-family-members-use-it-how-do-roles-work",
+    "file": "faq.md",
+    "title": "Can multiple family members use it? How do roles work?",
+    "topic": "faq",
+    "status": "ga",
+    "page": null,
+    "action": null,
+    "body": "Yes. A family has an Owner and can add Parents and Members. Owners and Parents can create and edit\nchores and rewards and see everyone's data; Members complete chores, redeem rewards, and manage\ntheir own profile. All members share the owner's account tier and feature access."
+  },
+  {
+    "id": "faq:does-the-voice-assistant-use-my-data-or-send-it-to-the-web",
+    "file": "faq.md",
+    "title": "Does the voice assistant use my data or send it to the web?",
+    "topic": "faq",
+    "status": "ga",
+    "page": null,
+    "action": null,
+    "body": "For product and how-to questions, Dashie answers from its own built-in knowledge rather than\nsearching the web. Calendar, weather, and smart-home answers come from your connected accounts and\ndevices. Full-mode voice uses a cloud AI provider you choose (Claude, OpenAI, or Gemini); kiosk\nvoice runs through Home Assistant's Assist pipeline. Search queries aren't logged with your\nidentity."
+  },
+  {
+    "id": "faq:what-ai-models-can-i-choose-from",
+    "file": "faq.md",
+    "title": "What AI models can I choose from?",
+    "topic": "faq",
+    "status": "ga",
+    "page": "voice-ai-model-select",
+    "action": "open_settings_page(voice-ai-model-select)",
+    "body": "Dashie supports multiple AI providers \u2014 Anthropic Claude, OpenAI, and Google Gemini. Pick the one\nyou want under **Settings \u2192 Voice & AI \u2192 AI model**."
+  },
+  {
+    "id": "faq:does-dashie-work-offline",
+    "file": "faq.md",
+    "title": "Does Dashie work offline?",
+    "topic": "faq",
+    "status": "ga",
+    "page": null,
+    "action": null,
+    "body": `Kiosk mode is designed to keep working offline for displaying a local Home Assistant dashboard.
+The full family dashboard and cloud AI voice features need an internet connection. On-device wake
+word detection works without the cloud. If you'd rather not use cloud voice at all, Dashie can use
+local voice engines that run on your own hardware (see "Can I use local, private voice?").`
+  },
+  {
+    "id": "faq:can-i-use-local-private-voice",
+    "file": "faq.md",
+    "title": "Can I use local, private voice?",
+    "topic": "faq",
+    "status": "beta",
+    "page": "voice",
+    "action": "open_settings_page(voice)",
+    "body": "Newer feature \u2014 may not be on your plan yet. In **Settings \u2192 Voice & AI** you can choose local\nvoice engines that run on your own devices instead of the cloud \u2014 for example local text-to-speech\nand Whisper speech-to-text on your box, or Piper/Whisper through your Home Assistant. Local voice\nis private and doesn't use cloud voice. The available options appear only when Dashie detects a\nsupported engine on your setup."
+  },
+  {
+    "id": "faq:how-do-i-contact-support",
+    "file": "faq.md",
+    "title": "How do I contact support?",
+    "topic": "faq",
+    "status": "ga",
+    "page": null,
+    "action": null,
+    "body": "You can email the Dashie team at **support@dashieapp.com**. On Android you can also send\ndiagnostics from Settings \u2192 System to help them look into a problem."
+  },
+  {
+    "id": "faq:what-happens-if-i-delete-my-account",
+    "file": "faq.md",
+    "title": "What happens if I delete my account?",
+    "topic": "faq",
+    "status": "beta",
+    "page": null,
+    "action": null,
+    "body": "Newer behavior \u2014 may not be on your plan yet. Deleting your account is recoverable for a grace\nperiod (about 15 days): during that window you can change your mind and keep the account before\nanything is permanently removed. Account deletion is managed from your phone or the web console,\nnot from a shared family tablet."
+  },
+  {
+    "id": "faq:what-s-the-difference-between-the-screensaver-photos-and-the",
+    "file": "faq.md",
+    "title": "What's the difference between the screensaver photos and the Photos widget?",
+    "topic": "faq",
+    "status": "ga",
+    "page": null,
+    "action": null,
+    "body": "They're configured separately. The **screensaver** slideshow (what shows when the screen is idle)\nis set under Display \u2192 Screensaver and can use HA media, a local folder, Immich, or Google Photos.\nThe **Photos widget** (part of the dashboard grid) is set under Settings \u2192 Photos and can use\nDropbox albums. You can use different sources for each."
+  },
+  {
+    "id": "features:what-widgets-can-i-put-on-the-dashboard",
+    "file": "features.md",
+    "title": "What widgets can I put on the dashboard?",
+    "topic": "features",
+    "status": "ga",
+    "page": null,
+    "action": null,
+    "body": "The dashboard is a grid of widgets you can arrange across multiple pages. Available widgets are\nCalendar (upcoming events), Photos (family slideshow), Weather (current conditions, forecast,\nand animated radar), Clock (large digital clock and date), Chores (today's tasks), and Rewards\n(available rewards to redeem). You navigate the grid with a TV remote's D-pad, a keyboard, or\ntouch, and page between layouts with the arrow controls."
+  },
+  {
+    "id": "features:how-does-the-calendar-work",
+    "file": "features.md",
+    "title": "How does the calendar work?",
+    "topic": "features",
+    "status": "ga",
+    "page": null,
+    "action": null,
+    "body": `The Calendar widget shows your family's upcoming events. It supports multiple Google and Outlook
+accounts, and can merge in calendars from Home Assistant and CalDAV \u2014 all deduplicated into one
+view. You choose which of your connected calendars are visible. Ask the assistant things like
+"what's on the calendar today?" or "when is the next soccer game?" and it reads from your real
+merged calendar.`
+  },
+  {
+    "id": "features:how-do-chores-work",
+    "file": "features.md",
+    "title": "How do chores work?",
+    "topic": "features",
+    "status": "ga",
+    "page": null,
+    "action": null,
+    "body": 'Chores are gamified tasks for the family. A parent or owner creates recurring or one-time chores,\neach worth points, and assigns them to a specific member or to "anyone can complete." Chores can\nbe filtered by time of day (morning, afternoon, evening, anytime) and have emoji icons and\ncolors. When someone completes a chore the points are credited automatically. You can mark a\nchore done by voice: "mark dishes as done."'
+  },
+  {
+    "id": "features:how-do-rewards-work",
+    "file": "features.md",
+    "title": "How do rewards work?",
+    "topic": "features",
+    "status": "ga",
+    "page": null,
+    "action": null,
+    "body": "Rewards are things family members redeem with the points they earn from chores. A parent sets up\na reward catalog with a point cost for each item, optionally requiring parent approval. When a\nmember redeems a reward, their points are deducted automatically and the redemption is logged."
+  },
+  {
+    "id": "features:how-does-the-photo-screensaver-photos-widget-work",
+    "file": "features.md",
+    "title": "How does the photo screensaver / photos widget work?",
+    "topic": "features",
+    "status": "ga",
+    "page": null,
+    "action": null,
+    "body": "Dashie can show a photo slideshow both as a screensaver and as a dashboard widget. Photo sources\ninclude Home Assistant media, a local folder, Immich, Google Photos, and Dropbox (in full mode).\nYou can control slideshow timing and whether photo metadata (like date or caption) is shown."
+  },
+  {
+    "id": "features:what-can-the-weather-widget-show",
+    "file": "features.md",
+    "title": "What can the weather widget show?",
+    "topic": "features",
+    "status": "ga",
+    "page": null,
+    "action": null,
+    "body": `The Weather widget shows current conditions, a forecast, and an animated radar map. Weather data
+comes from Open-Meteo and the radar from RainViewer. By voice you can ask "what's the weather?",
+"will it rain today?", or "what's the forecast this weekend?"`
+  },
+  {
+    "id": "features:what-is-the-hey-dashie-voice-assistant",
+    "file": "features.md",
+    "title": 'What is the "Hey Dashie" voice assistant?',
+    "topic": "features",
+    "status": "ga",
+    "page": null,
+    "action": null,
+    "body": `Dashie includes a hands-free voice assistant activated by saying "Hey Dashie" (on supported
+devices) or by tapping the microphone. It can answer questions about your calendar, the weather,
+and sports; control Home Assistant devices; set timers; complete chores; change the theme; and
+answer questions about Dashie itself. On the full dashboard it uses cloud AI (Claude, OpenAI, or
+Gemini, your choice); kiosk voice runs through Home Assistant's Assist pipeline.`
+  },
+  {
+    "id": "features:how-do-timers-work",
+    "file": "features.md",
+    "title": "How do timers work?",
+    "topic": "features",
+    "status": "ga",
+    "page": null,
+    "action": null,
+    "body": 'You can set up to three countdown timers by voice \u2014 "set a 5 minute timer" \u2014 and ask "how much\ntime is left?", or pause, resume, and cancel them. Timers show in a small floating overlay and\nplay an alarm when they finish. They survive a page refresh.'
+  },
+  {
+    "id": "features:what-can-dashie-do-with-home-assistant",
+    "file": "features.md",
+    "title": "What can Dashie do with Home Assistant?",
+    "topic": "features",
+    "status": "ga",
+    "page": null,
+    "action": null,
+    "body": 'Dashie integrates tightly with Home Assistant. In kiosk mode it displays any HA dashboard\nfull-screen. With voice you can control HA devices \u2014 "turn on the kitchen lights," "close the\ngarage," "is the garage door open?" \u2014 including multi-device commands. Dashie can also sync its\ntheme to the HA frontend, and on Android it exposes a Fully Kiosk Browser\u2013compatible REST API so\nHA can control the device (screen on/off, volume, TTS announcements, camera snapshots, and more).'
+  },
+  {
+    "id": "features:can-dashie-show-camera-video-feeds",
+    "file": "features.md",
+    "title": "Can Dashie show camera / video feeds?",
+    "topic": "features",
+    "status": "beta",
+    "page": "video-feeds",
+    "action": "open_settings_page(video-feeds)",
+    "body": "Newer feature \u2014 Android/Home-Assistant kiosk devices, and may not be on your plan yet. On those\ndevices Dashie can play camera streams natively (smoother and lighter than in the HA web view):\ncameras can show as feed cards, pop up automatically on a motion or doorbell trigger (up to a 2\xD72\ngrid for several at once), go full-screen, and \u2014 with Frigate \u2014 play back events. Set feeds up\nunder **Settings \u2192 Video Feeds**."
+  },
+  {
+    "id": "features:can-i-add-my-own-photos-from-my-phone",
+    "file": "features.md",
+    "title": "Can I add my own photos from my phone?",
+    "topic": "features",
+    "status": "beta",
+    "page": null,
+    "action": null,
+    "body": "Newer feature \u2014 may not be on your plan yet. You can upload photos to Dashie's slideshow straight\nfrom your phone: the TV shows a QR code and a short pairing code, you open the link on your phone,\nand the photos you upload appear in the slideshow \u2014 no full sign-in needed. Photos can be kept in\nDashie's own storage or in your Google Drive."
+  },
+  {
+    "id": "features:can-dashie-remind-me-about-things-scheduled-reminders",
+    "file": "features.md",
+    "title": "Can Dashie remind me about things? (scheduled reminders)",
+    "topic": "features",
+    "status": "beta",
+    "page": null,
+    "action": null,
+    "body": `Newer feature \u2014 may not be on your plan yet. You can say "Hey Dashie, remind me to take out the
+trash in 30 minutes." Dashie sets a reminder, confirms it out loud, and when it's time a reminder
+pops up on screen with a chime and a spoken message. This is different from a timer (a countdown)
+\u2014 a reminder is tied to a message and a time.`
+  },
+  {
+    "id": "overview:what-is-dashie",
+    "file": "overview.md",
+    "title": "What is Dashie?",
+    "topic": "overview",
+    "status": "ga",
+    "page": null,
+    "action": null,
+    "body": 'Dashie is a smart home dashboard for families. It runs on wall-mounted TVs, tablets, and in\nany web browser, and turns a screen into a shared family hub: calendar, photos, weather, a\nclock, chores and rewards, plus a "Hey Dashie" voice assistant. On Android it can also act as\na dedicated Home Assistant kiosk display. Think of it as the always-on screen in the kitchen or\nhallway that keeps the whole household on the same page.'
+  },
+  {
+    "id": "overview:what-can-dashie-do-what-are-the-main-features",
+    "file": "overview.md",
+    "title": "What can Dashie do? / What are the main features?",
+    "topic": "overview",
+    "status": "ga",
+    "page": null,
+    "action": null,
+    "body": 'The headline features are: a customizable widget dashboard (calendar, photos, weather, clock,\nchores, rewards); a "Hey Dashie" voice assistant for hands-free questions and control; family\ncoordination with chores and a points-based rewards system; a photo screensaver; timers; and\nHome Assistant integration for smart-home control. Ask "how do I\u2026" about any of these and Dashie\ncan walk you through it.'
+  },
+  {
+    "id": "overview:what-are-the-two-modes-kiosk-and-full",
+    "file": "overview.md",
+    "title": "What are the two modes \u2014 kiosk and full?",
+    "topic": "overview",
+    "status": "ga",
+    "page": null,
+    "action": null,
+    "body": "Dashie has two modes. **Kiosk mode** (no login) is a Home Assistant kiosk display \u2014 great for\nwall-mounted tablets showing an HA dashboard, with an optional voice add-on. **Full mode**\n(signed in with a Dashie account) is the whole family dashboard: calendar, photos, chores,\nrewards, and the AI voice assistant. You can switch between them anytime \u2014 signing in from kiosk\nmode opens the full dashboard, and signing out returns to the kiosk."
+  },
+  {
+    "id": "overview:what-devices-and-platforms-does-dashie-run-on",
+    "file": "overview.md",
+    "title": "What devices and platforms does Dashie run on?",
+    "topic": "overview",
+    "status": "ga",
+    "page": null,
+    "action": null,
+    "body": "Dashie runs on TV/display devices (Google TV / ONN sticks, Fire TV, Mioio Android displays),\nany modern desktop browser at dashieapp.com, phones and tablets (responsive web plus a native\niOS app), and Android as a single app that supports both kiosk and full modes. The same account\nand settings follow you across devices."
+  },
+  {
+    "id": "overview:do-i-need-an-account",
+    "file": "overview.md",
+    "title": "Do I need an account?",
+    "topic": "overview",
+    "status": "ga",
+    "page": null,
+    "action": null,
+    "body": "Kiosk mode (the Home Assistant display) needs no account. The full family dashboard \u2014 calendar,\nphotos, chores, rewards, and the AI voice assistant \u2014 requires a Dashie account, which you create\nby signing in with Google."
+  },
+  {
+    "id": "overview:how-do-i-sign-in-or-create-an-account",
+    "file": "overview.md",
+    "title": "How do I sign in or create an account?",
+    "topic": "overview",
+    "status": "ga",
+    "page": "account",
+    "action": "open_settings_page(account)",
+    "body": "Open **Settings \u2192 Account** and choose sign in. On a desktop or phone you sign in with Google.\nOn a TV, Dashie shows a QR code (device flow) \u2014 scan it with your phone to link the TV to your\naccount without typing. Once signed in, the dashboard switches to full mode automatically."
+  },
+  {
+    "id": "settings-map:where-do-i-change-the-theme-turn-on-dark-mode",
+    "file": "settings-map.md",
+    "title": "Where do I change the theme / turn on dark mode?",
+    "topic": "settings",
+    "status": "ga",
+    "page": "display-manage-themes",
+    "action": "open_settings_page(display-manage-themes)",
+    "body": 'Open **Settings \u2192 Display \u2192 Manage Themes**. There you can switch between Light and Dark mode and\npick seasonal overlays (Halloween, Christmas). You can also just say "switch to dark mode" or\n"turn on the light theme."'
+  },
+  {
+    "id": "settings-map:where-are-the-display-settings-clock-format-dashboard-zoom-s",
+    "file": "settings-map.md",
+    "title": "Where are the display settings \u2014 clock format, dashboard zoom, screen-off?",
+    "topic": "settings",
+    "status": "ga",
+    "page": "display",
+    "action": "open_settings_page(display)",
+    "body": "Open **Settings \u2192 Display**. This is where you set the 24-hour vs 12-hour clock, the dashboard\nzoom / display size, dark mode, and screen-off behavior."
+  },
+  {
+    "id": "settings-map:how-do-i-set-up-sleep-and-wake-times",
+    "file": "settings-map.md",
+    "title": "How do I set up sleep and wake times?",
+    "topic": "settings",
+    "status": "ga",
+    "page": "display-sleep",
+    "action": "open_settings_page(display-sleep)",
+    "body": "Open **Settings \u2192 Display \u2192 Sleep/Wake**. You can schedule when the screen sleeps and wakes, set\nan inactivity timeout, and choose the wake behavior."
+  },
+  {
+    "id": "settings-map:where-do-i-change-the-screensaver-photo-source-and-timing",
+    "file": "settings-map.md",
+    "title": "Where do I change the screensaver \u2014 photo source and timing?",
+    "topic": "settings",
+    "status": "ga",
+    "page": "display-screensaver",
+    "action": "open_settings_page(display-screensaver)",
+    "body": "Open **Settings \u2192 Display \u2192 Screensaver**. Choose the photo source (Home Assistant media, a local\nfolder, Immich, or Google Photos), how long each photo shows, the transition, dim brightness, and\nwhether photo metadata is displayed."
+  },
+  {
+    "id": "settings-map:how-do-i-add-or-remove-a-calendar",
+    "file": "settings-map.md",
+    "title": "How do I add or remove a calendar?",
+    "topic": "settings",
+    "status": "ga",
+    "page": "calendar-add",
+    "action": "open_settings_page(calendar-add)",
+    "body": "Open **Settings \u2192 Calendar**, then **Add calendar** to connect a Google or Outlook account, or\n**Remove** to disconnect one. Use **Select calendars** to choose which of your connected\ncalendars are visible on the dashboard. (To just pick which calendars show, use\nSettings \u2192 Calendar \u2192 Select calendars.)"
+  },
+  {
+    "id": "settings-map:how-do-i-choose-which-calendars-are-visible",
+    "file": "settings-map.md",
+    "title": "How do I choose which calendars are visible?",
+    "topic": "settings",
+    "status": "ga",
+    "page": "calendar-select",
+    "action": "open_settings_page(calendar-select)",
+    "body": "Open **Settings \u2192 Calendar \u2192 Select calendars** and toggle each calendar on or off. Only the ones\nyou enable appear on the dashboard and are read by the voice assistant."
+  },
+  {
+    "id": "settings-map:where-are-the-voice-and-ai-settings",
+    "file": "settings-map.md",
+    "title": "Where are the voice and AI settings?",
+    "topic": "settings",
+    "status": "ga",
+    "page": "voice",
+    "action": "open_settings_page(voice)",
+    "body": "Open **Settings \u2192 Voice & AI**. This is where you turn voice on or off, enable the wake word,\nchoose the voice pipeline, and pick the AI model. Sub-screens let you pick the spoken voice\n(Voice \u2192 Select voice), the AI model (Voice \u2192 AI model), and the wake word."
+  },
+  {
+    "id": "settings-map:how-do-i-change-the-ai-voice-the-voice-dashie-speaks-in",
+    "file": "settings-map.md",
+    "title": "How do I change the AI voice (the voice Dashie speaks in)?",
+    "topic": "settings",
+    "status": "ga",
+    "page": "voice-select",
+    "action": "open_settings_page(voice-select)",
+    "body": 'Open **Settings \u2192 Voice & AI \u2192 Select voice** and pick a voice. You can also say "change your\nvoice to <name>."'
+  },
+  {
+    "id": "settings-map:how-do-i-change-which-ai-model-dashie-uses",
+    "file": "settings-map.md",
+    "title": "How do I change which AI model Dashie uses?",
+    "topic": "settings",
+    "status": "ga",
+    "page": "voice-ai-model-select",
+    "action": "open_settings_page(voice-ai-model-select)",
+    "body": "Open **Settings \u2192 Voice & AI \u2192 AI model** and choose the provider/model (Claude, OpenAI, or\nGemini)."
+  },
+  {
+    "id": "settings-map:where-do-i-manage-family-members-roles-and-invitations",
+    "file": "settings-map.md",
+    "title": "Where do I manage family members, roles, and invitations?",
+    "topic": "settings",
+    "status": "ga",
+    "page": "family",
+    "action": "open_settings_page(family)",
+    "body": "Open **Settings \u2192 Family**. Add or edit members, set their role (Owner, Parent, or Member), pick\nmember colors, and send invitations so others can join the family."
+  },
+  {
+    "id": "settings-map:where-are-the-chores-and-rewards-settings",
+    "file": "settings-map.md",
+    "title": "Where are the chores and rewards settings?",
+    "topic": "settings",
+    "status": "ga",
+    "page": "chores-rewards",
+    "action": "open_settings_page(chores-rewards)",
+    "body": "Open **Settings \u2192 Chores & Rewards** to create and manage chores (points, assignment, time of\nday, icons) and the rewards catalog (point costs, approval)."
+  },
+  {
+    "id": "settings-map:where-do-i-connect-photos-dropbox-albums-slideshow-timing",
+    "file": "settings-map.md",
+    "title": "Where do I connect photos (Dropbox / albums / slideshow timing)?",
+    "topic": "settings",
+    "status": "ga",
+    "page": "photos",
+    "action": "open_settings_page(photos)",
+    "body": "Open **Settings \u2192 Photos** to connect Dropbox, choose albums, and set slideshow timing for the\nPhotos widget. (The screensaver's photo source is set separately under Display \u2192 Screensaver.)"
+  },
+  {
+    "id": "settings-map:where-do-i-set-up-home-assistant-dashboard-url-token",
+    "file": "settings-map.md",
+    "title": "Where do I set up Home Assistant (dashboard URL, token)?",
+    "topic": "settings",
+    "status": "ga",
+    "page": "home-assistant",
+    "action": "open_settings_page(home-assistant)",
+    "body": "Open **Settings \u2192 Home Assistant**. Set the dashboard URL, hide/show the HA sidebar and tabs,\nconfigure the API, and paste your access token. (This page is available in kiosk mode.)"
+  },
+  {
+    "id": "settings-map:where-do-i-configure-family-gps-locations",
+    "file": "settings-map.md",
+    "title": "Where do I configure family GPS locations?",
+    "topic": "settings",
+    "status": "ga",
+    "page": "locations",
+    "action": "open_settings_page(locations)",
+    "body": "Open **Settings \u2192 Locations** to configure family member GPS/location tracking."
+  },
+  {
+    "id": "settings-map:where-do-i-set-up-music",
+    "file": "settings-map.md",
+    "title": "Where do I set up music?",
+    "topic": "settings",
+    "status": "ga",
+    "page": "music",
+    "action": "open_settings_page(music)",
+    "body": "Open **Settings \u2192 Music** to pick the Home Assistant media_player entity and configure volume\nsync for the music overlay."
+  },
+  {
+    "id": "settings-map:where-do-i-set-up-camera-video-feeds",
+    "file": "settings-map.md",
+    "title": "Where do I set up camera / video feeds?",
+    "topic": "settings",
+    "status": "beta",
+    "page": "video-feeds",
+    "action": "open_settings_page(video-feeds)",
+    "body": "Newer feature \u2014 Android/Home-Assistant kiosk devices, may not be on your plan yet. Open\n**Settings \u2192 Video Feeds** to add camera streams, set the feed size, and control motion/doorbell\nalert behavior. Basic camera options are also under **Settings \u2192 Camera**."
+  },
+  {
+    "id": "settings-map:where-are-account-settings-pin-zip-code-sign-out",
+    "file": "settings-map.md",
+    "title": "Where are account settings \u2014 PIN, zip code, sign out?",
+    "topic": "settings",
+    "status": "ga",
+    "page": "account",
+    "action": "open_settings_page(account)",
+    "body": "Open **Settings \u2192 Account** for PIN protection, your zip code, and sign in / sign out. On a locked\nkiosk, opening Settings or the Control Center prompts for the PIN (with a short grace period after\nyou enter it correctly)."
+  },
+  {
+    "id": "settings-map:where-do-i-find-device-info-cache-and-diagnostics",
+    "file": "settings-map.md",
+    "title": "Where do I find device info, cache, and diagnostics?",
+    "topic": "settings",
+    "status": "ga",
+    "page": "system",
+    "action": "open_settings_page(system)",
+    "body": "Open **Settings \u2192 System** for device information, clearing the cache, sending diagnostics, and a\nshortcut to Android's own settings."
+  },
+  {
+    "id": "settings-map:where-are-the-advanced-settings",
+    "file": "settings-map.md",
+    "title": "Where are the advanced settings?",
+    "topic": "settings",
+    "status": "ga",
+    "page": "advanced",
+    "action": "open_settings_page(advanced)",
+    "body": "Open **Settings \u2192 Advanced** for return-to-home behavior, periodic refresh, performance and\nmemory management, and data-sharing options."
+  },
+  {
+    "id": "troubleshooting:my-screen-is-black-blank",
+    "file": "troubleshooting.md",
+    "title": "My screen is black / blank",
+    "topic": "troubleshooting",
+    "status": "ga",
+    "page": "display-screensaver",
+    "action": "open_settings_page(display-screensaver)",
+    "body": "A black screen is usually the screensaver or a scheduled sleep. Tap the screen or press a remote\nbutton to wake it. If it stays black, check **Settings \u2192 Display \u2192 Sleep/Wake** for a sleep\nschedule or inactivity timeout, and **Settings \u2192 Display \u2192 Screensaver** for the dim setting. If\nthe screen is on but the dashboard didn't come back, a reload usually fixes it."
+  },
+  {
+    "id": "troubleshooting:my-calendar-events-aren-t-showing-up",
+    "file": "troubleshooting.md",
+    "title": "My calendar events aren't showing up",
+    "topic": "troubleshooting",
+    "status": "ga",
+    "page": "calendar-select",
+    "action": "open_settings_page(calendar-select)",
+    "body": "First check **Settings \u2192 Calendar \u2192 Select calendars** and make sure the calendar is toggled on \u2014\nonly enabled calendars appear. If the account is missing entirely, re-add it under\nSettings \u2192 Calendar \u2192 Add calendar. Newly added events can take a short while to sync; a refresh\nspeeds it up."
+  },
+  {
+    "id": "troubleshooting:the-voice-assistant-isn-t-responding-to-hey-dashie",
+    "file": "troubleshooting.md",
+    "title": `The voice assistant isn't responding to "Hey Dashie"`,
+    "topic": "troubleshooting",
+    "status": "ga",
+    "page": "voice",
+    "action": "open_settings_page(voice)",
+    "body": "Check **Settings \u2192 Voice & AI**: make sure voice and the wake word are enabled and the microphone\nisn't muted. The wake word needs microphone permission and works on supported devices (Android/TV\nwith the voice feature). If the wake word won't trigger, you can always tap the microphone button\nto talk instead. Reducing background noise helps detection."
+  },
+  {
+    "id": "troubleshooting:the-dashboard-is-frozen-or-won-t-load",
+    "file": "troubleshooting.md",
+    "title": "The dashboard is frozen or won't load",
+    "topic": "troubleshooting",
+    "status": "ga",
+    "page": "system",
+    "action": "open_settings_page(system)",
+    "body": "Try reloading the dashboard first. If it's still stuck, clear the cache under\n**Settings \u2192 System**, then reload. On Android, force-stopping and reopening the app clears the\nin-memory state. If a specific widget is the problem, removing and re-adding it can help."
+  },
+  {
+    "id": "troubleshooting:photos-aren-t-showing-in-the-screensaver-or-widget",
+    "file": "troubleshooting.md",
+    "title": "Photos aren't showing in the screensaver or widget",
+    "topic": "troubleshooting",
+    "status": "ga",
+    "page": "display-screensaver",
+    "action": "open_settings_page(display-screensaver)",
+    "body": "Confirm the photo source is set and reachable under **Settings \u2192 Display \u2192 Screensaver** (for the\nscreensaver) or **Settings \u2192 Photos** (for the widget and Dropbox). If the source is Google\nPhotos, Immich, Dropbox, or HA media, make sure that connection is still authorized. An empty\nalbum or an expired connection shows no photos."
+  },
+  {
+    "id": "troubleshooting:home-assistant-isn-t-connecting-or-the-dashboard-is-blank",
+    "file": "troubleshooting.md",
+    "title": "Home Assistant isn't connecting or the dashboard is blank",
+    "topic": "troubleshooting",
+    "status": "ga",
+    "page": "home-assistant",
+    "action": "open_settings_page(home-assistant)",
+    "body": "Check **Settings \u2192 Home Assistant**: verify the dashboard URL and that the access token is still\nvalid. If HA is on your local network, the device needs to be on the same network. A 404 or blank\nHA iframe usually means the URL or token needs updating."
+  },
+  {
+    "id": "troubleshooting:the-screen-keeps-going-to-sleep-too-soon-or-won-t-sleep",
+    "file": "troubleshooting.md",
+    "title": "The screen keeps going to sleep too soon (or won't sleep)",
+    "topic": "troubleshooting",
+    "status": "ga",
+    "page": "display-sleep",
+    "action": "open_settings_page(display-sleep)",
+    "body": "Adjust the schedule and inactivity timeout under **Settings \u2192 Display \u2192 Sleep/Wake**. If it sleeps\ntoo soon, lengthen the inactivity timeout; if it never sleeps, check that a sleep schedule is set."
+  },
+  {
+    "id": "troubleshooting:how-do-i-report-a-bug-or-something-that-s-broken",
+    "file": "troubleshooting.md",
+    "title": "How do I report a bug or something that's broken?",
+    "topic": "troubleshooting",
+    "status": "ga",
+    "page": null,
+    "action": null,
+    "body": `If a fix here doesn't solve it, email the Dashie team at **support@dashieapp.com** with a
+description of the problem. On Android you can also send diagnostics from **Settings \u2192 System**,
+which gives the team device logs to look into it. (Voice-driven "tell the team X" support
+submission is a planned addition.)`
+  },
+  {
+    "id": "voice-capabilities:what-can-you-do-what-can-i-ask-you",
+    "file": "voice-capabilities.md",
+    "title": "What can you do? / What can I ask you?",
+    "topic": "voice",
+    "status": "ga",
+    "page": null,
+    "action": null,
+    "body": "You can ask me about your family calendar, the weather, and sports scores; control your Home\nAssistant smart home; set and manage timers; complete chores; check where family members are and\ntravel time to events; change the theme or my voice; and ask how Dashie works \u2014 where a setting\nis, how to do something, or how to fix a problem. Just talk naturally, by voice or by typing."
+  },
+  {
+    "id": "voice-capabilities:ask-about-the-calendar",
+    "file": "voice-capabilities.md",
+    "title": "Ask about the calendar",
+    "topic": "voice",
+    "status": "ga",
+    "page": null,
+    "action": null,
+    "body": `Ask things like "what's on the calendar today?", "do I have anything this weekend?", "when is the
+next soccer game?", or "what time is Mom's appointment?" I read from your real merged calendar,
+including who each event belongs to.`
+  },
+  {
+    "id": "voice-capabilities:ask-about-the-weather",
+    "file": "voice-capabilities.md",
+    "title": "Ask about the weather",
+    "topic": "voice",
+    "status": "ga",
+    "page": null,
+    "action": null,
+    "body": `Ask "what's the weather?", "will it rain today?", "how's the forecast this weekend?", or the
+weather for a specific place. I use your family's home location unless you name somewhere else.`
+  },
+  {
+    "id": "voice-capabilities:control-the-smart-home-home-assistant",
+    "file": "voice-capabilities.md",
+    "title": "Control the smart home (Home Assistant)",
+    "topic": "voice",
+    "status": "ga",
+    "page": null,
+    "action": null,
+    "body": 'Say things like "turn on the kitchen lights," "close the garage," "set the thermostat to 70," or\n"is the garage door open?" I pass these to Home Assistant, including multi-device commands.'
+  },
+  {
+    "id": "voice-capabilities:set-timers",
+    "file": "voice-capabilities.md",
+    "title": "Set timers",
+    "topic": "voice",
+    "status": "ga",
+    "page": null,
+    "action": null,
+    "body": 'Say "set a 5 minute timer," "how much time is left?", "pause the timer," or "cancel it." You can\nrun up to three timers at once.'
+  },
+  {
+    "id": "voice-capabilities:chores-and-rewards",
+    "file": "voice-capabilities.md",
+    "title": "Chores and rewards",
+    "topic": "voice",
+    "status": "ga",
+    "page": null,
+    "action": null,
+    "body": 'Say "mark dishes as done" or "I finished taking out the trash" to complete a chore, or ask "what\nchores are left?" You can also ask about rewards you can redeem.'
+  },
+  {
+    "id": "voice-capabilities:change-the-theme-or-my-voice",
+    "file": "voice-capabilities.md",
+    "title": "Change the theme or my voice",
+    "topic": "voice",
+    "status": "ga",
+    "page": null,
+    "action": null,
+    "body": `Say "switch to dark mode," "turn on the light theme," or "change your voice." For anything else in
+settings, ask me where it is and I'll point you to the right page.`
+  },
+  {
+    "id": "voice-capabilities:sports-scores",
+    "file": "voice-capabilities.md",
+    "title": "Sports scores",
+    "topic": "voice",
+    "status": "ga",
+    "page": null,
+    "action": null,
+    "body": `Ask "did the <team> win?", "what's the score?", or "when do the <team> play next?" I look up live
+scores and schedules for a specific team or league.`
+  },
+  {
+    "id": "voice-capabilities:ask-about-dashie-itself",
+    "file": "voice-capabilities.md",
+    "title": "Ask about Dashie itself",
+    "topic": "voice",
+    "status": "ga",
+    "page": null,
+    "action": null,
+    "body": `Ask "how do I add a calendar?", "where's the dark mode setting?", "why is my screen black?", or
+"what is Dashie?" I answer from Dashie's own knowledge rather than guessing or searching the web.`
+  },
+  {
+    "id": "voice-capabilities:set-reminders",
+    "file": "voice-capabilities.md",
+    "title": "Set reminders",
+    "topic": "voice",
+    "status": "beta",
+    "page": null,
+    "action": null,
+    "body": `Newer feature \u2014 may not be on your plan yet. Say "remind me to take out the trash in 30 minutes"
+and I'll set a reminder and confirm it; when it's time a reminder pops up with a chime and a spoken
+message. Reminders are for a message at a time; timers are plain countdowns.`
+  },
+  {
+    "id": "voice-capabilities:have-a-back-and-forth-conversation",
+    "file": "voice-capabilities.md",
+    "title": "Have a back-and-forth conversation",
+    "topic": "voice",
+    "status": "beta",
+    "page": "voice",
+    "action": "open_settings_page(voice)",
+    "body": `Newer feature \u2014 opt-in and may not be on your plan yet. If you turn on conversation mode in
+**Settings \u2192 Voice & AI**, you can say "Hey Dashie, conversation mode" to start a continuous
+back-and-forth \u2014 I keep listening between turns and you can interrupt me, until you say "that's
+all" or go quiet. Normally each request just starts with "Hey Dashie."`
+  }
+];
+
+// supabase/functions/_shared/tools/dashie-help.ts
+var STOPWORDS = /* @__PURE__ */ new Set([
+  "a",
+  "an",
+  "and",
+  "are",
+  "can",
+  "do",
+  "does",
+  "for",
+  "how",
+  "i",
+  "in",
+  "is",
+  "it",
+  "my",
+  "of",
+  "on",
+  "or",
+  "the",
+  "to",
+  "what",
+  "when",
+  "where",
+  "which",
+  "why",
+  "with",
+  "you",
+  "about",
+  "me",
+  "tell",
+  // conversational filler — "tell me about X" must score only on X
+  "dashie",
+  "dashies"
+  // present in nearly every chunk — zero discrimination
+]);
+function tokenize(text) {
+  return text.toLowerCase().replace(/[^a-z0-9\s-]/g, " ").split(/[\s-]+/).filter((w) => w.length > 1 && !STOPWORDS.has(w));
+}
+function stem(w) {
+  return w.length > 3 && w.endsWith("s") ? w.slice(0, -1) : w;
+}
+function rankChunks(question, chunks = KB_CHUNKS) {
+  const qTokens = [...new Set(tokenize(question).map(stem))];
+  if (!qTokens.length) return [];
+  const scored = [];
+  for (const chunk of chunks) {
+    const titleTokens = new Set(tokenize(chunk.title).map(stem));
+    const bodyTokens = new Set(tokenize(chunk.body).map(stem));
+    const metaTokens = new Set(tokenize(`${chunk.topic} ${chunk.page ?? ""}`).map(stem));
+    let score = 0;
+    for (const t of qTokens) {
+      if (titleTokens.has(t)) score += 3;
+      if (metaTokens.has(t)) score += 2;
+      if (bodyTokens.has(t)) score += 1;
+    }
+    if (score > 0) scored.push({ chunk, score });
+  }
+  return scored.sort((a, b) => b.score - a.score);
+}
+var MAX_CHUNKS = 3;
+var MIN_SCORE = 4;
+var IDENTITY_RE = /\b(who are you|what are you|about (you|yourself|dashie)|what('s| is) dashie|what can (you|i|dashie)|what do you do|introduce yourself|tell me about (yourself|dashie|this))\b/i;
+var IDENTITY_CHUNK_IDS = [
+  "overview:what-is-dashie",
+  "overview:what-can-dashie-do-what-are-the-main-features",
+  "voice-capabilities:what-can-you-do-what-can-i-ask-you"
+];
+function identityChunks(chunks) {
+  const byId = new Map(chunks.map((c) => [c.id, c]));
+  const picked = IDENTITY_CHUNK_IDS.map((id) => byId.get(id)).filter((c) => !!c);
+  return picked.length ? picked : chunks.filter((c) => c.topic === "overview").slice(0, MAX_CHUNKS);
+}
+var dashieHelpTool = {
+  name: "dashie_help",
+  description: 'Look up how Dashie itself works \u2014 its features, settings and where to find them, how-to steps, and troubleshooting. Call this for ANY question about Dashie the product ("what can you do", "how do I add a calendar", "where do I change the theme", "why is my screen black"). It returns curated product documentation \u2014 answer from it and do NOT web-search or guess about Dashie. If it returns found:false, say you are not sure and suggest emailing support@dashieapp.com; never invent settings locations or prices.',
+  parameters: {
+    type: "object",
+    properties: {
+      question: {
+        type: "string",
+        description: "the user's question about Dashie, e.g. 'how do I add a calendar'"
+      }
+    },
+    required: ["question"]
+  },
+  // deno-lint-ignore require-await
+  async execute(args, _ctx) {
+    const question = String(args?.question ?? "").trim();
+    const ranked = rankChunks(question).filter((s) => s.score >= MIN_SCORE).slice(0, MAX_CHUNKS);
+    let hits = ranked.map((s) => s.chunk);
+    if (!hits.length && IDENTITY_RE.test(question)) hits = identityChunks(KB_CHUNKS);
+    if (!hits.length) return { result: { found: false } };
+    return {
+      result: {
+        found: true,
+        question,
+        // Beta chunks carry their caveat inline in the prose (see js/ai/knowledge/README.md),
+        // so no extra gating here until dashie_help is tier-aware.
+        chunks: hits.map((chunk) => ({
+          title: chunk.title,
+          topic: chunk.topic,
+          status: chunk.status,
+          answer: chunk.body
+        }))
+      }
+    };
+  }
+};
 
 // supabase/functions/voice-conversation/retention.ts
 function retainFields(persist, userText, responseText, subtext) {
@@ -2032,7 +3367,124 @@ function retainFields(persist, userText, responseText, subtext) {
   };
 }
 
+// supabase/functions/voice-conversation/weather-synth.ts
+function wmoToCondition(code) {
+  const c = Number(code);
+  if (c === 0) return "sunny";
+  if (c === 1 || c === 2) return "partlycloudy";
+  if (c === 3) return "cloudy";
+  if (c === 45 || c === 48) return "fog";
+  if (c === 65 || c === 82) return "pouring";
+  if (c === 66 || c === 67) return "snowy-rainy";
+  if (c >= 51 && c <= 57 || c >= 61 && c <= 63 || c === 80 || c === 81) return "rainy";
+  if (c >= 71 && c <= 77 || c === 85 || c === 86) return "snowy";
+  if (c === 95) return "lightning-rainy";
+  if (c === 96 || c === 99) return "hail";
+  return "cloudy";
+}
+function weatherResultToReading(w) {
+  return {
+    found: true,
+    source: w.provider,
+    location: { city: w.location?.city || "", state: w.location?.state || "" },
+    current: {
+      temperature: w.current?.temperature,
+      condition: wmoToCondition(w.current?.weatherCode),
+      windSpeed: w.current?.windSpeed
+    },
+    daily: (w.daily || []).map((d) => ({
+      date: d.date,
+      dayName: d.dayName,
+      high: d.high,
+      low: d.low,
+      condition: wmoToCondition(d.weatherCode),
+      precipProbability: d.precipProbability
+    }))
+  };
+}
+var CONDITION = {
+  sunny: { adj: "sunny", precip: "rain" },
+  clear: { adj: "clear", precip: "rain" },
+  "clear-night": { adj: "clear", precip: "rain" },
+  partlycloudy: { adj: "partly cloudy", precip: "rain" },
+  cloudy: { adj: "cloudy", precip: "rain" },
+  fog: { adj: "foggy", precip: "rain" },
+  rainy: { adj: "rainy", precip: "rain" },
+  pouring: { adj: "heavy rain", precip: "rain" },
+  "snowy-rainy": { adj: "a wintry mix", precip: "wintry mix" },
+  snowy: { adj: "snowy", precip: "snow" },
+  "lightning-rainy": { adj: "thunderstorms", precip: "storms" },
+  hail: { adj: "thunderstorms with hail", precip: "storms" }
+};
+function cond(token) {
+  return CONDITION[String(token || "").toLowerCase()] || { adj: "mixed conditions", precip: "rain" };
+}
+function precipPhrase(day) {
+  const p = Math.round(Number(day?.precipProbability) || 0);
+  if (p < 20) return "";
+  return `${p}% chance of ${cond(day?.condition).precip}`;
+}
+function dayLine(day, { withLow = true } = {}) {
+  const { adj } = cond(day?.condition);
+  const bits = [adj];
+  if (Number.isFinite(day?.high)) bits.push(`high ${Math.round(day.high)}`);
+  if (withLow && Number.isFinite(day?.low)) bits.push(`low ${Math.round(day.low)}`);
+  const precip = precipPhrase(day);
+  const line = bits.join(", ");
+  return precip ? `${line}, ${precip}` : line;
+}
+var WEEKEND = /* @__PURE__ */ new Set(["saturday", "sunday"]);
+function findDay(daily, name) {
+  const want = String(name || "").toLowerCase();
+  return daily.find((d) => String(d.dayName || "").toLowerCase() === want) || null;
+}
+function weekendDays(daily) {
+  return daily.filter((d) => WEEKEND.has(String(d.dayName || "").toLowerCase())).slice(0, 2);
+}
+function currentLine(data) {
+  const c = data.current || {};
+  const place = data.location?.city ? ` in ${data.location.city}` : "";
+  const temp = Number.isFinite(c.temperature) ? `${Math.round(c.temperature)} degrees` : "out";
+  const head = `It's ${temp} and ${cond(c.condition).adj}${place}.`;
+  const today = (data.daily || [])[0];
+  const precip = today ? precipPhrase(today) : "";
+  return precip ? `${head} ${precip[0].toUpperCase()}${precip.slice(1)} today.` : head;
+}
+function templateWeather(data, query = {}) {
+  if (!data || data.found === false) {
+    return { voice: "I couldn't get the weather right now.", text: null, card: null };
+  }
+  const daily = Array.isArray(data.daily) ? data.daily : [];
+  const tf = String(query?.timeframe || "").toLowerCase().trim();
+  let voice;
+  if (tf === "weekend") {
+    const wknd = weekendDays(daily);
+    if (wknd.length === 0) {
+      voice = currentLine(data);
+    } else {
+      const parts = wknd.map((d) => `${d.dayName} ${dayLine(d, { withLow: false })}`);
+      voice = `This weekend: ${parts.join("; ")}.`;
+    }
+  } else if (tf === "tonight") {
+    const today = daily[0];
+    voice = today && Number.isFinite(today.low) ? `Tonight: ${cond(today.condition).adj}, low ${Math.round(today.low)}.` : currentLine(data);
+  } else if (tf === "today") {
+    const today = daily[0];
+    voice = today ? `Today: ${dayLine(today)}.` : currentLine(data);
+  } else if (tf && tf !== "current" && tf !== "this_week") {
+    const d = findDay(daily, tf);
+    voice = d ? `${d.dayName}: ${dayLine(d)}.` : currentLine(data);
+  } else {
+    voice = currentLine(data);
+  }
+  return { voice, text: null, card: null };
+}
+
 // supabase/functions/voice-conversation/orchestrator.ts
+var GAME_DETAIL_RE = /\b(summar(?:y|ize|ise)|recap|rundown|breakdown|break it down|highlights?|walk me through|go deeper|analy(?:sis|ze|se)|how did .{0,24}?(?:play|do|look)|what happened|tell me more|tell me about|more about|(?:any |more )?details?|who scored|who (?:got|had) (?:the |a )?goals?|top scorers?|hat[- ]?trick)\b/i;
+function wantsGameDetail(text) {
+  return !!text && GAME_DETAIL_RE.test(text);
+}
 var TOOL_STATUS = {
   web_search: "Searching the web\u2026",
   sports: "Checking the score\u2026",
@@ -2043,18 +3495,67 @@ var TOOL_STATUS = {
 function statusForTool(tool) {
   return TOOL_STATUS[tool] || "Looking that up\u2026";
 }
+function callerFulfills(req, tool) {
+  const list = req.client_fulfilled_tools;
+  if (!Array.isArray(list)) return true;
+  return list.includes(tool);
+}
+function resolveWeatherLocation(query, zip) {
+  const named = typeof query.location === "string" ? query.location.trim() : "";
+  if (named) return { locationName: named };
+  if (zip) return { zip };
+  return null;
+}
 var REQUEST_TYPE = "voice_conversation";
+var DEFAULT_VOICE_KEY = "ASHLEY";
 async function runOrchestration(deps, io) {
+  const voiceCtx = { voiceId: null, voiceProvider: null };
+  const turn = await orchestrate(deps, io, voiceCtx);
+  if (turn.voice_id === void 0 && voiceCtx.voiceId) turn.voice_id = voiceCtx.voiceId;
+  if (turn.voice_provider === void 0 && voiceCtx.voiceProvider) turn.voice_provider = voiceCtx.voiceProvider;
+  if (turn.route === "noise" || isMissReply(turn.voice)) {
+    const isFirstTurn = !deps.req.history || deps.req.history.length === 0;
+    turn.metadata = { ...turn.metadata ?? {}, miss: true };
+    if (isFirstTurn) turn.metadata.end_conversation = true;
+  }
+  if (voiceCtx.credit) turn.metadata = { ...turn.metadata ?? {}, credit: voiceCtx.credit };
+  return turn;
+}
+async function orchestrate(deps, io, voiceCtx) {
   const { req, userId, token, supabase } = deps;
   const t0 = Date.now();
   if (isLikelyNoise(req.text)) return noiseTurn(t0);
-  const modelId = req.options?.model || await io.getDefaultModel(supabase);
-  const provider = providerForModel(modelId);
+  if (isEndIntent(req.text)) return endIntentTurn(t0);
   const sessionId = req.conversation_id || crypto.randomUUID();
-  const [personality, retainEnabled] = await Promise.all([
+  const [personality, retainEnabled, spend, account, rateLimit] = await Promise.all([
     io.resolvePersonality(supabase, userId, req.endpoint_id, req.options?.personality_id),
-    io.readRetainTranscripts(supabase, userId)
+    io.readRetainTranscripts(supabase, userId),
+    // CR1 pre-flight credit gate — folded into the existing parallel reads (no added
+    // latency). Absent IO (Node shell / tests) → always spendable. Inert until the
+    // `voice_credit_enforce` flag is on for this env.
+    io.checkSpendable ? io.checkSpendable(supabase, userId) : Promise.resolve({ spendable: true, balance: Number.POSITIVE_INFINITY, floor: 0, low: false }),
+    // T3 (§16.7 item 4): account AI config (model + tool toggles). Absent IO → all-null.
+    io.readAccountAiConfig ? io.readAccountAiConfig(supabase, userId) : Promise.resolve({ model: null, webSearchEnabled: null, retrievePicturesEnabled: null, zipCode: null }),
+    // CR3: per-account rate-limit backstop. Absent IO → allowed. Inert until enabled.
+    io.checkRateLimit ? io.checkRateLimit(supabase, userId) : Promise.resolve({ allowed: true, retryAfterSeconds: 0 })
   ]);
+  const voiceKey = io.resolveEffectiveVoiceKey ? await io.resolveEffectiveVoiceKey(supabase, userId, req.endpoint_id, personality) || DEFAULT_VOICE_KEY : personality?.voice || DEFAULT_VOICE_KEY;
+  const resolvedVoice = io.resolveVoiceId ? await io.resolveVoiceId(supabase, voiceKey) : null;
+  voiceCtx.voiceId = resolvedVoice?.voiceId ?? null;
+  voiceCtx.voiceProvider = resolvedVoice?.provider ?? null;
+  if (io.checkSpendable) {
+    voiceCtx.credit = {
+      balance: Number.isFinite(spend.balance) ? spend.balance : null,
+      spendable: spend.spendable,
+      low: spend.low === true
+    };
+  }
+  if (!rateLimit.allowed) return rateLimitedTurn(t0, rateLimit.retryAfterSeconds);
+  if (!spend.spendable) return insufficientCreditsTurn(t0, spend.balance);
+  const modelId = req.options?.model || account.model || await io.getDefaultModel(supabase);
+  const provider = providerForModel(modelId);
+  const webSearchAllowed = account.webSearchEnabled !== false;
+  const retrievePictures = req.retrieve_pictures ?? (account.retrievePicturesEnabled ?? false);
   const callerMode = req.options?.retain_mode === "caller";
   const retain = {
     serverPersist: retainEnabled && !callerMode,
@@ -2063,15 +3564,35 @@ async function runOrchestration(deps, io) {
     // caller stores text HA-locally
     userText: req.text
   };
+  const geminiGrounds = provider === "gemini" && webSearchAllowed;
+  const promptWebSearch = webSearchAllowed && !geminiGrounds;
+  const caps = {
+    web_search: webSearchAllowed,
+    retrieve_pictures: retrievePictures,
+    grounding: geminiGrounds,
+    tools: offeredToolNames({ webSearchEnabled: promptWebSearch })
+  };
   const context = {
     customPersonalityConfig: personality,
     chatHistory: formatHistory(req.history),
     language: req.language || "system",
-    timezone: req.timezone
+    timezone: req.timezone,
     // client IANA zone → correct "today" in the prompt (server is UTC)
+    webSearchEnabled: promptWebSearch,
+    caps
   };
-  const forced = detectMutableEntity(req.text);
-  const p1Prompt = buildPrompt({ userRequest: req.text, inquiryType: null, context });
+  const forced = webSearchAllowed ? detectMutableEntity(req.text) : null;
+  const providedSports = req.provided_context?.sports;
+  const providedCalendar = req.provided_context?.calendar;
+  const p1Prompt = buildPrompt({
+    userRequest: req.text,
+    inquiryType: null,
+    context: {
+      ...context,
+      ...providedSports ? { providedSports } : {},
+      ...providedCalendar ? { providedCalendar } : {}
+    }
+  });
   const forcedContent = forced ? JSON.stringify({
     type: "info_request",
     tool: "web_search",
@@ -2079,18 +3600,21 @@ async function runOrchestration(deps, io) {
     context: `forced web_search (mutable entity: ${forced})`,
     processing_message: "Looking that up\u2026"
   }) : null;
-  const pass1 = forcedContent ? { ok: true, latency_ms: 0, raw: { content: forcedContent, usage: { input_tokens: 0, output_tokens: 0, total_tokens: 0 } } } : await io.callGateway({ provider, prompt: p1Prompt, modelId });
+  const pass1 = forcedContent ? { ok: true, latency_ms: 0, raw: { content: forcedContent, usage: { input_tokens: 0, output_tokens: 0, total_tokens: 0 } } } : await io.callGateway({ provider, prompt: p1Prompt, modelId, grounding: geminiGrounds });
   if (!pass1.ok || !pass1.raw) {
     return errorTurn(t0, pass1, [stageErr("pass1", pass1)]);
   }
   const p1Parsed = parseContent(pass1.raw.content);
   const p1Stage = passStage("pass1", pass1, p1Parsed?.type);
   const route = routeOf(p1Parsed);
+  const turnMeta = toolMeta(p1Parsed, route, caps);
   deps.onStage?.({ stage: "routed", route, elapsed_ms: Date.now() - t0 });
   if (p1Parsed?.type === "info_request" && p1Parsed.tool) {
     deps.onStage?.({ stage: "fetching", tool: p1Parsed.tool, status: statusForTool(p1Parsed.tool), elapsed_ms: Date.now() - t0 });
   }
-  if (!p1Parsed || p1Parsed.type === "response" || p1Parsed.type === "action") {
+  if (!p1Parsed && /^\s*(```[a-z]*\s*)?[{[]/i.test(pass1.raw.content || "")) {
+    const clarifyVoice = "Sorry, I didn't quite catch that \u2014 could you say it again?";
+    const clarify = { type: "response", voice: clarifyVoice, text: null, action: null };
     await logPass(
       io,
       token,
@@ -2099,13 +3623,75 @@ async function runOrchestration(deps, io) {
       sessionId,
       p1Prompt,
       pass1,
-      retainFields(retain.serverPersist, retain.userText, responseTextOf(p1Parsed, pass1.raw), p1Parsed?.text ?? null)
+      retainFields(retain.serverPersist, retain.userText, clarifyVoice, null),
+      turnMeta
     );
-    return finalize({ t0, parsed: p1Parsed, raw: pass1.raw, stages: [p1Stage], usage: pass1.raw.usage, latency: pass1.latency_ms, retain, sessionId, route });
+    return finalize({ t0, parsed: clarify, raw: pass1.raw, stages: [p1Stage], usage: pass1.raw.usage, latency: pass1.latency_ms, retain, sessionId, route });
+  }
+  if (!p1Parsed || p1Parsed.type === "response" || p1Parsed.type === "action") {
+    const sportsCard = providedSports && p1Parsed?.type === "response" ? templateSports(providedSports, providedSports.query || {}).structured_data : void 0;
+    const imageHint = !sportsCard && retrievePictures && p1Parsed?.type === "response" ? p1Parsed.image : void 0;
+    const imageCard = imageHint?.searchTerms ? await resolveImageHint(p1Parsed, token, sessionId) : void 0;
+    const card2 = sportsCard ?? imageCard;
+    const calendarUsed = !!(providedCalendar && !sportsCard && !imageCard && p1Parsed?.type === "response");
+    const logMeta = sportsCard ? {
+      tool_used: "get_sports_scores",
+      response_type: p1Parsed?.type ?? null,
+      tool_trace: { route: "sports", tool: "get_sports_scores", args: providedSports?.query ?? null, caps }
+    } : imageHint?.searchTerms ? {
+      tool_used: "show_image",
+      response_type: p1Parsed?.type ?? null,
+      tool_trace: { route: "image", tool: "show_image", args: { searchTerms: imageHint.searchTerms, criteria: imageHint.criteria ?? null, resolved: !!imageCard }, caps }
+    } : calendarUsed ? {
+      tool_used: "calendar_context",
+      response_type: p1Parsed?.type ?? null,
+      tool_trace: { route: "calendar", tool: "calendar_context", args: { time_range: providedCalendar.time_range ?? null }, caps }
+    } : turnMeta;
+    await logPass(
+      io,
+      token,
+      REQUEST_TYPE,
+      req.endpoint_id,
+      sessionId,
+      p1Prompt,
+      pass1,
+      retainFields(retain.serverPersist, retain.userText, responseTextOf(p1Parsed, pass1.raw), p1Parsed?.text ?? null),
+      logMeta
+    );
+    return finalize({
+      t0,
+      parsed: p1Parsed,
+      raw: pass1.raw,
+      stages: [p1Stage],
+      usage: pass1.raw.usage,
+      latency: pass1.latency_ms,
+      retain,
+      sessionId,
+      route: sportsCard ? "sports" : imageCard ? "image" : calendarUsed ? "calendar" : route,
+      structured_data: card2 ?? void 0,
+      // The device attached the window and holds the matching card — this flag tells it
+      // the direct path was taken (render the held card). Absent on the tool-fallback path.
+      metadata: calendarUsed ? { calendar_context_used: true } : void 0
+    });
   }
   if (p1Parsed.type === "info_request" && p1Parsed.tool === "web_search") {
     await logPass(io, token, REQUEST_TYPE, req.endpoint_id, sessionId, p1Prompt, pass1);
     const queryStr = typeof p1Parsed.query === "string" ? p1Parsed.query : p1Parsed.query?.query || p1Parsed.query?.q || req.text;
+    if (!webSearchAllowed) {
+      const NO_SEARCH_SENTINEL = {
+        note: "Web search is turned OFF for this user. Do NOT claim to have searched. Answer the question from your own knowledge; if you are not certain of a current fact, say you are not able to look it up right now.",
+        query: queryStr
+      };
+      return await secondPass(io, deps, t0, "web-search", NO_SEARCH_SENTINEL, [p1Stage, { name: "web_search_disabled", latency_ms: 0 }], pass1, provider, modelId, context, sessionId, retain, route, false);
+    }
+    if (provider === "gemini") {
+      const GROUNDED_SENTINEL = {
+        note: "No pre-fetched results were provided. Use your Google Search tool to find current information for the query, then answer.",
+        query: queryStr
+      };
+      const groundedStage = { name: "grounded_search", latency_ms: 0, provider: "google-grounding" };
+      return await secondPass(io, deps, t0, "web-search", GROUNDED_SENTINEL, [p1Stage, groundedStage], pass1, provider, modelId, context, sessionId, retain, route, true);
+    }
     const tFetch = Date.now();
     let search;
     try {
@@ -2142,6 +3728,13 @@ async function runOrchestration(deps, io) {
   if (p1Parsed.type === "info_request" && p1Parsed.tool === "sports") {
     await logPass(io, token, REQUEST_TYPE, req.endpoint_id, sessionId, p1Prompt, pass1);
     const sportsQuery = typeof p1Parsed.query === "object" && p1Parsed.query ? p1Parsed.query : { team: req.text };
+    if (req.timezone && sportsQuery.tz == null) sportsQuery.tz = req.timezone;
+    if (!String(sportsQuery.team ?? "").trim()) {
+      const w = String(sportsQuery.when ?? "").toLowerCase();
+      if (w && w !== "date") delete sportsQuery.when;
+      delete sportsQuery.type;
+      if (/\d{4}-\d{2}-\d{2}/.test(String(sportsQuery.date ?? ""))) sportsQuery.when = "date";
+    }
     const tFetch = Date.now();
     let sports;
     try {
@@ -2162,8 +3755,43 @@ async function runOrchestration(deps, io) {
       latency_ms: sports?.latency ?? fetchStage.latency_ms,
       success: true
     });
-    const synth = templateSports(sports, sportsQuery);
+    if (wantsGameDetail(req.text) && (sports?.games?.length || 0) > 0) {
+      return await secondPass(io, deps, t0, "sports", sports, [p1Stage, fetchStage], pass1, provider, modelId, context, sessionId, retain, route);
+    }
+    const synth = templateSports(sports, sportsQuery, { timezone: req.timezone });
     if (synth.fallback) {
+      const slate = templateSlate(sports, sportsQuery, { timezone: req.timezone });
+      if (slate.structured_data) {
+        const parsedSlate = { type: "response", voice: slate.voice, text: null, action: null };
+        const slatePass = {
+          ok: true,
+          latency_ms: 0,
+          raw: { content: slate.voice, usage: { input_tokens: 0, output_tokens: 0, total_tokens: 0 }, model: "template", provider: "template" }
+        };
+        await logPass(
+          io,
+          token,
+          REQUEST_TYPE,
+          req.endpoint_id,
+          sessionId,
+          "(sports slate template)",
+          slatePass,
+          retainFields(retain.serverPersist, retain.userText, slate.voice, null),
+          turnMeta
+        );
+        return finalize({
+          t0,
+          parsed: parsedSlate,
+          raw: pass1.raw,
+          stages: [p1Stage, fetchStage],
+          usage: pass1.raw?.usage,
+          latency: pass1.latency_ms,
+          structured_data: slate.structured_data ?? void 0,
+          retain,
+          sessionId,
+          route
+        });
+      }
       return await secondPass(io, deps, t0, "sports", sports, [p1Stage, fetchStage], pass1, provider, modelId, context, sessionId, retain, route);
     }
     const parsed = { type: "response", voice: synth.voice, text: synth.text, action: null };
@@ -2180,7 +3808,8 @@ async function runOrchestration(deps, io) {
       sessionId,
       "(sports template)",
       templatePass,
-      retainFields(retain.serverPersist, retain.userText, synth.voice, synth.text)
+      retainFields(retain.serverPersist, retain.userText, synth.voice, synth.text),
+      turnMeta
     );
     return finalize({
       t0,
@@ -2196,13 +3825,154 @@ async function runOrchestration(deps, io) {
     });
   }
   if (p1Parsed.type === "info_request" && p1Parsed.tool === "calendar_events") {
-    const events = req.provided_context?.calendar_events;
-    if (!events) {
-      await logPass(io, token, REQUEST_TYPE, req.endpoint_id, sessionId, p1Prompt, pass1);
-      return finalize({ t0, parsed: p1Parsed, raw: pass1.raw, stages: [p1Stage], usage: pass1.raw.usage, latency: pass1.latency_ms, unsupported_tool: "calendar_events", sessionId, route });
+    await logPass(io, token, REQUEST_TYPE, req.endpoint_id, sessionId, p1Prompt, pass1, {}, turnMeta);
+    return finalize({
+      t0,
+      parsed: p1Parsed,
+      raw: pass1.raw,
+      stages: [p1Stage],
+      usage: pass1.raw.usage,
+      latency: pass1.latency_ms,
+      client_tool: { tool: "calendar", query: p1Parsed.query },
+      sessionId,
+      route
+    });
+  }
+  if (p1Parsed.type === "info_request" && p1Parsed.tool === "music") {
+    await logPass(io, token, REQUEST_TYPE, req.endpoint_id, sessionId, p1Prompt, pass1, {}, turnMeta);
+    return finalize({
+      t0,
+      parsed: p1Parsed,
+      raw: pass1.raw,
+      stages: [p1Stage],
+      usage: pass1.raw.usage,
+      latency: pass1.latency_ms,
+      client_tool: { tool: "music", query: p1Parsed.query },
+      sessionId,
+      route
+    });
+  }
+  if (p1Parsed.type === "info_request" && p1Parsed.tool === "schedule_action") {
+    await logPass(io, token, REQUEST_TYPE, req.endpoint_id, sessionId, p1Prompt, pass1, {}, turnMeta);
+    return finalize({
+      t0,
+      parsed: p1Parsed,
+      raw: pass1.raw,
+      stages: [p1Stage],
+      usage: pass1.raw.usage,
+      latency: pass1.latency_ms,
+      client_tool: { tool: "schedule_action", query: p1Parsed.query },
+      sessionId,
+      route
+    });
+  }
+  if (p1Parsed.type === "info_request" && p1Parsed.tool === "weather_data") {
+    const wq = typeof p1Parsed.query === "object" && p1Parsed.query ? p1Parsed.query : {};
+    if (io.getWeather && !callerFulfills(req, "weather")) {
+      const loc = resolveWeatherLocation(wq, account.zipCode ?? null);
+      let synthVoice;
+      const tFetch = Date.now();
+      let fetchStage;
+      if (!loc) {
+        synthVoice = "I don't know your location yet \u2014 add your zip code in settings and I can check the weather.";
+        fetchStage = { name: "fetch_weather", latency_ms: 0, error: "no_location" };
+      } else {
+        try {
+          const w = await io.getWeather(loc);
+          synthVoice = templateWeather(weatherResultToReading(w), wq).voice;
+          fetchStage = { name: "fetch_weather", latency_ms: Date.now() - tFetch, provider: w.provider };
+        } catch (e) {
+          synthVoice = "I couldn't get the weather right now.";
+          fetchStage = { name: "fetch_weather", latency_ms: Date.now() - tFetch, error: e.message };
+        }
+      }
+      const synth = { type: "response", voice: synthVoice, text: null, action: null };
+      await logPass(
+        io,
+        token,
+        REQUEST_TYPE,
+        req.endpoint_id,
+        sessionId,
+        p1Prompt,
+        pass1,
+        retainFields(retain.serverPersist, retain.userText, synthVoice, null),
+        turnMeta
+      );
+      return finalize({
+        t0,
+        parsed: synth,
+        raw: pass1.raw,
+        stages: [p1Stage, fetchStage],
+        usage: pass1.raw.usage,
+        latency: pass1.latency_ms,
+        retain,
+        sessionId,
+        route
+      });
     }
+    await logPass(io, token, REQUEST_TYPE, req.endpoint_id, sessionId, p1Prompt, pass1, {}, turnMeta);
+    return finalize({
+      t0,
+      parsed: p1Parsed,
+      raw: pass1.raw,
+      stages: [p1Stage],
+      usage: pass1.raw.usage,
+      latency: pass1.latency_ms,
+      client_tool: { tool: "weather", query: p1Parsed.query },
+      sessionId,
+      route
+    });
+  }
+  if (p1Parsed.type === "info_request" && p1Parsed.tool === "get_current_time") {
+    const tRes = await currentTimeTool.execute({}, { timezone: req.timezone });
+    const r = tRes?.result ?? {};
+    const spoken = r.spoken || [r.date, r.time].filter(Boolean).join(", ") || "I couldn't determine the current time.";
+    const parsed = { type: "response", voice: spoken, text: null, action: null };
+    const templatePass = {
+      ok: true,
+      latency_ms: 0,
+      raw: { content: spoken, usage: { input_tokens: 0, output_tokens: 0, total_tokens: 0 }, model: "template", provider: "template" }
+    };
+    await logPass(
+      io,
+      token,
+      REQUEST_TYPE,
+      req.endpoint_id,
+      sessionId,
+      "(current_time template)",
+      templatePass,
+      retainFields(retain.serverPersist, retain.userText, spoken, null),
+      turnMeta
+    );
+    return finalize({
+      t0,
+      parsed,
+      raw: pass1.raw,
+      stages: [p1Stage],
+      usage: pass1.raw?.usage,
+      latency: pass1.latency_ms,
+      retain,
+      sessionId,
+      route
+    });
+  }
+  if (p1Parsed.type === "info_request" && p1Parsed.tool === "dashie_help") {
     await logPass(io, token, REQUEST_TYPE, req.endpoint_id, sessionId, p1Prompt, pass1);
-    return await secondPass(io, deps, t0, "calendar-events", { events }, [p1Stage], pass1, provider, modelId, context, sessionId, retain, route);
+    const hq = typeof p1Parsed.query === "object" && p1Parsed.query ? String(p1Parsed.query.question ?? req.text) : typeof p1Parsed.query === "string" && p1Parsed.query ? p1Parsed.query : req.text;
+    const tFetch = Date.now();
+    const help = await dashieHelpTool.execute({ question: hq }, { timezone: req.timezone });
+    const helpResult = help?.result ?? { found: false };
+    const fetchStage = {
+      name: "fetch_dashie_help",
+      latency_ms: Date.now() - tFetch,
+      result_count: helpResult.chunks?.length ?? 0
+    };
+    const helpData = helpResult.found ? helpResult : {
+      found: false,
+      note: "No product-documentation entry matched this question. Do NOT invent settings locations, steps, prices, or features. Say you are not sure about that one and that the user can email support@dashieapp.com.",
+      question: hq
+    };
+    return await secondPass(io, deps, t0, "dashie-help", helpData, [p1Stage, fetchStage], pass1, provider, modelId, context, sessionId, retain, route);
   }
   await logPass(io, token, REQUEST_TYPE, req.endpoint_id, sessionId, p1Prompt, pass1);
   return finalize({ t0, parsed: p1Parsed, raw: pass1.raw, stages: [p1Stage], usage: pass1.raw.usage, latency: pass1.latency_ms, unsupported_tool: p1Parsed.tool, sessionId, route });
@@ -2214,14 +3984,20 @@ function routeOf(parsed) {
   if (parsed.type === "info_request") return parsed.tool || "unknown";
   return "direct";
 }
-async function secondPass(io, deps, t0, inquiryType, retrievedData, priorStages, pass1, provider, modelId, context, sessionId, retain, route) {
+async function secondPass(io, deps, t0, inquiryType, retrievedData, priorStages, pass1, provider, modelId, context, sessionId, retain, route, grounding = false) {
   const prompt = buildPrompt({ userRequest: deps.req.text, inquiryType, retrievedData, context });
-  deps.onStage?.({ stage: "synthesizing", status: "Thinking\u2026", elapsed_ms: Date.now() - t0 });
-  const pass2 = await io.callGateway({ provider, prompt, modelId });
+  deps.onStage?.({ stage: "synthesizing", status: "Finalizing\u2026", elapsed_ms: Date.now() - t0 });
+  const pass2 = await io.callGateway({ provider, prompt, modelId, grounding });
   if (!pass2.ok || !pass2.raw) {
     return errorTurn(t0, pass2, [...priorStages, stageErr("pass2", pass2)]);
   }
-  const parsed = parseContent(pass2.raw.content);
+  let parsed = parseContent(pass2.raw.content);
+  const jsonish = /^\s*(```[a-z]*\s*)?[{[]/i.test(pass2.raw.content || "");
+  if (parsed && parsed.type === "info_request" || !parsed && jsonish) {
+    console.warn(`\u26A0\uFE0F pass2 non-terminal (${parsed?.type ?? "unparsed JSON-ish"}) \u2014 clarifying instead of leaking`);
+    const clarifyVoice = "Sorry, I didn't quite catch that \u2014 could you say it again?";
+    parsed = { type: "response", voice: clarifyVoice, text: null, action: null };
+  }
   await logPass(
     io,
     deps.token,
@@ -2230,16 +4006,30 @@ async function secondPass(io, deps, t0, inquiryType, retrievedData, priorStages,
     sessionId,
     prompt,
     pass2,
-    retainFields(retain.serverPersist, retain.userText, responseTextOf(parsed, pass2.raw), parsed?.text ?? null)
+    retainFields(retain.serverPersist, retain.userText, responseTextOf(parsed, pass2.raw), parsed?.text ?? null),
+    toolMeta(parseContent(pass1.raw?.content ?? ""), route, context?.caps)
   );
   const p2Stage = passStage("pass2", pass2, parsed?.type);
   const usage = sumUsage([pass1.raw?.usage, pass2.raw.usage]);
   return finalize({ t0, parsed, raw: pass2.raw, stages: [...priorStages, p2Stage], usage, latency: pass1.latency_ms + pass2.latency_ms, retain, sessionId, route });
 }
+async function resolveImageHint(parsed, token, sessionId) {
+  const hint = parsed?.image;
+  if (!hint?.searchTerms) return void 0;
+  try {
+    let synth = await synthesizeImage(hint.searchTerms, hint.criteria, { jwt: token, sessionId });
+    if (!synth.card && hint.fallback && hint.fallback !== hint.searchTerms) {
+      synth = await synthesizeImage(hint.fallback, hint.criteria, { jwt: token, sessionId });
+    }
+    return synth.card ?? void 0;
+  } catch (_e) {
+    return void 0;
+  }
+}
 function responseTextOf(parsed, raw) {
   return parsed?.voice || raw.content || "";
 }
-function finalize({ t0, parsed, raw, stages, usage, latency, unsupported_tool, retain, sessionId, route, structured_data }) {
+function finalize({ t0, parsed, raw, stages, usage, latency, unsupported_tool, retain, sessionId, route, structured_data, client_tool, metadata }) {
   const type = parsed?.type || "response";
   const callerRetain = !!retain?.callerRetain && !unsupported_tool && (type === "response" || type === "action");
   return {
@@ -2256,17 +4046,75 @@ function finalize({ t0, parsed, raw, stages, usage, latency, unsupported_tool, r
     latency_ms: latency,
     total_latency_ms: Date.now() - t0,
     unsupported_tool: unsupported_tool || void 0,
+    client_tool: client_tool || void 0,
     route,
     stages,
     // Echo the session id (== ai_interactions.session_id) so callers can join the
     // HA-local transcript to the Supabase usage rows in the console (§17).
     conversation_id: sessionId,
-    metadata: callerRetain ? { retain_transcript: true } : void 0,
+    metadata: callerRetain || metadata ? { ...metadata ?? {}, ...callerRetain ? { retain_transcript: true } : {} } : void 0,
     structured_data
   };
 }
+function insufficientCreditsTurn(t0, balance) {
+  return {
+    ok: true,
+    type: "response",
+    voice: "",
+    text: null,
+    action: null,
+    parsed_ok: true,
+    raw_content: "",
+    usage: { input_tokens: 0, output_tokens: 0, total_tokens: 0 },
+    model: "",
+    provider: "",
+    latency_ms: 0,
+    total_latency_ms: Date.now() - t0,
+    route: "insufficient_credits",
+    stages: [{ name: "insufficient_credits", latency_ms: 0 }],
+    metadata: { degraded: "insufficient_credits", balance }
+  };
+}
+function rateLimitedTurn(t0, retryAfterSeconds) {
+  return {
+    ok: true,
+    type: "response",
+    voice: "",
+    text: null,
+    action: null,
+    parsed_ok: true,
+    raw_content: "",
+    usage: { input_tokens: 0, output_tokens: 0, total_tokens: 0 },
+    model: "",
+    provider: "",
+    latency_ms: 0,
+    total_latency_ms: Date.now() - t0,
+    route: "rate_limited",
+    stages: [{ name: "rate_limited", latency_ms: 0 }],
+    metadata: { degraded: "rate_limited", retry_after_seconds: retryAfterSeconds }
+  };
+}
+function endIntentTurn(t0) {
+  return {
+    ok: true,
+    type: "response",
+    voice: "",
+    text: null,
+    action: null,
+    parsed_ok: true,
+    raw_content: "",
+    usage: { input_tokens: 0, output_tokens: 0, total_tokens: 0 },
+    model: "",
+    provider: "",
+    latency_ms: 0,
+    total_latency_ms: Date.now() - t0,
+    route: "end_intent",
+    stages: [{ name: "end_intent_shortcircuit", latency_ms: 0 }],
+    metadata: { short_circuit: "end_intent", end_conversation: true }
+  };
+}
 function noiseTurn(t0) {
-  const msg = "Sorry, I didn't catch that.";
+  const msg = NOISE_REPLY;
   return {
     ok: true,
     type: "response",
@@ -2334,8 +4182,10 @@ function formatHistory(history) {
 ${lines.join("\n")}
 `;
 }
-async function logPass(io, token, requestType, endpointId, sessionId, prompt, pass, retainText = {}) {
+async function logPass(io, token, requestType, endpointId, sessionId, prompt, pass, retainText = {}, meta = {}) {
   const usage = pass.raw?.usage || {};
+  const trace = meta.tool_trace;
+  const logMeta = trace && trace.args != null ? { ...meta, tool_trace: { ...trace, args: await redactToolArgs(trace.args) } } : meta;
   await io.logInteraction(token, {
     session_id: sessionId,
     request_type: requestType,
@@ -2349,11 +4199,18 @@ async function logPass(io, token, requestType, endpointId, sessionId, prompt, pa
     success: true,
     endpoint_id: endpointId,
     // Transcript text (§17): present only on a terminal pass when serverPersist is on.
-    ...retainText
+    ...retainText,
+    ...logMeta
   });
+}
+function toolMeta(parsed, route, caps) {
+  const tool = (parsed?.type === "info_request" ? parsed.tool : null) ?? null;
+  const args = (parsed?.type === "info_request" ? parsed.query : null) ?? null;
+  return { tool_used: tool, response_type: parsed?.type ?? null, tool_trace: { route, tool, args, ...caps ? { caps } : {} } };
 }
 // Annotate the CommonJS export names for ESM import in node:
 0 && (module.exports = {
-  runOrchestration
+  runOrchestration,
+  wantsGameDetail
 });
-module.exports.BRAIN_SOURCE_SHA = "88d54fb5906948955b07af4f61656ce2a1fb6d28";
+module.exports.BRAIN_SOURCE_SHA = "c51a3380fe1d1663ccd64dd0d498a79b620aa1f1";
