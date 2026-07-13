@@ -12,6 +12,7 @@
 const express = require('express');
 const auth = require('../auth');
 const keyStore = require('../key-store');
+const providers = require('../brain/providers');
 
 const router = express.Router();
 
@@ -31,6 +32,25 @@ router.get('/', (req, res) => {
 /** GET /api/keys/status → { gemini: bool, claude: bool, ... } */
 router.get('/status', (req, res) => {
     res.json({ providers: keyStore.status() });
+});
+
+/**
+ * POST /api/keys/validate  { provider }
+ * Free "is my key valid?" check — a GET to the provider's /models endpoint (no
+ * completion, nothing billed). → { ok: true|false|null, detail }.
+ */
+router.post('/validate', express.json(), async (req, res) => {
+    const { provider } = req.body || {};
+    if (!keyStore.isKnownProvider(provider)) {
+        return res.status(400).json({ error: 'unknown_provider' });
+    }
+    try {
+        const result = await providers.validateProvider(provider);
+        res.json(result);
+    } catch (e) {
+        console.error('[keys] validate failed:', e.message);
+        res.json({ ok: false, detail: 'Validation failed to run.' });
+    }
 });
 
 /**

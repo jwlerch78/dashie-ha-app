@@ -70,4 +70,42 @@ function resolveByokTarget(model) {
     return { chatUrl: OPENAI_COMPAT[provider].chatUrl, key: entry.key, provider, label: OPENAI_COMPAT[provider].label };
 }
 
-module.exports = { providerForModel, resolveBrainRoute, resolveByokTarget, OPENAI_COMPAT };
+/** Free key-validation probes: each provider's model-LIST endpoint (GET, no
+ *  completion) → 200 = key valid, 401/403 = key rejected. Listing models bills
+ *  nothing, so this answers "is my key good?" without a charge. Claude uses the
+ *  Anthropic header shape (x-api-key + version), not a bearer. */
+const VALIDATE = {
+    openai: { url: 'https://api.openai.com/v1/models', headers: (k) => ({ Authorization: `Bearer ${k}` }) },
+    gemini: { url: 'https://generativelanguage.googleapis.com/v1beta/openai/models', headers: (k) => ({ Authorization: `Bearer ${k}` }) },
+    claude: { url: 'https://api.anthropic.com/v1/models', headers: (k) => ({ 'x-api-key': k, 'anthropic-version': '2023-06-01' }) },
+};
+
+/**
+ * Validate a stored provider key WITHOUT spending anything (a free /models GET).
+ * @returns {Promise<{ok: boolean|null, detail: string}>}
+ *   ok:true  key works · ok:false key rejected/absent/unreachable · ok:null no test for this provider.
+ */
+async function validateProvider(provider) {
+    const spec = VALIDATE[provider];
+    if (!spec) return { ok: null, detail: 'No no-charge test available for this provider yet.' };
+    const entry = keyStore.readKeys()[provider];
+    if (!entry || !entry.key) return { ok: false, detail: 'No key is stored — save one first.' };
+    const ctl = new AbortController();
+    const timer = setTimeout(() => ctl.abort(), 8000);
+    try {
+        const resp = await fetch(spec.url, { headers: spec.headers(entry.key), signal: ctl.signal });
+        clearTimeout(timer);
+        if (resp.ok) {
+            let n = null;
+            try { const j = await resp.json(); n = Array.isArray(j?.data) ? j.data.length : null; } catch { /* body optional */ }
+            return { ok: true, detail: n != null ? `Key is valid (${n} models available).` : 'Key is valid.' };
+        }
+        if (resp.status === 401 || resp.status === 403) return { ok: false, detail: `Key was rejected (HTTP ${resp.status}) — check it and re-save.` };
+        return { ok: false, detail: `Unexpected response (HTTP ${resp.status}).` };
+    } catch (e) {
+        clearTimeout(timer);
+        return { ok: false, detail: e?.name === 'AbortError' ? 'Timed out reaching the provider (8s).' : (e?.message || 'Could not reach the provider.') };
+    }
+}
+
+module.exports = { providerForModel, resolveBrainRoute, resolveByokTarget, validateProvider, OPENAI_COMPAT };
