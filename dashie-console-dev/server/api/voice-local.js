@@ -166,7 +166,7 @@ router.get('/engines', async (req, res) => {
     console.error('[voice-local] engine detection failed:', (e && e.stack) || e);
     // Detection is best-effort — never 500 the picker; return an empty set so
     // the Console falls back to URL-based local_* rows.
-    res.json({ available: false, tts: [], stt: [], kokoro: { installed: false, reason: 'error' }, error: (e && e.message) || String(e) });
+    res.json({ available: false, tts: [], stt: [], kokoro: { installed: false, reason: 'error' }, hermes: { installed: false, reason: 'error' }, error: (e && e.message) || String(e) });
   }
 });
 
