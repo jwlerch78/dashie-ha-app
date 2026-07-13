@@ -643,8 +643,12 @@ const VoiceAiPage = {
             if (!visibleStages.has(k)) this._expandedCards.delete(k);
         }
         const cfg = k => d[k];
+        // WS-F (§13.1): stage icons on the three pipeline card titles — brain (AI),
+        // ear (STT), speaking head (TTS). Other cards (search, defaults) stay bare.
+        const CARD_ICONS = { model: 'icon-ai-brain', stt: 'icon-ear', tts: 'icon-speaking-head' };
         const card = (title, stageKey, options, selectedId) => VoiceAiCards.render({
             title, stageKey, options, selectedId,
+            icon: CARD_ICONS[stageKey] || '',
             expanded: this._expandedCards.has(stageKey),
             anyExpanded: this._expandedCards.size > 0,  // dim the other cards while one is open
             getConfig: cfg,

@@ -40,6 +40,11 @@ const VoiceAiCards = {
         // option, a caret (2026-07-12 vertical-compression pass; the old
         // full selected-option card is only shown expanded). Expanding
         // reveals the option list directly.
+        // WS-F (§13.1): optional stage icon (brain / ear / speaking head) before the
+        // title, drawn from assets/icons/ to match the console set's line style.
+        const icon = o.icon
+            ? `<img src="assets/icons/${this._esc(o.icon)}.svg" alt="" style="width: 15px; height: 15px; opacity: 0.55; flex-shrink: 0;">`
+            : '';
         if (!o.expanded) {
             const O = window.VoiceAiOptions;
             const color = O.COLOR[sel.locality] || 'var(--text-muted)';
@@ -52,7 +57,7 @@ const VoiceAiCards = {
                     <div class="card"><div class="card-body" style="padding: 0;">
                         <div onclick="VoiceAiPage.toggleCard('${o.stageKey}')"
                             style="cursor: pointer; display: flex; align-items: center; gap: 10px; padding: 10px 14px;">
-                            <span style="font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; color: var(--text-muted); min-width: 170px;">${this._esc(o.title)}</span>
+                            <span style="font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; color: var(--text-muted); min-width: 170px; display: inline-flex; align-items: center; gap: 7px;">${icon}${this._esc(o.title)}</span>
                             <span style="flex: 1; font-weight: 600; font-size: 13px; display: flex; align-items: center; gap: 8px;">${this._esc(sel.label)} ${tag}</span>
                             <span style="color: var(--text-muted); font-size: 13px;">▸</span>
                         </div>
@@ -65,7 +70,7 @@ const VoiceAiCards = {
         const head = `
             <div onclick="VoiceAiPage.toggleCard('${o.stageKey}')"
                 style="cursor: pointer; display:flex; justify-content:space-between; align-items:center; padding: 10px 14px; border-bottom: 1px solid var(--border, #e5e7eb); background: var(--surface-muted, #fafafa);">
-                <span style="font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; color: var(--accent);">Choose ${this._esc(o.title)}</span>
+                <span style="font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; color: var(--accent); display: inline-flex; align-items: center; gap: 7px;">${icon}Choose ${this._esc(o.title)}</span>
                 <span style="color: var(--text-muted); font-size: 13px;">▴</span>
             </div>`;
         let prevGroup = null;
