@@ -114,6 +114,24 @@ async function getTranscripts(limit = 100) {
     return resp.json();
 }
 
+/**
+ * Call an HA service — POST /api/services/<domain>/<service> with a JSON body.
+ * Used to push device commands via the Dashie integration (e.g.
+ * dashie.refresh_voice_config on a household-sharing toggle). Throws on HTTP error.
+ */
+async function callService(domain, service, data = {}) {
+    const config = getConfig();
+    if (!config) throw new Error('HA client not configured');
+    const url = `${config.baseUrl}/api/services/${encodeURIComponent(domain)}/${encodeURIComponent(service)}`;
+    const resp = await fetch(url, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${config.token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify(data || {}),
+    });
+    if (!resp.ok) throw new Error(`/api/services/${domain}/${service}: HTTP ${resp.status}`);
+    return resp.json().catch(() => ({}));
+}
+
 /** DELETE all HA-local voice transcripts. Returns { cleared: <count> }. */
 async function clearTranscripts() {
     const config = getConfig();
@@ -134,6 +152,7 @@ module.exports = {
     getStates,
     getState,
     getHistory,
+    callService,
     getTranscripts,
     clearTranscripts,
 };
