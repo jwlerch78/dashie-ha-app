@@ -19,7 +19,7 @@ const TTL_MS = 30_000; // user_settings changes rarely; a short cache keeps conv
 let _cache = null; // { at, value }
 
 const EMPTY_PIPELINE = { sttProvider: '', ttsProvider: '', haSttEngineId: '', haTtsEngineId: '', haTtsVoiceId: '', controlMethod: '', searchSource: '', pipelinePreset: '', customizePipeline: false };
-const SAFE_DEFAULT = { model: null, route: 'cloud', localLlmUrl: '', localLlmModel: '', localLlmKey: '', hermesUrl: '', retainTranscripts: false, agentMode: '', retrievePictures: null, webSearchEnabled: null, zipCode: '', defaultPersonalityId: '', defaultVoiceKey: '', defaultWakeWord: '', pipeline: EMPTY_PIPELINE };
+const SAFE_DEFAULT = { model: null, route: 'cloud', localLlmUrl: '', localLlmModel: '', localLlmKey: '', hermesUrl: '', retainTranscripts: false, agentMode: '', retrievePictures: null, webSearchEnabled: null, zipCode: '', defaultPersonalityId: '', defaultVoiceKey: '', defaultWakeWord: '', householdSharing: false, pipeline: EMPTY_PIPELINE };
 
 /** Coerce a settings value to a string, '' when absent/non-string. */
 function str(v) { return typeof v === 'string' ? v : ''; }
@@ -65,6 +65,13 @@ async function getAccountVoiceConfig() {
           // anonymous kiosks via the integration's /api/dashie/voice/status so they behave
           // like the account chose (Live-on-kiosk, 2026-07-09). '' = unset → kiosk default.
           agentMode: typeof settings?.voice?.agentMode === 'string' ? settings.voice.agentMode : '',
+          // Household Dashie Intelligence sharing — ACCOUNT-scoped (2026-07-13). Previously
+          // lived per-add-on-instance in /data (settings-store), so a new/wiped account
+          // inherited the previous account's sharing state. It's a property of the ACCOUNT
+          // ("share THIS account house-wide"), so it's read from user_settings: a fresh
+          // account is off by default, and nothing is shared without an explicit opt-in.
+          // Gates /api/internal/sharing-status + /api/internal/account-credential.
+          householdSharing: settings?.voice?.householdSharing === true,
           // ai.retrievePicturesEnabled — same anon-kiosk carry as agentMode (the relay
           // omits the image_search tool when false/unset). null = unset.
           retrievePictures: typeof settings?.ai?.retrievePicturesEnabled === 'boolean'

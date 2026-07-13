@@ -10,6 +10,7 @@ const express = require('express');
 const auth = require('../auth');
 const settingsStore = require('../settings-store');
 const haClient = require('../ha-client');
+const accountConfig = require('../account-config');
 
 const router = express.Router();
 
@@ -21,28 +22,41 @@ function requireSignedIn(req, res, next) {
     next();
 }
 
-/** GET /api/settings → all add-on-local settings. */
-router.get('/', (req, res) => {
-    res.json(settingsStore.readSettings());
+/** GET /api/settings → add-on-local settings, with householdSharing resolved from the
+ *  ACCOUNT (voice.householdSharing in user_settings) so any caller sees the truth. */
+router.get('/', async (req, res) => {
+    let householdSharing = false;
+    try {
+        const cfg = await accountConfig.getAccountVoiceConfig();
+        householdSharing = cfg.householdSharing === true;
+    } catch (e) { /* fail closed */ }
+    res.json({ ...settingsStore.readSettings(), householdSharing });
 });
 
 /**
  * PUT /api/settings/household-sharing  { enabled: bool }
  * Opt this add-on's account into (or out of) household-wide Dashie Cloud sharing.
  */
-router.put('/household-sharing', requireSignedIn, express.json(), (req, res) => {
+router.put('/household-sharing', requireSignedIn, express.json(), async (req, res) => {
     const enabled = req.body?.enabled === true;
-    const next = settingsStore.writeSettings({ householdSharing: enabled });
-    console.log(`[settings] household-sharing → ${enabled}`);
-    // Push a voice-config refresh to Dashie devices so anonymous kiosks pick up the
-    // change immediately — no reboot, settings visit, or voice command. Fire-and-forget
-    // (best-effort): the integration fans out `refreshVoiceConfig` to each device's 2323
-    // API, which re-probes /api/dashie/voice/status and hard-applies the account pipeline.
+    // householdSharing is ACCOUNT-scoped now (voice.householdSharing in user_settings) —
+    // the CONSOLE writes it (serialized patchUserSetting owns all settings writes; the
+    // add-on writing user_settings too would race it). This endpoint's job is to make the
+    // change take effect IMMEDIATELY: drop the cached account config (30s TTL) and push a
+    // voice-config refresh so anon kiosks re-probe — no reboot/settings/voice needed.
+    accountConfig.invalidate();
+    console.log(`[settings] household-sharing → ${enabled} (account-scoped; cache invalidated)`);
     if (haClient.isAvailable()) {
         haClient.callService('dashie', 'refresh_voice_config', {}).catch(e =>
             console.warn('[settings] refresh_voice_config push failed (non-fatal):', e.message));
     }
-    res.json({ householdSharing: next.householdSharing });
+    // Read back from the account so the response reflects what's actually stored.
+    let householdSharing = enabled;
+    try {
+        const cfg = await accountConfig.getAccountVoiceConfig();
+        householdSharing = cfg.householdSharing === true;
+    } catch (e) { /* fall back to the requested value */ }
+    res.json({ householdSharing });
 });
 
 module.exports = router;

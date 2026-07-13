@@ -3,7 +3,6 @@
 
 const express = require('express');
 const auth = require('../auth');
-const settingsStore = require('../settings-store');
 const haClient = require('../ha-client');
 const { SUPABASE, SUPABASE_ENV } = require('../config');
 
@@ -139,18 +138,16 @@ router.get('/jwt', async (req, res) => {
 router.post('/sign-out', (req, res) => {
     auth.clearStoredJwt();
     pendingLink = null;
-    // Reset per-instance Household Sharing on sign-out. settings-store lives on the
-    // add-on's /data volume (per instance, NOT per account), so without this the next
-    // account that signs in inherits the previous account's sharing state — and the
-    // first-open prompt wouldn't fire (it's gated on sharing being off). Best-effort
-    // push so any anon kiosk re-probes and sees sharing is now unavailable.
+    // householdSharing is ACCOUNT-scoped (voice.householdSharing in user_settings), so
+    // there's nothing instance-local to reset — signing out simply removes the credential,
+    // and sharing-status/account-credential fail closed with no account. Still push a
+    // voice-config refresh so any anon kiosk re-probes and sees sharing is unavailable.
     try {
-        settingsStore.writeSettings({ householdSharing: false });
         if (haClient.isAvailable()) {
             haClient.callService('dashie', 'refresh_voice_config', {}).catch(() => {});
         }
     } catch (e) {
-        console.warn('[auth] sign-out household-sharing reset failed (non-fatal):', e.message);
+        console.warn('[auth] sign-out kiosk push failed (non-fatal):', e.message);
     }
     return res.json({ success: true });
 });

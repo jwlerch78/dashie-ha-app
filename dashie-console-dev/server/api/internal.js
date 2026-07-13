@@ -17,7 +17,6 @@
 
 const express = require('express');
 const auth = require('../auth');
-const settingsStore = require('../settings-store');
 const { getAccountVoiceConfig } = require('../account-config');
 const bridgeAuth = require('../lib/bridge-auth');
 
@@ -36,10 +35,21 @@ router.use((req, res, next) => {
  * the account holder enabled household sharing? Drives whether anonymous kiosk
  * tablets may offer "Dashie Cloud". Never returns the credential.
  */
-router.get('/sharing-status', (req, res) => {
+router.get('/sharing-status', async (req, res) => {
     const stored = auth.readStoredJwt();
     const signedIn = !!stored;
-    const sharing = settingsStore.isHouseholdSharingEnabled();
+    // ACCOUNT-scoped (2026-07-13): read voice.householdSharing from user_settings via
+    // account-config (30s cache), not the add-on's /data store. A fresh/wiped account is
+    // OFF by default and can't inherit a previous account's sharing state.
+    let sharing = false;
+    if (signedIn) {
+        try {
+            const cfg = await getAccountVoiceConfig();
+            sharing = cfg.householdSharing === true;
+        } catch (e) {
+            sharing = false;   // fail closed — never share on a config read error
+        }
+    }
     const available = signedIn && sharing;
     return res.json({
         available,
@@ -60,10 +70,19 @@ router.get('/sharing-status', (req, res) => {
  * household-sharing opt-in.
  */
 router.get('/account-credential', async (req, res) => {
-    if (!settingsStore.isHouseholdSharingEnabled()) {
+    // ACCOUNT-scoped gate (2026-07-13) — voice.householdSharing from user_settings.
+    // Fails CLOSED: any read error → no credential vended.
+    let sharing = false;
+    try {
+        const cfg = await getAccountVoiceConfig();
+        sharing = cfg.householdSharing === true;
+    } catch (e) {
+        sharing = false;
+    }
+    if (!sharing) {
         return res.status(403).json({
             error: 'sharing_disabled',
-            message: 'Household Dashie Cloud sharing is turned off in the add-on.',
+            message: 'Household Dashie Cloud sharing is turned off for this account.',
         });
     }
     try {
