@@ -25,6 +25,11 @@ const VoiceAiCards = {
         return String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
     },
 
+    /** The BYO-key badge icon (Open Brain §5), sized to sit inline with row text. */
+    _keyIcon() {
+        return `<img src="assets/icons/icon-key.svg" alt="API key" title="Runs on your API key" style="width: 13px; height: 13px; opacity: 0.6; flex-shrink: 0;">`;
+    },
+
     /** @param {object} o { title, stageKey, options[], selectedId, expanded, getConfig(key) } */
     render(o) {
         const opts = o.options || [];
@@ -51,6 +56,9 @@ const VoiceAiCards = {
             const tag = sel.locality
                 ? `<span style="font-size:10px; font-weight:700; text-transform:uppercase; letter-spacing:0.4px; color:${color};">${O.LABEL[sel.locality] || ''}</span>`
                 : '';
+            // Key badge (Open Brain §5): the selected option runs on a BYO key → key
+            // icon next to it, so the summary reads "Gemini 2.5 Flash CLOUD 🔑".
+            const keyBadge = sel.keyed ? this._keyIcon() : '';
             const dimmed = o.anyExpanded;
             return `
                 <div style="margin-bottom: 10px; transition: opacity 120ms ease; ${dimmed ? 'opacity: 0.45;' : ''}">
@@ -58,7 +66,7 @@ const VoiceAiCards = {
                         <div onclick="VoiceAiPage.toggleCard('${o.stageKey}')"
                             style="cursor: pointer; display: flex; align-items: center; gap: 10px; padding: 10px 14px;">
                             <span style="font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; color: var(--text-muted); min-width: 170px; display: inline-flex; align-items: center; gap: 7px;">${icon}${this._esc(o.title)}</span>
-                            <span style="flex: 1; font-weight: 600; font-size: 13px; display: flex; align-items: center; gap: 8px;">${this._esc(sel.label)} ${tag}</span>
+                            <span style="flex: 1; font-weight: 600; font-size: 13px; display: flex; align-items: center; gap: 8px;">${this._esc(sel.label)} ${tag} ${keyBadge}</span>
                             <span style="color: var(--text-muted); font-size: 13px;">▸</span>
                         </div>
                     </div></div>
@@ -142,7 +150,9 @@ const VoiceAiCards = {
                         ${this._esc(x.label)} ${localityTag} ${soon} ${guide}
                     </div>
                     <div style="display:flex; align-items:center; gap: 10px; flex-shrink: 0;">
-                        <span style="font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; color: var(--text-muted);">${this._esc(x.cost || '')}</span>
+                        ${x.keyed
+                            ? `<span style="display:inline-flex; align-items:center; gap:5px; font-size: 11px; font-weight: 600; color: var(--text-muted);">${this._keyIcon()} API account</span>`
+                            : `<span style="font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; color: var(--text-muted);">${this._esc(x.cost || '')}</span>`}
                         ${right}
                     </div>
                 </div>

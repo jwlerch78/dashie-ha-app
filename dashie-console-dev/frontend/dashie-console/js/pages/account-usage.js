@@ -825,7 +825,7 @@ const AccountUsage = {
             ? `<div style="padding-left: 24px;">
                  ${dialogTurns ? this._renderRealtimeTranscript(dialogTurns) : this._renderTranscript(intr)}
                  <table style="width: 100%; border-collapse: collapse; font-size: 12px; margin: 0 0 6px;"><tbody>
-                    ${items.map(c => this._renderCallRow(c)).join('')}
+                    ${this._groupCallItems(items).map(g => this._renderGroupedCallRow(g)).join('')}
                  </tbody></table>
                </div>`
             : '';
@@ -873,7 +873,7 @@ const AccountUsage = {
                  ${this._renderRealtimeTranscript(turns)}
                  <table style="width: 100%; border-collapse: collapse; font-size: 12px; margin: 0 0 6px;"><tbody>
                     ${has(ai) ? rollupRow('AI', ai) : ''}
-                    ${toolItems.map(c => this._renderCallRow(c)).join('')}
+                    ${this._groupCallItems(toolItems).map(g => this._renderGroupedCallRow(g)).join('')}
                  </tbody></table>
                </div>`
             : '';
@@ -945,6 +945,53 @@ const AccountUsage = {
                 <td style="padding: 4px 0; color: var(--text-muted); width: 60px; text-transform: uppercase; font-size: 10px; letter-spacing: 0.5px;">${this._escape(this._svcLabel(c.service))}</td>
                 <td style="padding: 4px 8px;">${desc}</td>
                 <td style="padding: 4px 0; text-align: right; font-family: ui-monospace, SFMono-Regular, Menlo, monospace;">${c.byok ? 'API key' : this._fmtCost3(cost)}</td>
+            </tr>`;
+    },
+
+    /** Collapse an interaction's call items to one row per (service, model,
+     *  provider, byok): repeated STT/TTS passes and multi-pass AI read as a
+     *  single summed line (×N) instead of an interleaved list that rendered
+     *  newest-first and so didn't track the transcript order (John, 2026-07-12).
+     *  Ordered speak-first — AI, then STT (you), TTS (Dashie), then tools —
+     *  so the rows follow the conversation. byok never merges with metered. */
+    _CALL_ROW_ORDER: { ai: 0, stt: 1, tts: 2, web_search: 3, image_search: 4 },
+    _groupCallItems(items) {
+        const groups = new Map();
+        for (const c of items) {
+            const key = `${c.service}|${c.model || c.provider || ''}|${c.byok ? 'k' : ''}`;
+            let g = groups.get(key);
+            if (!g) {
+                g = { service: c.service, model: c.model, provider: c.provider, byok: c.byok,
+                      count: 0, cost: 0, input_tokens: 0, output_tokens: 0, result_count: 0 };
+                groups.set(key, g);
+            }
+            g.count += 1;
+            g.cost += this._itemCost(c);
+            g.input_tokens += c.input_tokens || 0;
+            g.output_tokens += c.output_tokens || 0;
+            g.result_count += c.result_count || 0;
+        }
+        return Array.from(groups.values())
+            .sort((a, b) => (this._CALL_ROW_ORDER[a.service] ?? 9) - (this._CALL_ROW_ORDER[b.service] ?? 9));
+    },
+
+    /** One grouped call row (see _groupCallItems). ×N shown when >1 pass. */
+    _renderGroupedCallRow(g) {
+        const times = g.count > 1 ? ` ×${g.count}` : '';
+        const desc = g.service === 'ai'
+            ? `${this._escape(g.model || '—')}${g.byok ? ' (API key)' : ''} (${this._fmtCount(g.input_tokens)} in / ${this._fmtCount(g.output_tokens)} out)${times}`
+            : g.service === 'web_search'
+                ? `${this._escape(g.provider || '')} (${this._fmtCount(g.result_count)} results)${times}`
+                : g.service === 'image_search'
+                    ? `${this._escape(g.provider || '')} (${this._fmtCount(g.result_count)} images)${times}`
+                    : (g.service === 'stt' || g.service === 'tts')
+                        ? `${this._escape(g.model || g.provider || '—')} (${g.service === 'stt' ? 'speech-to-text' : 'text-to-speech'})${times}`
+                        : `${this._escape(g.provider || '')} ${g.service}${times}`;
+        return `
+            <tr>
+                <td style="padding: 4px 0; color: var(--text-muted); width: 60px; text-transform: uppercase; font-size: 10px; letter-spacing: 0.5px;">${this._escape(this._svcLabel(g.service))}</td>
+                <td style="padding: 4px 8px;">${desc}</td>
+                <td style="padding: 4px 0; text-align: right; font-family: ui-monospace, SFMono-Regular, Menlo, monospace;">${g.byok ? 'API key' : this._fmtCost3(g.cost)}</td>
             </tr>`;
     },
 

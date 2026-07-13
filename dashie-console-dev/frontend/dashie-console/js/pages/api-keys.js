@@ -19,6 +19,8 @@ const ApiKeysPage = {
     _loading: false,
     _error: null,
     _busy: null,          // provider id currently saving/removing
+    _testing: null,       // provider id currently being validated
+    _testResult: {},      // { providerId: { ok: true|false|null, detail } } — last validation
 
     /** AI/brain providers (v1). `fields` drive the form; single-key providers
      *  use one masked input, Bedrock is multi-field. */
@@ -123,6 +125,8 @@ const ApiKeysPage = {
     _renderProviderCard(p) {
         const state = this._providers?.[p.id] || { set: false, fields: {} };
         const busy = this._busy === p.id;
+        const testing = this._testing === p.id;
+        const result = this._renderTestResult(p.id);
         const pill = state.set
             ? `<span style="font-size: 11px; font-weight: 700; color: var(--status-success, #16a34a); background: rgba(22,163,74,0.10); border-radius: 999px; padding: 3px 10px;">Key saved</span>`
             : `<span style="font-size: 11px; font-weight: 600; color: var(--text-muted); background: var(--bg-muted, #f4f4f5); border-radius: 999px; padding: 3px 10px;">Not set</span>`;
@@ -149,11 +153,26 @@ const ApiKeysPage = {
                     <div style="display: flex; gap: 8px;">
                         <button class="btn btn-primary btn-sm" ${busy ? 'disabled' : ''}
                             onclick="ApiKeysPage.save('${p.id}')">${busy ? 'Saving…' : 'Save'}</button>
+                        ${state.set ? `<button class="btn btn-secondary btn-sm" ${busy || testing ? 'disabled' : ''}
+                            onclick="ApiKeysPage.test('${p.id}')">${testing ? 'Testing…' : 'Test'}</button>` : ''}
                         ${state.set ? `<button class="btn btn-secondary btn-sm" ${busy ? 'disabled' : ''}
                             onclick="ApiKeysPage.remove('${p.id}')">Remove</button>` : ''}
                     </div>
                 </div>
+                ${result}
             </div></div>`;
+    },
+
+    /** Inline result of the last no-charge validation for this provider. */
+    _renderTestResult(providerId) {
+        const r = this._testResult[providerId];
+        if (!r) return '';
+        // ok:true green · ok:false red · ok:null muted (no test for this provider)
+        const color = r.ok === true ? 'var(--status-success, #16a34a)'
+            : r.ok === false ? 'var(--status-error, #c00)'
+            : 'var(--text-muted)';
+        const mark = r.ok === true ? '✓ ' : r.ok === false ? '✗ ' : '';
+        return `<div style="margin-top: 10px; font-size: 12px; color: ${color};">${mark}${this._escape(r.detail || '')}</div>`;
     },
 
     async save(providerId) {
@@ -193,8 +212,34 @@ const ApiKeysPage = {
         await this._put(providerId, null, 'Key removed.');
     },
 
+    /** No-charge validity check — asks the add-on to hit the provider's /models
+     *  endpoint (a free GET, nothing billed) and reports valid/rejected inline. */
+    async test(providerId) {
+        if (this._busy || this._testing) return;
+        this._testing = providerId;
+        delete this._testResult[providerId];
+        App.renderPage();
+        try {
+            const resp = await fetch(DashieAuth._addonUrl('/api/keys/validate'), {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ provider: providerId }),
+            });
+            if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+            const data = await resp.json();
+            this._testResult[providerId] = { ok: data?.ok ?? null, detail: data?.detail || '' };
+        } catch (e) {
+            console.error('[ApiKeysPage] validate failed:', e);
+            this._testResult[providerId] = { ok: false, detail: `Couldn't run the test: ${e?.message || e}` };
+        }
+        this._testing = null;
+        App.renderPage();
+    },
+
     async _put(providerId, value, successMsg) {
         this._busy = providerId;
+        // A saved/removed key invalidates the prior test result.
+        delete this._testResult[providerId];
         App.renderPage();
         try {
             const resp = await fetch(DashieAuth._addonUrl('/api/keys'), {

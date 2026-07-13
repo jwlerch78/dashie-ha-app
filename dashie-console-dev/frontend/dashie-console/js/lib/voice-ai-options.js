@@ -146,6 +146,10 @@ const VoiceAiOptions = {
                     locality: 'cloud',
                     cost: p ? this._modelCost(p) : '',
                     group: this._PROVIDER_LABEL[prov] || prov,
+                    // BYO-key provider (gemini|claude|openai|bedrock) — the page marks the
+                    // row `keyed` when a key for this provider is stored (Open Brain §5), so
+                    // it shows the key icon + "API account" instead of a per-turn cost.
+                    provider: prov,
                 });
             }
         }

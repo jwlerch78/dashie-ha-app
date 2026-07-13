@@ -688,7 +688,7 @@ const VoiceAiPage = {
             ${showPipeline && voiceField ? this._renderVoiceRow(voiceField, d) : ''}
             ${showPipeline ? card('Speech-to-text', 'stt', filtered('stt', O.sttOptions(this._engines)), String(d['voice.sttProvider'])) : ''}` : `
             ${P.renderCustomizeRow(customPipeline, !isLive)}
-            ${card('AI Model', 'model', this._modelOptions(preset), this._selectedModelId(agentMode))}
+            ${card('AI Model', 'model', this._markKeyed(this._modelOptions(preset)), this._selectedModelId(agentMode))}
             ${D.renderPersonalityCard({
                 templates: this._templates, custom: this._custom,
                 currentId: String(d['ai.defaultPersonalityId'] || 'dashie'),
@@ -699,7 +699,7 @@ const VoiceAiPage = {
             ${showPipeline ? card('Text-to-speech', 'tts', ttsCardOpts, String(d['voice.ttsProvider'])) : ''}
             ${showPipeline && voiceField ? this._renderVoiceRow(voiceField, d) : ''}
             ${showPipeline ? card('Speech-to-text', 'stt', filtered('stt', O.sttOptions(this._engines)), String(d['voice.sttProvider'])) : ''}
-            ${showPipeline ? card('Web search source', 'search', searchOptions, searchSelected) : ''}`;
+            ${showPipeline ? card('Web search source', 'search', this._markKeyed(searchOptions), searchSelected) : ''}`;
             // Sports source card hidden for now (John, 2026-07-11) — ESPN is the
             // only option. The account default-VOICE card was removed 2026-07-12
             // (cloud voice follows the personality; Piper voice lives in the TTS
@@ -864,7 +864,20 @@ const VoiceAiPage = {
         return [{
             id: 'google', label: 'Google', locality: 'cloud', cost: 'Included with Gemini',
             description: 'Gemini searches Google directly and grounds its answer.',
+            // Google grounding is part of the Gemini model call, so it runs through
+            // the same BYO Gemini key — mark it with the provider so it shows keyed too.
+            provider: 'gemini',
         }];
+    },
+
+    /** Mark options whose provider has a BYO key stored on the box (Open Brain §5).
+     *  A `keyed` option shows the key icon + "API account" instead of a per-turn
+     *  cost — its turns run on the user's key, not Dashie credits. No-op off add-on
+     *  mode / when no keys are set (this._keyStatus null). */
+    _markKeyed(options) {
+        const ks = this._keyStatus;
+        if (!ks) return options;
+        return options.map(o => (o.provider && ks[o.provider]) ? { ...o, keyed: true } : o);
     },
 
     /** Detection status + "Re-scan" for the engine-direct HA rows. Add-on mode
