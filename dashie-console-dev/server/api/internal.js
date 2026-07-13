@@ -85,6 +85,10 @@ router.get('/voice-config', async (req, res) => {
         const cfg = await getAccountVoiceConfig();
         return res.json({
             route: cfg.route,
+            // Why the route resolved this way: 'local_model' | 'hermes' | 'byok' | 'cloud'.
+            // 'byok' = the account's cloud model + a provider key on this box (Open Brain §5) —
+            // the brain runs HERE on the user's key, $0 to Dashie credits.
+            route_reason: cfg.routeReason || (cfg.route === 'local' ? 'local_model' : 'cloud'),
             model_is_local: cfg.route === 'local',
             // Household conversation agent mode (live|dialog|single) for anonymous kiosks —
             // the integration forwards it on /api/dashie/voice/status (Live-on-kiosk, 2026-07-09).

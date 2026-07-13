@@ -39,14 +39,20 @@ async function postDbOp(token, operation, data) {
 
 /**
  * @param {object} opts
- * @param {string} opts.endpoint  Base URL of the LAN model server (no trailing /v1), e.g.
+ * @param {string} [opts.endpoint]  Base URL of the LAN model server (no trailing /v1), e.g.
  *                                 http://localhost:11434 (Ollama) or http://localhost:8080 (llama.cpp).
+ * @param {string} [opts.chatUrl]  FULL /chat/completions URL — overrides endpoint. Used by the
+ *                                 BYOK cloud providers (providers.js), whose compat paths aren't
+ *                                 uniformly /v1/chat/completions (Gemini's is /v1beta/openai/...).
  * @param {string} opts.model     Default model id when the caller doesn't pass one.
+ * @param {string} [opts.providerLabel]  Human name ('OpenAI', 'Gemini', …) prefixed onto HTTP
+ *                                 errors so a bad BYO key reads as "OpenAI: Incorrect API key…",
+ *                                 attributing the failure to the user's provider, not Dashie.
  * @param {function} [opts.log]   Optional logger (defaults to console.log).
  * @returns {object} an OrchestratorIO
  */
-function createNodeIO({ endpoint, model, key = '', log = console.log }) {
-  const chatUrl = String(endpoint).replace(/\/+$/, '') + '/v1/chat/completions';
+function createNodeIO({ endpoint, chatUrl: chatUrlOpt, model, key = '', providerLabel = '', log = console.log }) {
+  const chatUrl = chatUrlOpt || (String(endpoint).replace(/\/+$/, '') + '/v1/chat/completions');
   // BYO-model (WS-I): send a bearer when the account configured a key — required
   // for a Hermes API server or any remote OpenAI-compatible endpoint. Local
   // Ollama/llama.cpp usually need no key, so the header is omitted when blank.
@@ -70,7 +76,8 @@ function createNodeIO({ endpoint, model, key = '', log = console.log }) {
       const latency_ms = Date.now() - t0;
       if (!resp.ok) {
         const error = body?.error?.message || body?.error || `HTTP ${resp.status}`;
-        return { ok: false, error: typeof error === 'string' ? error : JSON.stringify(error), latency_ms };
+        const msg = typeof error === 'string' ? error : JSON.stringify(error);
+        return { ok: false, error: providerLabel ? `${providerLabel}: ${msg}` : msg, latency_ms };
       }
       const content = body?.choices?.[0]?.message?.content ?? '';
       const u = body?.usage || {};
@@ -86,7 +93,9 @@ function createNodeIO({ endpoint, model, key = '', log = console.log }) {
             total_tokens: u.total_tokens,
           },
           model: body?.model || useModel,
-          provider: 'local',
+          // 'local' for the on-box/Hermes rows; the provider name ('openai'/'gemini') for a
+          // BYOK cloud key, so usage rows attribute the turn to the user's provider.
+          provider: providerLabel ? providerLabel.toLowerCase() : 'local',
           latency: latency_ms,
         },
       };

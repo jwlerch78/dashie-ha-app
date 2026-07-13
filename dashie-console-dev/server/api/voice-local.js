@@ -14,6 +14,7 @@ const express = require('express');
 const auth = require('../auth');
 const { getAccountVoiceConfig } = require('../account-config');
 const keyStore = require('../key-store');
+const providers = require('../brain/providers');
 const { createNodeIO } = require('../brain/node-io');
 const brain = require('../brain/voice-brain.bundle.js');
 const { detectVoiceEngines } = require('../voice-engines');
@@ -31,8 +32,11 @@ const ENV_MODEL = process.env.LOCAL_LLM_MODEL || 'qwen2.5:3b';
 // requires a bearer (API_SERVER_KEY) — read from the on-box key store, not user_settings.
 const HERMES_MODEL_ID = 'hermes-agent';
 
-/** Resolve the LAN inference target for the account: the dedicated Hermes row or the
- *  generic BYO endpoint. One resolver so /converse-local and /local-status agree. */
+/** Resolve the inference target for the account: the dedicated Hermes row, a BYOK cloud
+ *  provider (Open Brain §5 — the account's cloud model + the box's stored key), or the
+ *  generic own-endpoint row. One resolver so /converse-local and /local-status agree.
+ *  BYOK with the key deleted between routing and the turn → source 'byok_key_missing'
+ *  (explicit 503 in the handler — degradation rule WS-I.8, never a silent cloud fallback). */
 function resolveLanTarget(acct) {
   if (acct.model === 'hermes') {
     return {
@@ -41,6 +45,15 @@ function resolveLanTarget(acct) {
       key: keyStore.readKeys().hermes?.key || '',
       source: acct.hermesUrl ? 'hermes' : 'hermes_unconfigured',
     };
+  }
+  if (acct.model && acct.model !== 'local') {
+    // A concrete cloud model id reached the local brain — that only happens when the route
+    // resolver saw a BYO key for its provider (providers.js). Re-resolve it fresh.
+    const byok = providers.resolveByokTarget(acct.model);
+    if (byok) {
+      return { endpoint: '', chatUrl: byok.chatUrl, model: acct.model, key: byok.key, providerLabel: byok.label, source: 'byok' };
+    }
+    return { endpoint: '', model: acct.model, key: '', source: 'byok_key_missing' };
   }
   return {
     endpoint: acct.localLlmUrl || ENV_ENDPOINT,
@@ -78,15 +91,27 @@ router.post('/converse-local', express.json(), async (req, res) => {
   // still wins (per-turn override, e.g. the test harness).
   const acct = await getAccountVoiceConfig();
   const target = resolveLanTarget(acct);
-  if (!target.endpoint) {
-    // Explicit, never a silent fallback to the metered cloud brain (WS-I.8).
+  // Explicit errors, never a silent fallback to the metered cloud brain (WS-I.8).
+  if (target.source === 'byok_key_missing') {
+    return res.status(503).json({
+      error: 'byok_key_missing',
+      message: `No API key is stored for the ${acct.model} provider. Add it under Manage → API Keys, or pick a different AI model.`,
+    });
+  }
+  if (!target.endpoint && !target.chatUrl) {
     return res.status(503).json({
       error: 'local_brain_unconfigured',
       message: 'Hermes is selected but no endpoint URL is set. Add it under Voice & AI → AI Model → Hermes Agent.',
     });
   }
   const model = (body.options && body.options.model) || target.model;
-  const io = createNodeIO({ endpoint: target.endpoint, model, key: target.key });
+  const io = createNodeIO({
+    endpoint: target.endpoint,
+    chatUrl: target.chatUrl,
+    model,
+    key: target.key,
+    providerLabel: target.providerLabel || '',
+  });
 
   const brainReq = {
     text: body.text,
@@ -116,9 +141,11 @@ router.get('/local-status', async (req, res) => {
     ok: true,
     brain_source_sha: brain.BRAIN_SOURCE_SHA || null,
     route: acct.route,
-    endpoint: target.endpoint,
+    route_reason: acct.routeReason || null,
+    endpoint: target.chatUrl || target.endpoint,
     model: target.model,
     source: target.source,
+    ...(target.providerLabel ? { provider: target.providerLabel } : {}),
     key_set: !!target.key,   // never the key itself
   });
 });

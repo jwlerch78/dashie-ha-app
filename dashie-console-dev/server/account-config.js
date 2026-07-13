@@ -13,6 +13,7 @@
 
 const auth = require('./auth');
 const { SUPABASE } = require('./config');
+const { resolveBrainRoute } = require('./brain/providers');
 
 const TTL_MS = 30_000; // user_settings changes rarely; a short cache keeps converse latency low.
 let _cache = null; // { at, value }
@@ -25,7 +26,7 @@ const SAFE_DEFAULT = { model: null, route: 'cloud', localLlmUrl: '', localLlmMod
  *          Never throws — falls back to SAFE_DEFAULT (cloud) on any error / not-signed-in.
  */
 async function getAccountVoiceConfig() {
-  if (_cache && Date.now() - _cache.at < TTL_MS) return _cache.value;
+  if (_cache && Date.now() - _cache.at < TTL_MS) return withRoute(_cache.value);
 
   let value = SAFE_DEFAULT;
   try {
@@ -45,7 +46,6 @@ async function getAccountVoiceConfig() {
         const model = settings?.ai?.model || null;
         value = {
           model,
-          route: (model === 'local' || model === 'hermes') ? 'local' : 'cloud',
           localLlmUrl: settings?.voice?.localLlmUrl || '',
           localLlmModel: settings?.voice?.localLlmModel || '',
           // BYO-model API key (WS-I) — bearer for a remote OpenAI-compatible
@@ -81,7 +81,16 @@ async function getAccountVoiceConfig() {
   }
 
   _cache = { at: Date.now(), value };
-  return value;
+  return withRoute(value);
+}
+
+/** Stamp `route`/`routeReason` FRESH on every read (outside the settings cache): the route
+ *  depends on the box's key store too (Open Brain §5 BYOK), and a key add/remove must flip
+ *  routing immediately, not after the settings TTL. resolveBrainRoute reads the key file —
+ *  cheap. `route`: 'local' = run the brain in this add-on; 'cloud' = the metered edge fn. */
+function withRoute(value) {
+  const { route, reason } = resolveBrainRoute(value);
+  return { ...value, route, routeReason: reason };
 }
 
 /** Drop the cache (e.g. after a known settings change). */
