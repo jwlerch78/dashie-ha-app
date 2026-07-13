@@ -93,7 +93,17 @@ async function getAccountVoiceConfig() {
             haSttEngineId: str(settings?.voice?.haSttEngineId),
             haTtsEngineId: str(settings?.voice?.haTtsEngineId),
             haTtsVoiceId: str(settings?.voice?.haTtsVoiceId),
-            controlMethod: str(settings?.voice?.controlMethod),
+            // controlMethod is the runtime's engine-domain key that the anon-kiosk
+            // mirror routes on (Cloud vs HA Assist). The console only persists it
+            // when it differs from the display default, so a cloud account often
+            // has it BLANK in user_settings while pipelinePreset='cloud'. Derive it
+            // from the preset when empty — mirrors on-device VoicePresetSeeder
+            // (cloud/hybrid/local → dashie_cloud, ha_assist → voice_assistant) so
+            // the kiosk actually switches instead of keeping its HA-Assist default.
+            controlMethod: str(settings?.voice?.controlMethod)
+              || (str(settings?.voice?.pipelinePreset)
+                    ? (settings.voice.pipelinePreset === 'ha_assist' ? 'voice_assistant' : 'dashie_cloud')
+                    : ''),
             searchSource: str(settings?.voice?.searchSource),
             pipelinePreset: str(settings?.voice?.pipelinePreset),
             customizePipeline: settings?.voice?.customizePipeline === true,
