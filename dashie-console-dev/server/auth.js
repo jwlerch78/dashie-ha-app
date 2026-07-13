@@ -189,6 +189,19 @@ async function refreshJwt(currentJwt) {
     });
     if (!resp.ok) {
         const body = await resp.text().catch(() => '');
+        // The ACCOUNT is gone (deleted / wiped), not a transient failure: jwt-auth now
+        // returns 401 account_deleted rather than blindly re-signing a 72h token from the
+        // dead sub. Drop the credential so this box stops presenting a deleted identity —
+        // otherwise getValidJwt's "use the existing JWT until expiry" fallback would keep
+        // vending it for up to 72h, which is how a wiped test account ended up minting kiosk
+        // voice tokens and reporting "out of voice credits" (2026-07-13).
+        if (resp.status === 401 && body.includes('account_deleted')) {
+            console.warn('[auth] Account no longer exists — clearing stored credential (signed out)');
+            clearStoredJwt();
+            const err = new Error('account_deleted');
+            err.accountDeleted = true;
+            throw err;
+        }
         throw new Error(`refresh_jwt failed: ${resp.status} ${body}`);
     }
     const result = await resp.json();
@@ -209,6 +222,11 @@ async function getValidJwt() {
     try {
         return await refreshJwt(stored.jwt);
     } catch (e) {
+        // A deleted account is DEFINITIVE — the credential is already cleared, so surface
+        // "not authenticated" instead of handing back a dead JWT. Every other failure is
+        // treated as transient (network blip, edge fn hiccup): keep the existing token until
+        // it expires rather than signing the box out over a bad minute.
+        if (e.accountDeleted) throw new Error('Not authenticated');
         console.warn('[auth] Refresh failed, using existing JWT until expiry:', e.message);
         return stored;
     }
