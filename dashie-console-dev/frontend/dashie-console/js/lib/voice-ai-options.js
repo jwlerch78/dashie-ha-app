@@ -121,7 +121,10 @@ const VoiceAiOptions = {
             description: 'Nous Research’s open-source personal agent behind Dashie’s brain — persistent memory and self-built skills, running on your own hardware. Add its API key under API Keys.',
             locality: 'local',
             cost: 'Free',
-            installGuide: window.DashieAuth?.isHaUser
+            // isAddonMode first: it's synchronous (set at boot), and the add-on
+            // console is by definition an HA context — isHaUser is an async
+            // profile flag that can be false at first render (badge raced it).
+            installGuide: (window.DashieAuth?.isAddonMode || window.DashieAuth?.isHaUser)
                 ? { url: 'https://my.home-assistant.io/redirect/supervisor_addon/?addon=01f10a62_dashie_hermes&repository_url=https%3A%2F%2Fgithub.com%2Fjwlerch78%2Fdashie-ha-app',
                     label: 'Install add-on ↗' }
                 : { url: 'https://hermes-agent.nousresearch.com/docs/getting-started/quickstart' },

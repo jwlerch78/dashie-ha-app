@@ -83,7 +83,7 @@ const ConfirmModal = {
         root.innerHTML = `
             <div role="dialog" aria-modal="true" aria-labelledby="confirm-title" style="background: var(--bg-card, #fff); border-radius: 12px; max-width: 460px; width: 100%; box-shadow: 0 20px 60px rgba(0,0,0,0.3); padding: 20px;">
                 <h2 id="confirm-title" style="margin: 0 0 8px 0; font-size: 17px;">${this._escape(title)}</h2>
-                <div style="color: var(--text-secondary); font-size: 14px; line-height: 1.5; margin-bottom: 20px; white-space: pre-line;">${messageHtml != null ? messageHtml : this._escape(message)}</div>
+                <div style="color: var(--text-secondary); font-size: 14px; line-height: 1.5; margin-bottom: 20px; white-space: ${messageHtml != null ? 'normal' : 'pre-line'};">${messageHtml != null ? messageHtml : this._escape(message)}</div>
                 ${typedSection}
                 <div style="display: flex; gap: 8px; justify-content: flex-end;">
                     <button class="btn btn-ghost" data-confirm-action="cancel">${this._escape(cancelLabel)}</button>

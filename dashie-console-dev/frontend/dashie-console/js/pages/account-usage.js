@@ -208,9 +208,12 @@ const AccountUsage = {
     },
 
     /** Lowest-level line items (per-call rows, realtime Voice/Text rollups):
-     *  exact 3-decimal cost — never '<$0.01' (John, 2026-07-12). */
+     *  exact 3-decimal cost — never '<$0.01' (John, 2026-07-12). Sub-half-mill
+     *  positives (e.g. a ~$0.0004 STT call) would render as a misleading
+     *  '$0.000' — show '<$0.001' instead (John, 2026-07-12). */
     _fmtCost3(amount) {
         if (amount == null || !isFinite(amount)) return '$0.000';
+        if (amount > 0 && amount < 0.0005) return '<$0.001';
         return '$' + amount.toFixed(3);
     },
 
