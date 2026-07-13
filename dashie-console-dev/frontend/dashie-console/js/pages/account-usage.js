@@ -296,6 +296,14 @@ const AccountUsage = {
         }
         this._expandedDays.set(date, { loading: true });
         App.renderPage();
+        await this._loadDay(date);
+        App.renderPage();
+    },
+
+    /** Fetch (or re-fetch) one day's interaction drill-down into _expandedDays.
+     *  Shared by toggleDay and refresh() — so a title-bar Refresh re-pulls an
+     *  already-open day's rows instead of leaving them stale. */
+    async _loadDay(date) {
         try {
             const result = await DashieAuth.dbRequest('get_usage_calls', { date, tz: this._tz() });
             const interactions = result.interactions || [];
@@ -304,6 +312,17 @@ const AccountUsage = {
         } catch (e) {
             this._expandedDays.set(date, { loading: false, error: e?.message || String(e) });
         }
+    },
+
+    /** Title-bar Refresh entry: re-fetch the aggregates AND every currently-open
+     *  day drill-down, keeping them expanded. _fetchAll alone re-pulls only the
+     *  daily/summary totals and never touches _expandedDays, so new interactions
+     *  in an open day stayed stale until a full page reload cleared the Map — the
+     *  "Refresh doesn't grab the latest, I have to reload the whole site" bug. */
+    async refresh() {
+        const openDays = [...this._expandedDays.keys()];
+        await this._fetchAll();
+        await Promise.all(openDays.map(date => this._loadDay(date)));
         App.renderPage();
     },
 

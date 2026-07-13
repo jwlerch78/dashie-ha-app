@@ -27,7 +27,9 @@ const CreditsPage = {
 
     async refresh() {
         await Promise.all([
-            AccountUsage._fetchAll(),
+            // AccountUsage.refresh (not _fetchAll) also re-pulls any open day
+            // drill-downs, so new interactions show without a full-site reload.
+            AccountUsage.refresh(),
             this._fetchTransactions(),
         ]);
     },
