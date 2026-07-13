@@ -645,7 +645,7 @@ const VoiceAiPage = {
                         <div style="flex:1; min-width:240px;">
                             <div style="font-weight:500; margin-bottom:6px;">Let kiosk tablets &amp; voice satellites use this account</div>
                             <div style="color: var(--text-secondary); font-size: var(--font-size-sm); line-height:1.5;">
-                                When on, un-logged-in Dashie tablets and Home Assistant voice satellites on this network can use this account's Dashie Intelligence voice — premium AI answers and personality voices. Usage draws on <strong>your</strong> credits. You can turn this off any time.
+                                Household Sharing needs to be on for other devices on your network to use this account's voice &amp; AI credits and API keys. You can alternatively sign into this account on your devices. You can turn it off any time.
                             </div>
                         </div>
                         <button class="btn ${enabled ? 'btn-primary' : 'btn-secondary'}" id="household-sharing-btn"
@@ -676,7 +676,7 @@ const VoiceAiPage = {
             localStorage.setItem(key, '1');
             const ok = await ConfirmModal.confirm({
                 title: 'Turn on Household Sharing?',
-                messageHtml: `Household Sharing needs to be on for your other Dashie devices — kiosk tablets and Home Assistant voice satellites — to use this account's voice &amp; AI. Usage draws on your credits, and you can turn it off any time.`,
+                messageHtml: `Household Sharing needs to be on for other devices on your network to use this account's voice &amp; AI credits and API keys. You can alternatively sign into this account on your devices. You can turn it off any time.`,
                 confirmLabel: 'Enable now',
                 cancelLabel: 'Not now',
             });
