@@ -32,6 +32,15 @@ const VoiceAiApi = {
         ['voice', 'customizePipeline'],
         ['voice', 'sttProvider'],
         ['voice', 'ttsProvider'],
+        // HA engine ids + the Piper voice. These were WRITTEN by the page (via the
+        // provider configFields) but never READ BACK — so `d['voice.haTtsVoiceId']` was
+        // always undefined, _seedPiperVoiceIfMissing() thought no voice was stored, and it
+        // re-persisted amy (low) on EVERY page load, silently resetting the user's chosen
+        // Piper voice — which the kiosk applier then mirrored to every tablet in the house.
+        // (Audit 2026-07-13, #2.) A key the page writes MUST be in this list.
+        ['voice', 'haTtsEngineId'],
+        ['voice', 'haTtsVoiceId'],
+        ['voice', 'haSttEngineId'],
         ['ai', 'webSearchEnabled'],
         ['ai', 'retrievePicturesEnabled'],
         ['ai', 'conversationContextEnabled'],
@@ -103,13 +112,17 @@ const VoiceAiApi = {
     },
 
     /** Load the account AI defaults as a flat {dotted: value} object,
-     *  filling defaults for anything unset and normalizing legacy values. */
-    async loadAiDefaults() {
+     *  filling defaults for anything unset and normalizing legacy values.
+     *  Pass a Set as `storedKeys` to learn which keys were actually PERSISTED
+     *  (vs filled from DEFAULTS) — the returned values can't distinguish the
+     *  two, and the fresh-account seed must never overwrite a stored choice. */
+    async loadAiDefaults(storedKeys = null) {
         const settings = await DashieAuth.loadUserSettings();
         const out = {};
         for (const [a, b] of this.AI_DEFAULT_KEYS) {
             const key = `${a}.${b}`;
             const v = settings?.[a]?.[b];
+            if (v !== undefined) storedKeys?.add(key);
             let val = v === undefined ? this.DEFAULTS[key] : v;
             const lmap = this._LEGACY_MAP[key];
             if (lmap && lmap[val] !== undefined) val = lmap[val];

@@ -25,6 +25,7 @@ const Sidebar = {
         // (voice-only) account every item here is gated off, so the section
         // collapses entirely rather than leaving an orphaned "Dashie Cloud" label.
         const dashieCloudItems = [
+            this._startTrialNavItem(),
             this._purchaseNavItem(),
             this._gatedNavItem('family', 'Family', 'icon-profile-round', activePage),
             this._gatedNavItem('calendar', 'Calendar', 'icon-calendar', activePage),
@@ -75,9 +76,25 @@ const Sidebar = {
                         <span class="sidebar-credits-label">${lowBalance ? 'Buy credits →' : 'credits'}</span>
                     </div>
                 ` : ''}
-                <div class="sidebar-version">v1.0.0</div>
+                <div class="sidebar-version">${this._versionLabel()}</div>
             </div>
         `;
+    },
+
+    /**
+     * The REAL version, not a hardcoded string (this read "v1.0.0" forever).
+     * In add-on mode show the add-on's version — the one HA actually updates —
+     * cached from GET /api/runtime by DashieAuth._probeAddonMode. On the website
+     * fall back to the console build version. Renders nothing rather than lying
+     * when neither is known (e.g. the probe hasn't landed yet).
+     */
+    _versionLabel() {
+        // BARE DashieAuth — it's a top-level const, NOT on window (window.DashieAuth is
+        // undefined; that exact mistake silently no-op'd the live rate card once).
+        const addon = (typeof DashieAuth !== 'undefined') ? DashieAuth?._addonRuntimeInfo?.version : null;
+        if (addon) return `v${addon}`;
+        const consoleVersion = window.DASHIE_CONSOLE_VERSION;
+        return consoleVersion ? `v${consoleVersion}` : '';
     },
 
     /**
@@ -111,6 +128,25 @@ const Sidebar = {
                 <div style="font-size:12px; font-weight:600;">${chip.label}</div>
                 ${cta}
             </div>`;
+    },
+
+    /**
+     * "Start free trial" entry — the ha_only → dashboard opt-in (Phase 6 of the
+     * HA voice-only account model). For an ha_only account every other item in the
+     * Dashie Cloud section is gated off, so instead of collapsing to nothing the
+     * section shows the one thing that IS available: the unspent 30-day trial.
+     * Highlighted (accent) because it's a CTA, not navigation.
+     */
+    _startTrialNavItem() {
+        if (typeof DashboardTrial === 'undefined' || !DashboardTrial.isAvailable()) return '';
+        return `
+            <div class="sidebar-nav-item" onclick="DashboardTrial.promptAndStart()"
+                 style="color: var(--accent, #ffaa00); font-weight: 600;"
+                 title="30 days of the full Dashie dashboard — free, no card">
+                <span class="nav-icon"><img src="assets/icons/icon-star.svg" alt="Start free trial"></span>
+                <span class="nav-label">Start free trial</span>
+            </div>
+        `;
     },
 
     /** "Purchase License" entry in the Dashie Cloud section, shown only when the

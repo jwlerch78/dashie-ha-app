@@ -187,8 +187,11 @@ const VoiceAiPage = {
         this._loading = true;
         this._error = null;
         try {
+            // Which keys are actually PERSISTED (vs DEFAULTS-filled) — the fresh-account
+            // seed gates on this so it never overwrites an explicit stored choice.
+            const storedKeys = new Set();
             const [defaults] = await Promise.all([
-                VoiceAiApi.loadAiDefaults(),
+                VoiceAiApi.loadAiDefaults(storedKeys),
                 this._fetchPersonalities(),
                 // Live margined rate card for the TTS/Search cost strings —
                 // internally best-effort, falls back to the hardcoded estimates.
@@ -202,6 +205,7 @@ const VoiceAiPage = {
                 this._fetchKeyStatus(),
             ]);
             this._defaults = defaults;
+            this._storedKeys = storedKeys;
             // Household sharing is ACCOUNT-scoped (voice.householdSharing) as of 2026-07-13 —
             // it arrives with the account defaults above. The old per-instance /api/settings
             // fetch is gone: storing it on the add-on's /data made a new/wiped account inherit
@@ -438,11 +442,16 @@ const VoiceAiPage = {
         this.saveDefault('voice.ttsProvider', String(d['voice.ttsProvider'] || 'dashie_cloud'));
         if (String(d['ai.model'] || '')) this.saveDefault('ai.model', String(d['ai.model']));
 
-        // Cloud/Hybrid ship the conversational defaults ON out of the box.
+        // Cloud/Hybrid ship the conversational defaults ON out of the box — but only
+        // for keys the account has never stored. `d` is post-DEFAULTS merge, so it can't
+        // distinguish "unset" from "stored default"; _storedKeys can. Legacy no-preset
+        // accounts (everyone before the preset-persist fix) reach this seed too, and an
+        // unconditional write here flipped their explicit single/false choices back on.
         if (preset === 'cloud' || preset === 'hybrid') {
-            if (this._agentMode() !== 'live') this.saveDefault('voice.agentMode', 'dialog');
-            this.saveDefault('voice.alwaysOpenDialog', true);
-            this.saveDefault('ai.retrievePicturesEnabled', true);
+            const stored = this._storedKeys || new Set();
+            if (!stored.has('voice.agentMode') && this._agentMode() !== 'live') this.saveDefault('voice.agentMode', 'dialog');
+            if (!stored.has('voice.alwaysOpenDialog')) this.saveDefault('voice.alwaysOpenDialog', true);
+            if (!stored.has('ai.retrievePicturesEnabled')) this.saveDefault('ai.retrievePicturesEnabled', true);
         }
     },
 
