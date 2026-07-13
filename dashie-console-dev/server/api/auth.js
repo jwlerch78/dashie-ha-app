@@ -82,6 +82,21 @@ router.post('/poll-link', async (req, res) => {
         const result = await auth.pollDeviceCode(pendingLink.device_code);
         if (result.status === 'authorized') {
             pendingLink = null;
+            // Account CHANGED on this box → push a voice-config refresh, exactly like sign-out
+            // does. This is not just a kiosk nicety: the integration caches the account
+            // credential (addon_bridge._cache) and, on a cache hit, never re-asks us — so
+            // without this push it keeps vending the PREVIOUS account's JWT until that token
+            // expires (72h). On 2026-07-13 that had a wiped test account's kiosk minting voice
+            // tokens for a deleted user, which failed the credit gate and told the user they
+            // were "out of voice credits" while the new account had $2. The service handler
+            // clears that cache.
+            try {
+                if (haClient.isAvailable()) {
+                    haClient.callService('dashie', 'refresh_voice_config', {}).catch(() => {});
+                }
+            } catch (e) {
+                console.warn('[auth] sign-in kiosk push failed (non-fatal):', e.message);
+            }
             return res.json({
                 status: 'authorized',
                 user_id: result.jwtStored.userId,
