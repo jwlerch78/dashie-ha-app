@@ -41,7 +41,7 @@ const VoiceAiOptions = {
     PRESETS: [
         { id: 'cloud', label: 'Cloud', locality: 'cloud', cost: 'Uses credits', needsCreditsOrKey: true,
           tagline: 'Best quality, zero setup',
-          description: 'Premium cloud AI and voices, ready out of the box.' },
+          description: 'Anonymized cloud AI and voices, ready out of the box.' },
         { id: 'hybrid', label: 'Hybrid', locality: 'mixed', cost: 'Credits or your AI key', needsCreditsOrKey: true,
           tagline: 'Cloud AI · local voice',
           // Two-tone tagline: the cloud half renders in the cloud swatch, the
@@ -265,10 +265,34 @@ const VoiceAiOptions = {
      *  is detected. Provider id is the transport (`ha_engine`), engine carried in
      *  engineId → voice.haTtsEngineId. Voice field is a dropdown from the engine's
      *  voices, else free-text. */
+    // Piper quality suffix → friendly label (John, 2026-07-13). Piper names its
+    // voices <speaker>-<low|medium|high> by synthesis speed/quality; relabel to
+    // what the user cares about.
+    _PIPER_QUALITY: { low: 'fast', med: 'balanced', medium: 'balanced', high: 'high quality' },
+
+    /** Prettify a Piper voice for display: capitalize the speaker and relabel the
+     *  quality suffix (low→fast, medium→balanced, high→high quality). Handles both
+     *  HA's "amy (low)" name form and the raw "en_US-amy-low" voice id. Leaves a
+     *  non-Piper-shaped name alone apart from a leading capital. Display-only — the
+     *  stored value stays the real voice_id. */
+    _piperVoiceLabel(name, voiceId) {
+        const src = String(name || voiceId || '');
+        let speaker = null, quality = null;
+        const paren = src.match(/^(.*?)\s*\((low|med|medium|high)\)\s*$/i);
+        if (paren) { speaker = paren[1].trim(); quality = paren[2].toLowerCase(); }
+        else {
+            const parts = String(voiceId || '').split('-');
+            const q = parts[parts.length - 1]?.toLowerCase();
+            if (parts.length >= 2 && this._PIPER_QUALITY[q]) { quality = q; speaker = parts.slice(1, -1).join('-') || parts[0]; }
+        }
+        if (!speaker || !quality) return src ? src.charAt(0).toUpperCase() + src.slice(1) : src;
+        return `${speaker.charAt(0).toUpperCase()}${speaker.slice(1)} (${this._PIPER_QUALITY[quality] || quality})`;
+    },
+
     _piperOption(detection) {
         const eng = this._matchEngine(detection?.tts, /piper/i);
         if (eng) {
-            const voices = (eng.voices || []).map(v => ({ value: v.voice_id, label: v.name || v.voice_id }));
+            const voices = (eng.voices || []).map(v => ({ value: v.voice_id, label: this._piperVoiceLabel(v.name, v.voice_id) }));
             const voiceField = voices.length
                 ? { key: 'voice.haTtsVoiceId', label: 'Voice', type: 'select', options: voices }
                 : { key: 'voice.haTtsVoiceId', label: 'Voice', placeholder: 'en_US-lessac-medium' };

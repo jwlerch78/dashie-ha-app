@@ -748,7 +748,7 @@ const VoiceAiPage = {
             const opts = [
                 ...voiceField.options.map(v =>
                     `<option value="${this._escape(v.value)}" ${v.value === effective ? 'selected' : ''}>${this._escape(v.label)}</option>`),
-                (effective && !known) ? `<option value="${this._escape(effective)}" selected>${this._escape(effective)} (current)</option>` : '',
+                (effective && !known) ? `<option value="${this._escape(effective)}" selected>${this._escape(window.VoiceAiOptions._piperVoiceLabel(null, effective))} (current)</option>` : '',
             ].join('');
             control = `<select style="${D.SELECT_STYLE}" onchange="VoiceAiPage.saveLocalField('${voiceField.key}', this.value)">${opts}</select>`;
         } else {
