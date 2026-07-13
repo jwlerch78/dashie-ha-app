@@ -108,6 +108,11 @@ router.get('/voice-config', async (req, res) => {
             default_personality_id: cfg.defaultPersonalityId || '',
             default_voice_key: cfg.defaultVoiceKey || '',
             default_wake_word: cfg.defaultWakeWord || '',
+            // Account brain model (ai.model, e.g. gemini-2.5-flash / local / hermes) —
+            // mirrored so an anon kiosk runs the household's model, not its own default.
+            // The status view forwards it as `model`; the applier writes voice+ai prefs.
+            // '' = unset → kiosk keeps its default.
+            model: cfg.model || '',
             // Kiosk voice-config mirror (Phase 1): the full account voice pipeline so a
             // share-account anon kiosk reflects the household's Voice & AI setup. The
             // integration forwards this block on /api/dashie/voice/status.
