@@ -70,11 +70,6 @@ const VoiceAiOptions = {
         return options;
     },
 
-    // Typical turn token estimate for the per-turn model cost (≈ the
-    // 1342-in / 145-out seen in real sports turns).
-    _TURN_IN: 1300,
-    _TURN_OUT: 150,
-
     // Provider section order + display labels for the AI Model card.
     _PROVIDER_ORDER: ['gemini', 'claude', 'openai', 'bedrock'],
     _PROVIDER_LABEL: { claude: 'Claude', openai: 'OpenAI', gemini: 'Google Gemini', bedrock: 'Amazon Bedrock' },
@@ -191,7 +186,7 @@ const VoiceAiOptions = {
     // engine-direct row (ha_engine, labeled "Whisper (Home Assistant)") is
     // injected by sttOptions() when /api/voice/engines finds a Whisper engine.
     STT: [
-        { id: 'dashie_cloud', label: 'Dashie Cloud (Deepgram)', locality: 'cloud', cost: '$0.036/min · ~0.3¢/command',
+        { id: 'dashie_cloud', label: 'Dashie Cloud STT', locality: 'cloud', cost: '$0.036/min · ~0.3¢/command',
           description: 'Streaming, premium accuracy.' },
         { id: 'local_stt_url', label: 'Local Whisper (your box)', locality: 'local', cost: 'Free',
           description: 'Whisper server on your own box (OpenAI-compatible, LAN, direct).',
@@ -212,8 +207,8 @@ const VoiceAiOptions = {
         // the server's margined rate card. Two engines behind one row: the
         // default Dashie voice runs on Inworld (~4× cheaper per character);
         // personality voices are premium ElevenLabs.
-        { id: 'dashie_cloud', label: 'Dashie Cloud (ElevenLabs / Inworld)', locality: 'cloud', cost: '$0.09–0.33/1k chars · ~0.5–1.9¢/reply',
-          description: 'The default Dashie voice (Inworld) is the most economical; personality voices (ElevenLabs) are premium.' },
+        { id: 'dashie_cloud', label: 'Dashie Cloud TTS', locality: 'cloud', cost: '$0.09–0.33/1k chars · ~0.5–1.9¢/reply',
+          description: 'The default Dashie voice is the most economical; personality voices are premium.' },
         { id: 'local_url', label: 'Local TTS (your box)', locality: 'local', cost: 'Free',
           description: 'Kokoro / OpenAI-compatible TTS on your own box (LAN, direct).',
           configFields: [
@@ -352,7 +347,7 @@ const VoiceAiOptions = {
     },
 
     SEARCH: [
-        { id: 'dashie', label: 'Dashie (Tavily)', locality: 'cloud', cost: '~0.8¢/search',
+        { id: 'dashie', label: 'Dashie Cloud Search', locality: 'cloud', cost: '$0.0096/search',
           description: 'Managed web search — no setup.' },
         // SearXNG hidden for MVP (John, 2026-07-12): it's a "your box"-style
         // self-hosted install (no HA add-on to deep-link, no detection) and isn't
@@ -376,7 +371,7 @@ const VoiceAiOptions = {
     // Image-search (Serper / Google Images) per-search cost string for the
     // "Retrieve pictures" toggle. Fallback from the raw catalog ($1/1000,
     // pre-margin); applyLiveRates overwrites with the margined rate card.
-    imageSearchCost: '~0.9¢',
+    imageSearchCost: '$0.009',
 
     // ── live rate card ───────────────────────────────────────
 
@@ -428,13 +423,13 @@ const VoiceAiOptions = {
                 if (stt) stt.cost = `$${cr.stt.per_min.toFixed(3)}/min · ${perCmd}/command`;
             }
             if (typeof cr?.image_search?.per_unit === 'number') {
-                this.imageSearchCost = this._cents(cr.image_search.per_unit);
+                this.imageSearchCost = this._usd(cr.image_search.per_unit);
             } else {
                 const image = amt('image_search');
-                if (image) this.imageSearchCost = this._cents(image);
+                if (image) this.imageSearchCost = this._usd(image);
             }
             const search = amt('web_search');   // web search stays cost-plus (not in charge_rates)
-            if (search) this.SEARCH.find(o => o.id === 'dashie').cost = `${this._cents(search)}/search`;
+            if (search) this.SEARCH.find(o => o.id === 'dashie').cost = `${this._usd(search)}/search`;
             this._liveRatesApplied = true;
         } catch (e) {
             console.warn('[VoiceAiOptions] rate card unavailable, keeping fallback estimates:', e?.message || e);
@@ -445,9 +440,11 @@ const VoiceAiOptions = {
 
     _modelCost(p) {
         const [inR, outR] = p;   // per 1M tokens
-        const perTurn = (this._TURN_IN * inR + this._TURN_OUT * outR) / 1e6;   // USD
-        return `$${inR}/$${outR} per 1M · ${this._cents(perTurn)}/turn`;
+        return `$${inR}/$${outR} per 1M`;
     },
+    /** USD, trimmed of trailing zeros ($0.009, $0.0096) — for the value-based
+     *  per-unit rates the user wants shown as dollars, not cents. */
+    _usd(n) { return '$' + parseFloat(Number(n).toFixed(4)); },
     _cents(usd) {
         if (!usd) return 'free';
         const c = usd * 100;

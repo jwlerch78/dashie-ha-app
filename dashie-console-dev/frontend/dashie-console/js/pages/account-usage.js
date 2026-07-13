@@ -1008,10 +1008,13 @@ const AccountUsage = {
     _groupCallItems(items) {
         const groups = new Map();
         for (const c of items) {
-            const key = `${c.service}|${c.model || c.provider || ''}|${c.byok ? 'k' : ''}`;
+            // Key on the display_model (Dashie engine name) when present so the
+            // premium and personality tiers group separately even though both are
+            // ElevenLabs under the hood.
+            const key = `${c.service}|${c.display_model || c.model || c.provider || ''}|${c.byok ? 'k' : ''}`;
             let g = groups.get(key);
             if (!g) {
-                g = { service: c.service, model: c.model, provider: c.provider, byok: c.byok,
+                g = { service: c.service, model: c.model, provider: c.provider, display_model: c.display_model, byok: c.byok,
                       count: 0, cost: 0, input_tokens: 0, output_tokens: 0, result_count: 0 };
                 groups.set(key, g);
             }
@@ -1028,14 +1031,18 @@ const AccountUsage = {
     /** One grouped call row (see _groupCallItems). ×N shown when >1 pass. */
     _renderGroupedCallRow(g) {
         const times = g.count > 1 ? ` ×${g.count}` : '';
+        // Prefer the Dashie engine name (display_model) — it's self-descriptive, so
+        // the redundant "(speech-to-text)" suffix is dropped when it's present.
         const desc = g.service === 'ai'
             ? `${this._escape(g.model || '—')}${g.byok ? ' (API key)' : ''} (${this._fmtCount(g.input_tokens)} in / ${this._fmtCount(g.output_tokens)} out)${times}`
             : g.service === 'web_search'
-                ? `${this._escape(g.provider || '')} (${this._fmtCount(g.result_count)} results)${times}`
+                ? `${this._escape(g.display_model || g.provider || '')} (${this._fmtCount(g.result_count)} results)${times}`
                 : g.service === 'image_search'
-                    ? `${this._escape(g.provider || '')} (${this._fmtCount(g.result_count)} images)${times}`
+                    ? `${this._escape(g.display_model || g.provider || '')} (${this._fmtCount(g.result_count)} images)${times}`
                     : (g.service === 'stt' || g.service === 'tts')
-                        ? `${this._escape(g.model || g.provider || '—')} (${g.service === 'stt' ? 'speech-to-text' : 'text-to-speech'})${times}`
+                        ? (g.display_model
+                            ? `${this._escape(g.display_model)}${times}`
+                            : `${this._escape(g.model || g.provider || '—')} (${g.service === 'stt' ? 'speech-to-text' : 'text-to-speech'})${times}`)
                         : `${this._escape(g.provider || '')} ${g.service}${times}`;
         return `
             <tr>

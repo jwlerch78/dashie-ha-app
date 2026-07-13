@@ -367,7 +367,12 @@ const VoiceAiPage = {
         const d = this._defaults;
         this.saveDefault('voice.pipelinePreset', id);
         const cm = id === 'ha_assist' ? 'voice_assistant' : 'dashie_cloud';
-        if (String(d['voice.controlMethod']) !== cm) this.saveDefault('voice.controlMethod', cm);
+        // Persist controlMethod UNCONDITIONALLY (even when it already equals the preset
+        // default) so user_settings is the single source of truth. Previously skipped when
+        // == default, leaving it blank for accounts on a default — which the anon-kiosk
+        // mirror then couldn't read (it had to derive it in the add-on, now removed).
+        // 2026-07-13 kiosk-voice-mirror §2/§5 Option A (controlMethod).
+        this.saveDefault('voice.controlMethod', cm);
 
         // Live is Cloud-only (fully cloud + credits) — leaving Cloud drops the
         // agent back to a cascade mode.
