@@ -20,7 +20,8 @@ const VoiceAiPage = {
     _defaults: null,        // {dotted: value}
     _engines: null,         // GET /api/voice/engines result — add-on mode only (detection-gated picker)
     _keyStatus: null,       // GET /api/keys/status providers booleans — add-on mode only (preset gating)
-    _sharing: null,         // { householdSharing } — add-on mode only (below AI Defaults)
+    // (household sharing is now the ACCOUNT setting voice.householdSharing — it rides in
+    //  _defaults with the other account defaults; the old per-instance _sharing fetch is gone)
     _templates: null,       // built-in personality rows
     _custom: null,          // custom personality rows
     _overrides: null,       // {template_key: {family_notes}}
@@ -201,16 +202,10 @@ const VoiceAiPage = {
                 this._fetchKeyStatus(),
             ]);
             this._defaults = defaults;
-            // Household sharing opt-in lives in the add-on only — fetch it so the
-            // toggle below AI Defaults reflects the persisted state. Best-effort.
-            if (DashieAuth.isAddonMode) {
-                try {
-                    const s = await fetch(DashieAuth._addonUrl('/api/settings')).then(r => r.ok ? r.json() : null);
-                    this._sharing = s || { householdSharing: false };
-                } catch (e) {
-                    this._sharing = { householdSharing: false };
-                }
-            }
+            // Household sharing is ACCOUNT-scoped (voice.householdSharing) as of 2026-07-13 —
+            // it arrives with the account defaults above. The old per-instance /api/settings
+            // fetch is gone: storing it on the add-on's /data made a new/wiped account inherit
+            // the previous account's sharing state.
             // Piper active but no voice stored (pre-seeding account) → persist
             // amy (low) so the Voice row never renders unset.
             this._seedPiperVoiceIfMissing();
@@ -639,7 +634,9 @@ const VoiceAiPage = {
      *  (billed to its credits). Lives under AI Defaults. */
     _renderHouseholdSharing() {
         if (!DashieAuth.isAddonMode) return '';
-        const enabled = this._sharing?.householdSharing === true;
+        // ACCOUNT-scoped (2026-07-13) — read from the account defaults, not the add-on's
+        // /data store. A fresh account is off by default.
+        const enabled = this._defaults?.['voice.householdSharing'] === true;
         return `
             <div class="section-header" style="margin-top: 32px;">Household Dashie Intelligence Sharing</div>
             <div class="card">
@@ -671,7 +668,8 @@ const VoiceAiPage = {
             if (typeof ConfirmModal === 'undefined') return;
             if (!DashieAuth.isAddonMode || !DashieAuth.isHaUser) return;
             if (this._activeTab !== 'settings') return;
-            if (this._sharing?.householdSharing === true) return;   // already on
+            if (!this._defaults) return;                                        // defaults not loaded yet
+            if (this._defaults['voice.householdSharing'] === true) return;      // already on
             const key = `dashie-hh-sharing-prompted-${DashieAuth.jwtUserId || 'anon'}`;
             if (localStorage.getItem(key)) return;
             // Latch first — never nag twice, even if they dismiss with "Not now".
@@ -690,14 +688,20 @@ const VoiceAiPage = {
 
     async toggleHouseholdSharing(enabled) {
         try {
-            const resp = await fetch(DashieAuth._addonUrl('/api/settings/household-sharing'), {
-                method: 'PUT',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ enabled }),
-            });
-            if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-            const data = await resp.json();
-            this._sharing = { householdSharing: data.householdSharing };
+            // ACCOUNT-scoped: the console owns settings writes (serialized patchUserSetting).
+            await this.saveDefault('voice.householdSharing', enabled);
+            // Then tell the add-on to drop its cached account config and push a voice-config
+            // refresh to the kiosks, so the change takes effect immediately rather than after
+            // the 30s account-config TTL. Best-effort — the setting is already saved.
+            try {
+                await fetch(DashieAuth._addonUrl('/api/settings/household-sharing'), {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ enabled }),
+                });
+            } catch (e) {
+                console.warn('[VoiceAiPage] sharing invalidate/push failed (non-fatal):', e.message);
+            }
             App.renderPage();
         } catch (e) {
             console.error('[VoiceAiPage] Toggle household sharing failed:', e);

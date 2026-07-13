@@ -47,6 +47,12 @@ const VoiceAiApi = {
         ['voice', 'localTtsUrl'],
         ['voice', 'localTtsVoiceId'],
         ['voice', 'localSttUrl'],
+        // Household Dashie Intelligence sharing — ACCOUNT-scoped (2026-07-13). Was stored
+        // per-add-on-instance in /data (settings-store), which meant a new/wiped account
+        // inherited the previous account's sharing state. It's a property of the account
+        // ("share THIS account house-wide"), so it lives here: a fresh account is off by
+        // default, and the add-on reads it from user_settings via account-config.
+        ['voice', 'householdSharing'],
     ],
 
     DEFAULTS: {
@@ -80,6 +86,9 @@ const VoiceAiApi = {
         'voice.localTtsUrl': '',
         'voice.localTtsVoiceId': '',
         'voice.localSttUrl': '',
+        // Account-scoped household sharing — OFF for a fresh account (so the
+        // first-open prompt fires and nothing is shared without an explicit opt-in).
+        'voice.householdSharing': false,
     },
 
     /** Legacy → engine-domain value remap. Accounts the console wrote before the
