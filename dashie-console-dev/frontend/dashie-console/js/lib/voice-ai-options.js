@@ -124,7 +124,10 @@ const VoiceAiOptions = {
             // isAddonMode first: it's synchronous (set at boot), and the add-on
             // console is by definition an HA context — isHaUser is an async
             // profile flag that can be false at first render (badge raced it).
-            installGuide: (window.DashieAuth?.isAddonMode || window.DashieAuth?.isHaUser)
+            // BARE DashieAuth, not window.DashieAuth: it's a top-level `const`
+            // (console-auth.js) so it lives in script scope, NOT on window —
+            // window.DashieAuth is undefined and silently falsy'd the gate.
+            installGuide: (DashieAuth?.isAddonMode || DashieAuth?.isHaUser)
                 ? { url: 'https://my.home-assistant.io/redirect/supervisor_addon/?addon=01f10a62_dashie_hermes&repository_url=https%3A%2F%2Fgithub.com%2Fjwlerch78%2Fdashie-ha-app',
                     label: 'Install add-on ↗' }
                 : { url: 'https://hermes-agent.nousresearch.com/docs/getting-started/quickstart' },
@@ -332,7 +335,10 @@ const VoiceAiOptions = {
     async applyLiveRates() {
         if (this._liveRatesApplied) return;
         try {
-            const res = await window.DashieAuth?.dbRequest('get_credit_rates', {});
+            // BARE DashieAuth (top-level const, not on window) — window.DashieAuth
+            // is undefined, which silently no-op'd the live rate card (fell back to
+            // the hardcoded estimate strings). Same root cause as the installGuide gate.
+            const res = await DashieAuth?.dbRequest('get_credit_rates', {});
             if (res?.models && typeof res.models === 'object') {
                 this._liveModelRates = res.models;
             }

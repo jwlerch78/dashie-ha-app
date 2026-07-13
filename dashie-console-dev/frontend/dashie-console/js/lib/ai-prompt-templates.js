@@ -1476,6 +1476,7 @@ Provide a helpful, spoken-friendly response based only on this documentation.
 - web_search: query: "search string" - Current events, news, external info (IMPORTANT: query is a STRING)
 - chores: query: {hint: "task description", member_hint: "name"} - When someone reports completing a chore
 - rewards: query: {} - Rewards catalog and redemption status
+- schedule_action: query: {time: "HH:MM" (24h local), recurrence: "once"|"daily", prompt: "instruction Dashie runs at that time, phrased as a user request", label: "short confirmation e.g. 'check whether the garage door is open'"} - Schedule Dashie to do/check something at a specific clock time ("tell me at 9:30 every night if...", "at 6am remind me..."). NOT for relative delays ("in 20 minutes") or sensor thresholds.
 - location_events: query: {member_name: "Mary", location_name: "home", timeframe: "today|yesterday|last_night", event_type: "arrive|depart"} - Arrival/departure history
 - travel_time: query: {event_title: "game", member_name: "Jack"} - When to leave for an event
 - family_locations: query: {member_name: "Mary"} - Current GPS location ("where is X right now?")
