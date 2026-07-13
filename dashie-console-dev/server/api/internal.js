@@ -135,7 +135,10 @@ router.get('/voice-config', async (req, res) => {
             // Kiosk voice-config mirror (Phase 1): the full account voice pipeline so a
             // share-account anon kiosk reflects the household's Voice & AI setup. The
             // integration forwards this block on /api/dashie/voice/status.
-            pipeline: cfg.pipeline || {},
+            // OMITTED (not {}) when the account read failed — the applier hard-applies any
+            // boolean present in the block, so a degraded serve must carry no block at all
+            // rather than a zeroed one (audit 2026-07-13, #4).
+            ...(cfg.pipeline ? { pipeline: cfg.pipeline } : {}),
         });
     } catch (e) {
         // Never block the gateway on this — default to cloud.

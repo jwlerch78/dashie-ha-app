@@ -18,8 +18,13 @@ const { resolveBrainRoute } = require('./brain/providers');
 const TTL_MS = 30_000; // user_settings changes rarely; a short cache keeps converse latency low.
 let _cache = null; // { at, value }
 
-const EMPTY_PIPELINE = { sttProvider: '', ttsProvider: '', haSttEngineId: '', haTtsEngineId: '', haTtsVoiceId: '', controlMethod: '', searchSource: '', pipelinePreset: '', customizePipeline: false, alwaysOpenDialog: false };
-const SAFE_DEFAULT = { model: null, route: 'cloud', localLlmUrl: '', localLlmModel: '', localLlmKey: '', hermesUrl: '', retainTranscripts: false, agentMode: '', retrievePictures: null, webSearchEnabled: null, zipCode: '', defaultPersonalityId: '', defaultVoiceKey: '', defaultWakeWord: '', householdSharing: false, pipeline: EMPTY_PIPELINE };
+// pipeline: null on the degraded path — NOT an empty pipeline. The kiosk applier
+// hard-applies any boolean the block CONTAINS (it gates on key presence, and only
+// strings get an is-empty guard), so serving a zeroed pipeline after a transient
+// user_settings read failure would write customizePipeline=false + alwaysOpenDialog=false
+// onto every kiosk in the house. Null → /voice-config omits `pipeline` → the integration
+// forwards nothing → the applier leaves the kiosk alone. (Audit 2026-07-13, #4.)
+const SAFE_DEFAULT = { model: null, route: 'cloud', localLlmUrl: '', localLlmModel: '', localLlmKey: '', hermesUrl: '', retainTranscripts: false, agentMode: '', retrievePictures: null, webSearchEnabled: null, zipCode: '', defaultPersonalityId: '', defaultVoiceKey: '', defaultWakeWord: '', householdSharing: false, pipeline: null };
 
 /** Coerce a settings value to a string, '' when absent/non-string. */
 function str(v) { return typeof v === 'string' ? v : ''; }
@@ -108,6 +113,19 @@ async function getAccountVoiceConfig() {
             controlMethod: str(settings?.voice?.controlMethod),
             searchSource: str(settings?.voice?.searchSource),
             pipelinePreset: str(settings?.voice?.pipelinePreset),
+            // Own-box STT/TTS endpoints. MUST ride along with sttProvider/ttsProvider:
+            // the applier hard-applies the providers, so serving `local_stt_url` /
+            // `local_url` WITHOUT the URL left a Local-preset kiosk with dead STT and a
+            // silent fallback to device TTS (audit 2026-07-13, #1).
+            localSttUrl: str(settings?.voice?.localSttUrl),
+            localTtsUrl: str(settings?.voice?.localTtsUrl),
+            localTtsVoiceId: str(settings?.voice?.localTtsVoiceId),
+            // Live (realtime S2S) model + always-on flag. Without these a kiosk's Live
+            // session always fell back to RealtimeConfig.DEFAULT_MODEL, and the on-demand
+            // "conversation mode" trigger could never fire (conversationModeEnabled was
+            // false because conversationModel was blank). Audit 2026-07-13, #3.
+            conversationModel: str(settings?.voice?.conversationModel),
+            conversationAlways: settings?.voice?.conversationAlways === true,
             customizePipeline: settings?.voice?.customizePipeline === true,
             // DLG-6 "keep dialog open" (user_settings.voice.alwaysOpenDialog) — rides the
             // pipeline block rather than a new top-level field so the integration forwards
