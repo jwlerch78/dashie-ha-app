@@ -214,6 +214,9 @@ const VoiceAiPage = {
             // Piper active but no voice stored (pre-seeding account) → persist
             // amy (low) so the Voice row never renders unset.
             this._seedPiperVoiceIfMissing();
+            // Fresh-account default seed — persist the effective config once so the
+            // account's stored config == what the UI shows.
+            this._seedFreshAccountDefaults();
         } catch (e) {
             console.error('[VoiceAiPage] fetch failed:', e);
             this._error = e.message || String(e);
@@ -408,6 +411,43 @@ const VoiceAiPage = {
             this.saveDefault('ai.retrievePicturesEnabled', true);
         } else if (id === 'local' || id === 'ha_assist') {
             this.saveDefault('ai.retrievePicturesEnabled', false);
+        }
+    },
+
+    /**
+     * Fresh-account default seed (2026-07-13) — closes the "effective vs persisted" gap.
+     *
+     * The console's DEFAULTS are DISPLAY-only. A brand-new account that never clicks a
+     * preset persists NOTHING, so `user_settings` is empty while the UI shows
+     * Cloud / dialog / pictures. Everything that actually reads the account — the Android
+     * runtime and the anon-kiosk voice mirror — reads PERSISTED `user_settings`, so it saw
+     * none of it (kiosk kept its own defaults; dialog + pictures read as off).
+     *
+     * Persist the effective config ONCE, on first Voice & AI render, so stored == shown.
+     * Runs only while no preset is stored, so it's exactly-once per account.
+     *
+     * Deliberately does NOT route through selectPreset(): that guards on _presetAvailable()
+     * (credits / BYO key), and a fresh $0 account would seed nothing — but Cloud IS its
+     * default config regardless of balance.
+     */
+    _seedFreshAccountDefaults() {
+        const d = this._defaults;
+        if (!d) return;
+        if (String(d['voice.pipelinePreset'] || '')) return;   // already chosen/seeded
+        const preset = this._activePreset();                   // derived — 'cloud' for a fresh account
+        if (!preset) return;
+
+        this.saveDefault('voice.pipelinePreset', preset);
+        this.saveDefault('voice.controlMethod', preset === 'ha_assist' ? 'voice_assistant' : 'dashie_cloud');
+        this.saveDefault('voice.sttProvider', String(d['voice.sttProvider'] || 'dashie_cloud'));
+        this.saveDefault('voice.ttsProvider', String(d['voice.ttsProvider'] || 'dashie_cloud'));
+        if (String(d['ai.model'] || '')) this.saveDefault('ai.model', String(d['ai.model']));
+
+        // Cloud/Hybrid ship the conversational defaults ON out of the box.
+        if (preset === 'cloud' || preset === 'hybrid') {
+            if (this._agentMode() !== 'live') this.saveDefault('voice.agentMode', 'dialog');
+            this.saveDefault('voice.alwaysOpenDialog', true);
+            this.saveDefault('ai.retrievePicturesEnabled', true);
         }
     },
 
