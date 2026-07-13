@@ -37,7 +37,8 @@ router.use((req, res, next) => {
  * tablets may offer "Dashie Cloud". Never returns the credential.
  */
 router.get('/sharing-status', (req, res) => {
-    const signedIn = !!auth.readStoredJwt();
+    const stored = auth.readStoredJwt();
+    const signedIn = !!stored;
     const sharing = settingsStore.isHouseholdSharingEnabled();
     const available = signedIn && sharing;
     return res.json({
@@ -45,6 +46,10 @@ router.get('/sharing-status', (req, res) => {
         signed_in: signedIn,
         household_sharing: sharing,
         reason: available ? 'ok' : (!signedIn ? 'add_on_not_signed_in' : 'sharing_disabled'),
+        // Account identity for the anon-kiosk "Authorized by <email>" display —
+        // household-sharing-driven. Only vended when sharing is actually available
+        // (never leak the account email when sharing is off / add-on not signed in).
+        ...(available && stored.userEmail ? { account_email: stored.userEmail } : {}),
     });
 });
 
