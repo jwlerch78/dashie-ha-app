@@ -645,7 +645,7 @@ const VoiceAiPage = {
         const cfg = k => d[k];
         // WS-F (§13.1): stage icons on the three pipeline card titles — brain (AI),
         // ear (STT), speaking head (TTS). Other cards (search, defaults) stay bare.
-        const CARD_ICONS = { model: 'icon-ai-brain', stt: 'icon-ear', tts: 'icon-speaking-head' };
+        const CARD_ICONS = { model: 'icon-ai-brain', stt: 'icon-ear', tts: 'icon-speaking-head', search: 'icon-search' };
         const card = (title, stageKey, options, selectedId) => VoiceAiCards.render({
             title, stageKey, options, selectedId,
             icon: CARD_ICONS[stageKey] || '',
@@ -759,6 +759,7 @@ const VoiceAiPage = {
         }
         return D.renderControlRow({
             label: 'Voice',
+            icon: 'icon-voice',
             saving: this._savingKey === voiceField.key,
             controlHtml: control,
             caret,

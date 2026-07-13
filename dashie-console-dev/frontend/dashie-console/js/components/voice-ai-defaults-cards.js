@@ -36,12 +36,17 @@ const VoiceAiDefaultsCards = {
      * Compact control row — caps label (aligned with the collapsed pipeline
      * cards) + an inline control + a ▾. Shared by the Default-personality and
      * Voice rows.
-     * @param {object} o { label, saving, controlHtml, caret=true }
+     * @param {object} o { label, saving, controlHtml, caret=true, icon }
+     *   icon — optional assets/icons/<name> (WS-F §13.1), rendered before the
+     *   title exactly like the pipeline stage cards so all six rows match.
      */
     renderControlRow(o) {
+        const icon = o.icon
+            ? `<img src="assets/icons/${this._esc(o.icon)}.svg" alt="" style="width: 15px; height: 15px; opacity: 0.55; flex-shrink: 0;">`
+            : '';
         return `
             <div class="card" style="margin-bottom: 10px;"><div class="card-body" style="display: flex; align-items: center; gap: 10px; padding: 10px 14px;">
-                <span style="font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; color: var(--text-muted); min-width: 170px;">${this._esc(o.label)} ${o.saving ? '<span style="font-weight: 400; text-transform: none;">· saving…</span>' : ''}</span>
+                <span style="font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; color: var(--text-muted); min-width: 170px; display: inline-flex; align-items: center; gap: 7px;">${icon}${this._esc(o.label)} ${o.saving ? '<span style="font-weight: 400; text-transform: none;">· saving…</span>' : ''}</span>
                 ${o.controlHtml}
                 ${o.caret === false ? '' : '<span style="color: var(--text-muted); font-size: 13px;">▾</span>'}
             </div></div>`;
@@ -61,6 +66,7 @@ const VoiceAiDefaultsCards = {
         groups.push(`<optgroup label="Built-in">${templateOpts}</optgroup>`);
         return this.renderControlRow({
             label: 'Default personality',
+            icon: 'icon-persona',
             saving: o.saving,
             controlHtml: `<select style="${this.SELECT_STYLE}" onchange="VoiceAiPage.saveDefault('ai.defaultPersonalityId', this.value)">${groups.join('')}</select>`,
         });
