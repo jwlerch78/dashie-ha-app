@@ -18,7 +18,11 @@ const { resolveBrainRoute } = require('./brain/providers');
 const TTL_MS = 30_000; // user_settings changes rarely; a short cache keeps converse latency low.
 let _cache = null; // { at, value }
 
-const SAFE_DEFAULT = { model: null, route: 'cloud', localLlmUrl: '', localLlmModel: '', localLlmKey: '', hermesUrl: '', retainTranscripts: false, agentMode: '', retrievePictures: null, defaultPersonalityId: '', defaultVoiceKey: '', defaultWakeWord: '' };
+const EMPTY_PIPELINE = { sttProvider: '', ttsProvider: '', haSttEngineId: '', haTtsEngineId: '', haTtsVoiceId: '', controlMethod: '', searchSource: '', pipelinePreset: '', customizePipeline: false };
+const SAFE_DEFAULT = { model: null, route: 'cloud', localLlmUrl: '', localLlmModel: '', localLlmKey: '', hermesUrl: '', retainTranscripts: false, agentMode: '', retrievePictures: null, defaultPersonalityId: '', defaultVoiceKey: '', defaultWakeWord: '', pipeline: EMPTY_PIPELINE };
+
+/** Coerce a settings value to a string, '' when absent/non-string. */
+function str(v) { return typeof v === 'string' ? v : ''; }
 
 /**
  * Resolve the account's voice routing config.
@@ -72,6 +76,22 @@ async function getAccountVoiceConfig() {
           defaultPersonalityId: typeof settings?.ai?.defaultPersonalityId === 'string' ? settings.ai.defaultPersonalityId : '',
           defaultVoiceKey: typeof settings?.ai?.defaultVoiceKey === 'string' ? settings.ai.defaultVoiceKey : '',
           defaultWakeWord: typeof settings?.ai?.defaultWakeWord === 'string' ? settings.ai.defaultWakeWord : '',
+          // Kiosk voice-config mirror (Phase 1, 2026-07-13): the full account voice
+          // pipeline so a share-account anon kiosk reflects the household's Voice & AI
+          // setup (Cloud/Hybrid/Local providers + HA engine ids + voice + model),
+          // not just agentMode. '' = unset → the kiosk keeps its own default for that
+          // key. Consumed by DashieCloudCapabilityClient on the anon-kiosk path.
+          pipeline: {
+            sttProvider: str(settings?.voice?.sttProvider),
+            ttsProvider: str(settings?.voice?.ttsProvider),
+            haSttEngineId: str(settings?.voice?.haSttEngineId),
+            haTtsEngineId: str(settings?.voice?.haTtsEngineId),
+            haTtsVoiceId: str(settings?.voice?.haTtsVoiceId),
+            controlMethod: str(settings?.voice?.controlMethod),
+            searchSource: str(settings?.voice?.searchSource),
+            pipelinePreset: str(settings?.voice?.pipelinePreset),
+            customizePipeline: settings?.voice?.customizePipeline === true,
+          },
         };
       }
     }

@@ -103,6 +103,10 @@ router.get('/voice-config', async (req, res) => {
             default_personality_id: cfg.defaultPersonalityId || '',
             default_voice_key: cfg.defaultVoiceKey || '',
             default_wake_word: cfg.defaultWakeWord || '',
+            // Kiosk voice-config mirror (Phase 1): the full account voice pipeline so a
+            // share-account anon kiosk reflects the household's Voice & AI setup. The
+            // integration forwards this block on /api/dashie/voice/status.
+            pipeline: cfg.pipeline || {},
         });
     } catch (e) {
         // Never block the gateway on this — default to cloud.
