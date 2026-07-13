@@ -48,15 +48,18 @@ const VoiceAiPresetPicker = {
         const onclick = available ? `onclick="VoiceAiPage.selectPreset('${p.id}')"` : '';
         const check = selected ? `<span style="color: var(--accent); font-weight: 700;">✓</span>` : '';
         // Unavailable Cloud/Hybrid: explicit prompt with working links — the
-        // links stay clickable even though the card itself is inert.
+        // links stay clickable even though the card itself is inert. Both Cloud
+        // and Hybrid can run on credits OR a BYO AI key, so we surface both
+        // options on either card (not addon-gated). margin-top:auto bottom-
+        // justifies the prompt so it aligns across the equal-height cards.
         const prompt = available ? '' : `
-            <div style="font-size: 11px; color: var(--status-error, #c00); margin-top: 8px; line-height: 1.4; opacity: 1;">
-                Add <a href="#" onclick="event.preventDefault(); event.stopPropagation(); App.navigate('credits')" style="color: var(--accent); font-weight: 600;">credits</a>${isAddonMode ? ` or <a href="#" onclick="event.preventDefault(); event.stopPropagation(); App.navigate('api-keys')" style="color: var(--accent); font-weight: 600;">API keys</a>` : ''} →
+            <div style="font-size: 11px; color: var(--status-error, #c00); margin-top: auto; padding-top: 8px; line-height: 1.4; opacity: 1;">
+                Add <a href="#" onclick="event.preventDefault(); event.stopPropagation(); App.navigate('credits')" style="color: var(--accent); font-weight: 600;">credits</a> or <a href="#" onclick="event.preventDefault(); event.stopPropagation(); App.navigate('api-keys')" style="color: var(--accent); font-weight: 600;">AI keys</a> →
             </div>`;
         return `
             <div ${onclick}
                 class="card"
-                style="cursor: ${available ? 'pointer' : 'default'}; padding: 12px 14px; ${ring} ${disabledStyle}">
+                style="cursor: ${available ? 'pointer' : 'default'}; padding: 12px 14px; display: flex; flex-direction: column; ${ring} ${disabledStyle}">
                 <div style="display: flex; justify-content: space-between; align-items: baseline; gap: 8px;">
                     <div style="font-weight: 700; font-size: 14px;">${this._esc(p.label)}</div>
                     ${check}

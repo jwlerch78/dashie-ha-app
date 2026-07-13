@@ -20,6 +20,28 @@ const Sidebar = {
         // credits widget is dev-only; locations is hidden everywhere until
         // the feature is ready.
         const showCredits = FeatureGate.shouldShow('credits');
+        // Dashie Cloud dashboard section — built first so we can drop the whole
+        // section (label + divider) when it has no visible items. For an ha_only
+        // (voice-only) account every item here is gated off, so the section
+        // collapses entirely rather than leaving an orphaned "Dashie Cloud" label.
+        const dashieCloudItems = [
+            this._purchaseNavItem(),
+            this._gatedNavItem('family', 'Family', 'icon-profile-round', activePage),
+            this._gatedNavItem('calendar', 'Calendar', 'icon-calendar', activePage),
+            this._gatedNavItem('chores', 'Chores', 'icon-tasks', activePage),
+            this._gatedNavItem('rewards', 'Rewards', 'icon-star', activePage),
+            this._gatedNavItem('scheduled-actions', 'Scheduled Actions', 'icon-clock', activePage),
+            this._gatedNavItem('locations', 'Locations', 'icon-location-pin', activePage),
+            this._gatedNavItem('photos', 'Photos', 'icon-photos', activePage),
+        ].join('');
+        const dashieCloudSection = dashieCloudItems.trim() ? `
+            <div class="sidebar-divider"></div>
+
+            <div class="sidebar-section">
+                <div class="sidebar-section-label">Dashie Cloud</div>
+                ${dashieCloudItems}
+            </div>
+        ` : '';
         return `
             <div class="sidebar-logo">
                 <img src="assets/dashie-logo-orange.png" alt="Dashie" class="sidebar-logo-full">
@@ -34,19 +56,7 @@ const Sidebar = {
                 ${this._navItem('preferences', 'Preferences', 'icon-sliders', activePage)}
             </div>
 
-            <div class="sidebar-divider"></div>
-
-            <div class="sidebar-section">
-                <div class="sidebar-section-label">Dashie Cloud</div>
-                ${this._purchaseNavItem()}
-                ${this._gatedNavItem('family', 'Family', 'icon-profile-round', activePage)}
-                ${this._gatedNavItem('calendar', 'Calendar', 'icon-calendar', activePage)}
-                ${this._gatedNavItem('chores', 'Chores', 'icon-tasks', activePage)}
-                ${this._gatedNavItem('rewards', 'Rewards', 'icon-star', activePage)}
-                ${this._gatedNavItem('scheduled-actions', 'Scheduled Actions', 'icon-clock', activePage)}
-                ${this._gatedNavItem('locations', 'Locations', 'icon-location-pin', activePage)}
-                ${this._gatedNavItem('photos', 'Photos', 'icon-photos', activePage)}
-            </div>
+            ${dashieCloudSection}
 
             <div class="sidebar-divider"></div>
 

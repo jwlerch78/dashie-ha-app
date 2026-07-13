@@ -220,6 +220,9 @@ const VoiceAiPage = {
         } finally {
             this._loading = false;
             App.renderPage();
+            // First-open nudge (once per account) to enable Household Sharing so
+            // this HA user's kiosk tablets / voice satellites can use the account.
+            this._maybePromptHouseholdSharing();
         }
     },
 
@@ -597,6 +600,33 @@ const VoiceAiPage = {
                 </div>
             </div>
         `;
+    },
+
+    /** First-open nudge for HA users to turn on Household Sharing. The toggle
+     *  lives lower on the page (below AI Defaults) and isn't obvious, but it's
+     *  what lets an HA user's kiosk tablets / voice satellites use this
+     *  account's voice & AI. Fires once per account (localStorage latch),
+     *  add-on + HA users only, and only while sharing is still off. */
+    async _maybePromptHouseholdSharing() {
+        try {
+            if (typeof ConfirmModal === 'undefined') return;
+            if (!DashieAuth.isAddonMode || !DashieAuth.isHaUser) return;
+            if (this._activeTab !== 'settings') return;
+            if (this._sharing?.householdSharing === true) return;   // already on
+            const key = `dashie-hh-sharing-prompted-${DashieAuth.jwtUserId || 'anon'}`;
+            if (localStorage.getItem(key)) return;
+            // Latch first — never nag twice, even if they dismiss with "Not now".
+            localStorage.setItem(key, '1');
+            const ok = await ConfirmModal.confirm({
+                title: 'Turn on Household Sharing?',
+                messageHtml: `Household Sharing needs to be on for your other Dashie devices — kiosk tablets and Home Assistant voice satellites — to use this account's voice &amp; AI. Usage draws on your credits, and you can turn it off any time.`,
+                confirmLabel: 'Enable now',
+                cancelLabel: 'Not now',
+            });
+            if (ok) await this.toggleHouseholdSharing(true);
+        } catch (e) {
+            console.warn('[VoiceAiPage] household-sharing prompt failed (non-fatal):', e);
+        }
     },
 
     async toggleHouseholdSharing(enabled) {

@@ -198,8 +198,12 @@ const AccountPage = {
      *  Tier stat cards. The renewal date for an active sub comes from Stripe
      *  (current_period_end via get_transactions) since tier_expires_at is null. */
     _renderPlanBox(d) {
-        const tier = this._formatTier(d.tier);
         const status = d.subscription_status;
+        // ha_only (voice-only) accounts show a dedicated "HA Basic" plan name
+        // rather than the raw tier ("Basic") — they intentionally have no
+        // dashboard trial. No renewal date (tier_expires_at is null) and no
+        // Subscribe/Manage button (canSubscribe/manageable are both false below).
+        const tier = status === 'ha_only' ? 'HA Basic' : this._formatTier(d.tier);
         const date = this._subRenewsAt || d.tier_expires_at;
         const verb = status === 'trialing' ? 'trial ends'
             : status === 'canceled' ? 'expires'

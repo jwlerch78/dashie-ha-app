@@ -868,11 +868,14 @@ const AccountUsage = {
         const label = dialogTurns
             ? `Conversation · ${dialogTurns.length} turns`
             : `${mix} · ${items.length} call${items.length === 1 ? '' : 's'}`;
+        const grouped = this._groupCallItems(items);
+        const meteredServices = new Set(grouped.map(g => g.service));
         const body = open
             ? `<div style="padding-left: 24px;">
                  ${dialogTurns ? this._renderRealtimeTranscript(dialogTurns) : this._renderTranscript(intr)}
                  <table style="width: 100%; border-collapse: collapse; font-size: 12px; margin: 0 0 6px;"><tbody>
-                    ${this._groupCallItems(items).map(g => this._renderGroupedCallRow(g)).join('')}
+                    ${grouped.map(g => this._renderGroupedCallRow(g)).join('')}
+                    ${this._renderLocalTimingRows(intr.local_timing, meteredServices)}
                  </tbody></table>
                </div>`
             : '';
@@ -1040,6 +1043,37 @@ const AccountUsage = {
                 <td style="padding: 4px 8px;">${desc}</td>
                 <td style="padding: 4px 0; text-align: right; font-family: ui-monospace, SFMono-Regular, Menlo, monospace;">${g.byok ? 'API key' : this._fmtCost3(g.cost)}</td>
             </tr>`;
+    },
+
+    /** Friendly name for a local engine id (HA entity id like "stt.faster_whisper"
+     *  or a bare id) → "Whisper (local)". These run on the user's HA box for free. */
+    _localEngineLabel(engine) {
+        if (!engine) return 'Local';
+        const e = String(engine).replace(/^(stt|tts)\./, '').toLowerCase();
+        const known = { faster_whisper: 'Whisper', whisper: 'Whisper', piper: 'Piper', kokoro: 'Kokoro' };
+        const base = known[e] || (e.charAt(0).toUpperCase() + e.slice(1));
+        return `${base} (local)`;
+    },
+
+    /** Free local STT/TTS step rows from voice_turn_timing (engine + avg latency, "$-").
+     *  Local Whisper/Piper on the HA box have no billing row, so this is the only place
+     *  they surface. Suppressed for a stage that already has a METERED (cloud) row in
+     *  this interaction — a cloud turn also writes a timing row; don't double-show it. */
+    _renderLocalTimingRows(timing, meteredServices) {
+        if (!timing) return '';
+        const row = (svc, t, dir) => {
+            if (!t || !t.engine || meteredServices.has(svc)) return '';
+            const n = t.count || 1;
+            const ms = n ? Math.round((t.ms_total || 0) / n) : (t.ms_total || 0);
+            const times = n > 1 ? ` ×${n}` : '';
+            return `
+                <tr>
+                    <td style="padding: 4px 0; color: var(--text-muted); width: 60px; text-transform: uppercase; font-size: 10px; letter-spacing: 0.5px;">${this._escape(this._svcLabel(svc))}</td>
+                    <td style="padding: 4px 8px;">${this._escape(this._localEngineLabel(t.engine))} · ${dir}${times} · ${this._fmtCount(ms)}ms</td>
+                    <td style="padding: 4px 0; text-align: right; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--text-muted);">$-</td>
+                </tr>`;
+        };
+        return row('stt', timing.stt, 'speech-to-text') + row('tts', timing.tts, 'text-to-speech');
     },
 
     // ── helpers used by stat strip ───────────────────────────

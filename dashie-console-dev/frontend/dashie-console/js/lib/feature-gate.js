@@ -86,6 +86,21 @@ const FeatureGate = {
     },
 
     /**
+     * Truthy when the signed-in account is an HA voice-only account
+     * (subscription_status === 'ha_only'): no dashboard trial, deliberately
+     * scoped to voice/AI. Such accounts hide the whole Dashie Cloud dashboard
+     * section (family/calendar/photos/…) — see HA_ONLY_HIDDEN_PAGES. Distinct
+     * from is_ha_user: once an ha_only user starts the dashboard trial the
+     * status flips to 'trialing' and these pages reappear.
+     *
+     * Reads the SubscribeGate-provided state; optimistic false before it loads
+     * (so we don't flash-hide during initial paint), corrected on re-render.
+     */
+    isHaOnly() {
+        return this._subscriptionState?.subscription_status === 'ha_only';
+    },
+
+    /**
      * Per-feature visibility rules.
      *   true              → always visible
      *   false             → always hidden (not ready for beta)
@@ -162,6 +177,18 @@ const FeatureGate = {
         'voice-ai', 'video-feeds',
     ]),
 
+    /**
+     * The Dashie Cloud dashboard pages hidden for an ha_only (voice-only)
+     * account. Deliberately EXCLUDES voice-ai / video-feeds / credits / api-keys
+     * — those are the voice/AI product an ha_only user keeps. When the user
+     * starts the dashboard trial (status → 'trialing'), isHaOnly() goes false
+     * and these reappear.
+     */
+    HA_ONLY_HIDDEN_PAGES: new Set([
+        'family', 'calendar', 'photos',
+        'chores', 'rewards', 'locations', 'scheduled-actions',
+    ]),
+
     /** Subscription state — set by SubscribeGate after check-subscription. */
     _subscriptionState: null,
 
@@ -193,6 +220,7 @@ const FeatureGate = {
     isPageEnabled(page) {
         const key = this.PAGE_FEATURE[page];
         if (key && !this.shouldShow(key)) return false;
+        if (this.isHaOnly() && this.HA_ONLY_HIDDEN_PAGES.has(page)) return false;
         if (!this.hasEntitlement() && this.ENTITLEMENT_GATED_PAGES.has(page)) return false;
         return true;
     },

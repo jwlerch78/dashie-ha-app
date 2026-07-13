@@ -670,6 +670,14 @@ const VoiceAiAnalysis = {
             desc = `${this._escape(s.label)} <span style="color: var(--text-muted);">(${this._fmtTokens(s.result_count || 0)} images)</span>`;
         } else if (s.kind === 'sports') {
             desc = `${this._escape(s.label)} <span style="color: var(--text-muted);">(${this._fmtTokens(s.result_count || 0)} games)</span>`;
+        } else if (s.free) {
+            // Local (free) STT/TTS from voice_turn_timing — Whisper/Piper on the HA box.
+            // Friendly engine name + a "local" hint (the ms column carries the latency).
+            const e = String(s.label || '').replace(/^(stt|tts)\./, '').toLowerCase();
+            const known = { faster_whisper: 'Whisper', whisper: 'Whisper', piper: 'Piper', kokoro: 'Kokoro' };
+            const base = known[e] || (e ? e.charAt(0).toUpperCase() + e.slice(1) : kind.toLowerCase());
+            const times = s.count > 1 ? ` ×${s.count}` : '';
+            desc = `${this._escape(base)} <span style="color: var(--text-muted);">(local)${times}</span>`;
         } else {
             // tts / stt — just the provider/model label (no tokens/results)
             desc = this._escape(s.label || kind.toLowerCase());
