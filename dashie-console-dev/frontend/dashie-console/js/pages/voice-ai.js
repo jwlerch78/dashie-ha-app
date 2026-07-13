@@ -390,6 +390,20 @@ const VoiceAiPage = {
         // preset (it would vanish from the filtered picker otherwise).
         this._seedProvider(id, 'tts', 'voice.ttsProvider');
         this._seedProvider(id, 'stt', 'voice.sttProvider');
+
+        // Cloud-AI feature defaults (John, 2026-07-13): Cloud & Hybrid turn on
+        // conversation dialog + open-dialog-after-commands + retrieve pictures
+        // out of the box — they're the cloud-brain presets where these shine.
+        // Local / HA Assist drop Retrieve pictures (it's cloud web-image search,
+        // billed to credits); dialog is left as-is for those. Writes real values
+        // so the Android runtime honors them, not just the console display.
+        if (id === 'cloud' || id === 'hybrid') {
+            if (this._agentMode() !== 'live') this.saveDefault('voice.agentMode', 'dialog');
+            this.saveDefault('voice.alwaysOpenDialog', true);
+            this.saveDefault('ai.retrievePicturesEnabled', true);
+        } else if (id === 'local' || id === 'ha_assist') {
+            this.saveDefault('ai.retrievePicturesEnabled', false);
+        }
     },
 
     /** Seed a stage's provider to the preset's natural default (John, 2026-07-11):
