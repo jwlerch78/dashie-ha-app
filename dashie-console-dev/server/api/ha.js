@@ -461,9 +461,14 @@ router.post('/adopt/:deviceId', requireSignedIn, async (req, res) => {
             // Pass through user-friendly error messages from the edge fn (e.g.
             // "already claimed by another account") rather than wrapping them.
             let parsed = null; try { parsed = JSON.parse(body); } catch { /* not JSON */ }
+            // database-operations wraps thrown business errors as
+            // { error: 'Internal server error', details: '<the real message>' } —
+            // e.g. adopt's "already claimed by another Dashie account". Prefer
+            // `details` so the user sees the actionable reason instead of the
+            // generic wrapper; fall back to message/error/body for other shapes.
             return res.status(resp.status).json({
                 error: 'adopt_failed',
-                message: parsed?.error || parsed?.message || body.slice(0, 200),
+                message: parsed?.details || parsed?.message || parsed?.error || body.slice(0, 200),
             });
         }
         const parsed = JSON.parse(body);
