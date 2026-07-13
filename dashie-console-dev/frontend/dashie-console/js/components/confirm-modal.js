@@ -63,6 +63,7 @@ const ConfirmModal = {
         danger = false,
         requireTypedConfirmation = null,
         typedConfirmationLabel = null,
+        hideCancel = false,   // single-button informational dialog (e.g. a result notice)
     }) {
         const confirmClass = danger ? 'btn btn-danger' : 'btn btn-primary';
         const hasTypedGate = !!requireTypedConfirmation;
@@ -86,7 +87,7 @@ const ConfirmModal = {
                 <div style="color: var(--text-secondary); font-size: 14px; line-height: 1.5; margin-bottom: 20px; white-space: ${messageHtml != null ? 'normal' : 'pre-line'};">${messageHtml != null ? messageHtml : this._escape(message)}</div>
                 ${typedSection}
                 <div style="display: flex; gap: 8px; justify-content: flex-end;">
-                    <button class="btn btn-ghost" data-confirm-action="cancel">${this._escape(cancelLabel)}</button>
+                    ${hideCancel ? '' : `<button class="btn btn-ghost" data-confirm-action="cancel">${this._escape(cancelLabel)}</button>`}
                     <button class="${confirmClass}" data-confirm-action="confirm" ${hasTypedGate ? 'disabled' : ''}>${this._escape(confirmLabel)}</button>
                 </div>
             </div>

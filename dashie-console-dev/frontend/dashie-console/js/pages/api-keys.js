@@ -195,7 +195,10 @@ const ApiKeysPage = {
             Toast.error(`${p.name} needs all ${p.fields.length} fields.`);
             return;
         }
-        await this._put(providerId, value, 'Key saved.');
+        const ok = await this._put(providerId, value, 'Key saved.');
+        // Auto-validate right after a successful save + show the verdict in a modal
+        // (the Test button stays for on-demand re-checks). Free /models probe.
+        if (ok) await this._autoTest(providerId);
     },
 
     async remove(providerId) {
@@ -213,12 +216,13 @@ const ApiKeysPage = {
     },
 
     /** No-charge validity check — asks the add-on to hit the provider's /models
-     *  endpoint (a free GET, nothing billed) and reports valid/rejected inline. */
-    async test(providerId) {
-        if (this._busy || this._testing) return;
+     *  endpoint (a free GET, nothing billed). Sets _testResult (inline badge) and
+     *  returns { ok, detail }. Shared by the Test button and auto-test-on-save. */
+    async _runValidation(providerId) {
         this._testing = providerId;
         delete this._testResult[providerId];
         App.renderPage();
+        let result;
         try {
             const resp = await fetch(DashieAuth._addonUrl('/api/keys/validate'), {
                 method: 'POST',
@@ -227,20 +231,47 @@ const ApiKeysPage = {
             });
             if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
             const data = await resp.json();
-            this._testResult[providerId] = { ok: data?.ok ?? null, detail: data?.detail || '' };
+            result = { ok: data?.ok ?? null, detail: data?.detail || '' };
         } catch (e) {
             console.error('[ApiKeysPage] validate failed:', e);
-            this._testResult[providerId] = { ok: false, detail: `Couldn't run the test: ${e?.message || e}` };
+            result = { ok: false, detail: `Couldn't run the test: ${e?.message || e}` };
         }
+        this._testResult[providerId] = result;
         this._testing = null;
         App.renderPage();
+        return result;
     },
 
+    /** Test button: validate + show the result inline. */
+    async test(providerId) {
+        if (this._busy || this._testing) return;
+        await this._runValidation(providerId);
+    },
+
+    /** Auto-test after a save: validate, then surface the verdict in a modal so a
+     *  bad key is impossible to miss (John, 2026-07-13). The inline badge updates too. */
+    async _autoTest(providerId) {
+        const p = this.PROVIDERS.find(x => x.id === providerId);
+        const name = p?.name || providerId;
+        const r = await this._runValidation(providerId);
+        if (r.ok === null) return;  // no test for this provider (bedrock/hermes) — silent
+        if (typeof ConfirmModal === 'undefined') return;
+        await ConfirmModal.confirm({
+            title: r.ok ? `✓ ${name} key is valid` : `✗ ${name} key was rejected`,
+            message: r.detail || (r.ok ? 'Your key works.' : 'The provider rejected this key.'),
+            confirmLabel: 'OK',
+            danger: !r.ok,
+            hideCancel: true,
+        });
+    },
+
+    /** @returns {Promise<boolean>} true when the write succeeded. */
     async _put(providerId, value, successMsg) {
         this._busy = providerId;
         // A saved/removed key invalidates the prior test result.
         delete this._testResult[providerId];
         App.renderPage();
+        let ok = false;
         try {
             const resp = await fetch(DashieAuth._addonUrl('/api/keys'), {
                 method: 'PUT',
@@ -252,12 +283,14 @@ const ApiKeysPage = {
             const data = await resp.json();
             this._providers = data?.providers || this._providers;
             Toast.success(successMsg);
+            ok = true;
         } catch (e) {
             console.error('[ApiKeysPage] save failed:', e);
             Toast.error(`Couldn't save: ${e?.message || e}`);
         }
         this._busy = null;
         App.renderPage();
+        return ok;
     },
 
     _escape(s) {

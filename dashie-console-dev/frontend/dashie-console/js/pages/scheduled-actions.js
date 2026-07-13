@@ -66,6 +66,14 @@ const ScheduledActionsPage = {
         try {
             const result = await DashieAuth.dbRequest('list_scheduled_actions', {});
             this._actions = (result.actions || result.data || []).slice();
+            // Resolve device_id → friendly name so each action shows where it fires.
+            // Best-effort: a failure just falls back to a generic device label.
+            try {
+                const dev = await DashieAuth.dbRequest('list_devices', { tv_only: false, include_inactive: true });
+                const list = dev.devices || dev.data || [];
+                this._deviceMap = {};
+                list.forEach(d => { if (d.device_id) this._deviceMap[d.device_id] = d.device_name; });
+            } catch (_) { /* device names optional */ }
         } catch (e) {
             console.error('[ScheduledActionsPage] Fetch failed:', e);
             this._error = e.message;
@@ -159,9 +167,16 @@ const ScheduledActionsPage = {
         const expanded = this._expandedIds.has(action.id);
         const chevron = expanded ? '▾' : '▸';
         const recurring = this._isRecurring(action);
-        const title = action.notify_text
-            ? this._escape(action.notify_text.toUpperCase())
+        const isAiTurn = this._isAiTurn(action);
+        // AI turns carry the command in `prompt` (notify_text is empty for them).
+        const titleText = isAiTurn ? action.prompt : action.notify_text;
+        const title = titleText
+            ? this._escape(titleText.toUpperCase())
             : '<span style="color:var(--text-muted); font-style:italic;">(NO TEXT)</span>';
+        const deviceName = this._deviceName(action);
+        const deviceSuffix = deviceName
+            ? ` · <span title="Fires on this device">📱 ${this._escape(deviceName)}</span>`
+            : '';
         const recurBadge = recurring
             ? `<img src="assets/icons/icon-reload.svg" alt="Recurring" title="Recurring" style="width:14px;height:14px;margin-left:8px;vertical-align:middle;opacity:0.7;">`
             : '';
@@ -170,10 +185,10 @@ const ScheduledActionsPage = {
         const header = `
             <div style="display:flex; align-items:center; gap:10px; padding:12px 14px; background:var(--bg-card,#fff);">
                 <span onclick="ScheduledActionsPage.toggleExpand('${id}')" style="cursor:pointer; font-size:20px; color:var(--text-muted); width:16px; text-align:center; flex-shrink:0;">${chevron}</span>
-                <img src="assets/icons/icon-bell.svg" alt="" style="width:22px;height:22px;flex-shrink:0;opacity:0.8;">
+                <span style="width:22px;text-align:center;flex-shrink:0;font-size:18px;opacity:0.85;" title="${isAiTurn ? 'AI action' : 'Reminder'}">${isAiTurn ? '🤖' : '🔔'}</span>
                 <div onclick="ScheduledActionsPage.toggleExpand('${id}')" style="flex:1; min-width:0; cursor:pointer;">
                     <div class="list-item-title">${title}${recurBadge}</div>
-                    <div class="list-item-subtitle">${this._capitalize(action.vernacular || 'reminder')} · ${this._fmtWhen(action.fire_at)}</div>
+                    <div class="list-item-subtitle">${this._typeLabel(action)} · ${this._fmtWhen(action.fire_at)}${deviceSuffix}</div>
                 </div>
                 <button class="btn btn-danger btn-sm" onclick="ScheduledActionsPage._delete('${id}')" ${deleting ? 'disabled' : ''}
                         title="Delete" style="flex-shrink:0; min-width:34px;">${deleting ? '…' : '✕'}</button>
@@ -192,6 +207,25 @@ const ScheduledActionsPage = {
     _renderDetail(action, editable) {
         const id = this._escape(action.id);
         const ts = `<div style="color:var(--text-muted); font-size:var(--font-size-sm); margin-top:${editable ? '10px' : '0'};">${this._timestampLabel(action)}</div>`;
+
+        // AI turns (schedule_action) are created + owned on the device and aren't
+        // console-editable yet — show a read-only summary of the command, schedule,
+        // and firing device instead of the reminder-text form.
+        if (this._isAiTurn(action)) {
+            const rows = [
+                ['Command', this._escape(action.prompt || '—')],
+                ['Type', 'Action (runs on the device at the set time)'],
+                ['Repeats', action.recurrence === 'daily' ? 'Every day' : 'Once'],
+                ['Fires at', this._fmtWhen(action.fire_at)],
+                ['Device', this._escape(this._deviceName(action) || 'this device')],
+            ].map(([k, v]) => `
+                <div class="form-group">
+                    <label class="form-label">${k}</label>
+                    <div class="form-input" style="background:var(--bg-muted,#f6f7f9);">${v}</div>
+                </div>`).join('');
+            return `<div class="form-grid">${rows}</div>${ts}`;
+        }
+
         if (!editable) return ts; // Completed: read-only, just the timestamp.
 
         const saving = this._savingId === action.id;
@@ -301,7 +335,22 @@ const ScheduledActionsPage = {
     // Phase 1 actions are one-shot. When recurring lands, detect it here
     // (e.g. action.trigger_type === 'every'); for now everything is single.
     _isRecurring(action) {
-        return action.trigger_type === 'every' || action.recurring === true;
+        return !!action.recurrence || action.trigger_type === 'every' || action.recurring === true;
+    },
+
+    _isAiTurn(action) {
+        return action.action_type === 'ai_turn';
+    },
+
+    // Human label for the action kind: AI turns are "Action"; classic ones keep
+    // their vernacular (Reminder/Alarm).
+    _typeLabel(action) {
+        return this._isAiTurn(action) ? 'Action' : this._capitalize(action.vernacular || 'reminder');
+    },
+
+    _deviceName(action) {
+        const name = this._deviceMap && action.device_id ? this._deviceMap[action.device_id] : null;
+        return name || (action.device_id ? 'this device' : null);
     },
 
     _timestampLabel(action) {

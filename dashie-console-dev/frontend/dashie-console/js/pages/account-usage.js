@@ -203,6 +203,10 @@ const AccountUsage = {
     // 4-decimal figure. Per-call line items and interaction rows keep _fmtCost
     // so the drill-down still shows the exact amount.
     _fmtCostTotal(amount) {
+        // Nothing charged (all-BYOK, template, or included-in-plan) → "$-", not "$0.00"
+        // or a phantom "<$0.01" (John, 2026-07-13). Distinct from null (unknown → handled
+        // by callers as "—").
+        if (amount === 0) return '$-';
         if (amount != null && isFinite(amount) && amount > 0 && amount < 0.01) return '<$0.01';
         return this._fmtCost(amount);
     },
@@ -340,12 +344,31 @@ const AccountUsage = {
                 .then(r => r.ok ? r.json() : null);
             const rows = data?.transcripts || [];
             if (!rows.length) return;
+            // Collect ALL transcripts per session, oldest-first. A dialog session has one
+            // transcript PER TURN (open-dialog keeps the mic live), so a single session_id
+            // maps to many turns — including "didn't catch that" misses. The old code did
+            // bySession.set(id, t) which kept only the last, collapsing a 3-turn dialog to
+            // one shown exchange while the call count still read 3 (the mismatch John saw).
             const bySession = new Map();
-            for (const t of rows) if (t.session_id) bySession.set(t.session_id, t);
+            for (const t of rows) {
+                if (!t.session_id) continue;
+                if (!bySession.has(t.session_id)) bySession.set(t.session_id, []);
+                bySession.get(t.session_id).push(t);
+            }
+            for (const arr of bySession.values()) arr.sort((a, b) => (a.ts < b.ts ? -1 : 1));
             for (const intr of interactions) {
-                if (intr.prompt || intr.response) continue;
-                const t = intr.session_id && bySession.get(intr.session_id);
-                if (t) { intr.prompt = t.text || null; intr.response = t.voice || null; }
+                if (intr.prompt || intr.response || (intr.turns && intr.turns.length)) continue;
+                const arr = intr.session_id && bySession.get(intr.session_id);
+                if (!arr || !arr.length) continue;
+                if (arr.length === 1) {
+                    // Single turn → the existing prompt/response transcript block.
+                    intr.prompt = arr[0].text || null;
+                    intr.response = arr[0].voice || null;
+                } else {
+                    // Multi-turn → thread every exchange (renders as "Conversation · N turns"
+                    // via the dialogTurns path, same as realtime), so misses are visible.
+                    intr.turns = arr.map(t => ({ prompt: t.text || null, response: t.voice || null, ts: t.ts }));
+                }
             }
         } catch (e) {
             // Transcripts just won't show; never block the usage view.
@@ -795,6 +818,11 @@ const AccountUsage = {
      *  Falls back to a client-side catalog estimate for legacy rows that predate
      *  credit_deductions. */
     _itemCost(c) {
+        // BYOK turns ran on the user's own key — Dashie charged nothing, so they
+        // contribute $0 to an interaction total even though ai_interactions carries a
+        // COMPUTED cost for reference. Without this the total showed a phantom "<$0.01"
+        // on an all-API-key turn (John, 2026-07-13).
+        if (c.byok) return 0;
         if (c.actual_cost_usd != null) return Number(c.actual_cost_usd) || 0;
         const C = window.AiModelCatalog;
         if (!C) return 0;
