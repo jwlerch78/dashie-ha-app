@@ -38,8 +38,22 @@ function providerForModel(modelId) {
 const OPENAI_COMPAT = {
     openai: { chatUrl: 'https://api.openai.com/v1/chat/completions', label: 'OpenAI' },
     gemini: { chatUrl: 'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions', label: 'Gemini' },
+    // Anthropic ships an OpenAI-compat surface (Authorization: Bearer <key>, our catalog's
+    // claude-* ids verbatim) — verified live 2026-07-14: POST returns an OpenAI-shaped 401,
+    // not a 404. So Claude BYOK needs NO Anthropic-messages adapter, just this row. Before
+    // this, a stored Claude key validated green and then silently did NOTHING (turns still
+    // billed Dashie credits) — the exact silent-degradation WS-I.8 forbids.
+    claude: { chatUrl: 'https://api.anthropic.com/v1/chat/completions', label: 'Claude' },
     openrouter: { chatUrl: 'https://openrouter.ai/api/v1/chat/completions', label: 'OpenRouter' },
 };
+
+/** Providers whose stored key ACTUALLY changes routing. The console renders a key field only
+ *  for these (+ any provider that already has an orphaned key, so it can still be removed) —
+ *  a structural guard against re-introducing a field that silently does nothing.
+ *  `hermes` routes via ai.model==='hermes' rather than OPENAI_COMPAT, so it's added by hand.
+ *  `bedrock` is deliberately ABSENT: it needs SigV4 request signing and has no compat endpoint;
+ *  its Nova models are covered by OpenRouter instead. */
+const ROUTABLE_PROVIDERS = [...Object.keys(OPENAI_COMPAT), 'hermes'];
 
 /** OUR model id → OpenRouter wire id ("one key, every model", John 2026-07-14).
  *
@@ -173,4 +187,4 @@ async function validateProvider(provider) {
     }
 }
 
-module.exports = { providerForModel, resolveBrainRoute, resolveByokTarget, validateProvider, OPENAI_COMPAT };
+module.exports = { providerForModel, resolveBrainRoute, resolveByokTarget, validateProvider, OPENAI_COMPAT, ROUTABLE_PROVIDERS };

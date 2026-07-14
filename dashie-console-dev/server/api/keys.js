@@ -26,7 +26,11 @@ function requireSignedIn(req, res, next) {
 
 /** GET /api/keys → masked values + set flags. Full keys never leave the box. */
 router.get('/', (req, res) => {
-    res.json({ providers: keyStore.maskedKeys() });
+    // `routable` = the providers whose key actually flips brain routing (brain/providers.js).
+    // The console renders a key field ONLY for these, so we can never again ship a field that
+    // silently does nothing (a stored Claude key used to validate green and still bill Dashie
+    // credits, because no adapter existed — WS-I.8 silent degradation).
+    res.json({ providers: keyStore.maskedKeys(), routable: providers.ROUTABLE_PROVIDERS });
 });
 
 /** GET /api/keys/status → { gemini: bool, claude: bool, ... } */
