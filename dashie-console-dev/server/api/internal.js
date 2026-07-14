@@ -19,6 +19,7 @@ const express = require('express');
 const auth = require('../auth');
 const { getAccountVoiceConfig } = require('../account-config');
 const bridgeAuth = require('../lib/bridge-auth');
+const { SUPABASE } = require('../config');
 
 const router = express.Router();
 
@@ -94,6 +95,93 @@ router.get('/account-credential', async (req, res) => {
         });
     } catch (e) {
         return res.status(401).json({ error: 'not_authenticated', message: e.message });
+    }
+});
+
+/**
+ * POST /api/internal/authorize-device   { user_code }
+ *
+ * Kiosk Real Login, Phase 1 (.reference/build-plans/20260713_KIOSK_REAL_LOGIN.md).
+ *
+ * A LAN kiosk tablet has created a pending device code and is asking THIS HA box to authorize
+ * it into the household account. The add-on already holds an account JWT, so it calls the new
+ * `authorize_device_code_account` op on jwt-auth, which claims the code for this account.
+ *
+ * Why the add-on and not the tablet: the tablet has no account credential (that's the whole
+ * point — it's anonymous). The box does. This is the "silent device-flow authorization" in the
+ * plan: the account authorizes the code on the device's behalf, and the DEVICE then polls
+ * jwt-auth directly for its own per-device JWT. **The session token never passes through here** —
+ * we return only success/failure, never a credential.
+ *
+ * SECURITY (D1 — a deliberate, documented widening):
+ *   - bridge-secret authed (the router.use guard above) — only the Dashie integration can call it.
+ *   - Gated on household sharing, twice: here (fail-closed, so we don't even ask) and again
+ *     server-side in jwt-auth (the authoritative check — an add-on can't talk its way past it).
+ *   - jwt-auth additionally restricts this op to device_type='ha_kiosk', so a compromised caller
+ *     cannot use it to sign a Fire TV or a phone into the account.
+ *   - The authorized device is attributable (its own user_devices row) and revocable (D5:
+ *     removing it makes refresh_jwt stop renewing its token).
+ */
+// express.json() is applied PER-ROUTE in this app (there is no global body parser) — without
+// it `req.body` is undefined and the user_code silently reads as empty.
+router.post('/authorize-device', express.json(), async (req, res) => {
+    const userCode = (req.body && (req.body.user_code || req.body.device_code)) || '';
+    if (!userCode) {
+        return res.status(400).json({ error: 'missing_user_code', message: 'user_code is required' });
+    }
+
+    // Fail CLOSED on sharing — this is an authorization gate, not a liveness probe. jwt-auth
+    // re-checks it server-side (that's the authoritative one); this just avoids a pointless
+    // round-trip and keeps the box's own answer consistent with /sharing-status.
+    let sharing = false;
+    try {
+        const cfg = await getAccountVoiceConfig();
+        sharing = cfg.householdSharing === true;
+    } catch (e) {
+        sharing = false;
+    }
+    if (!sharing) {
+        console.warn('[authorize-device] DENIED — household sharing is off');
+        return res.status(403).json({
+            error: 'sharing_disabled',
+            message: 'Household Dashie Cloud sharing is turned off for this account.',
+        });
+    }
+
+    let stored;
+    try {
+        stored = await auth.getValidJwt();
+    } catch (e) {
+        return res.status(401).json({ error: 'not_authenticated', message: e.message });
+    }
+
+    try {
+        const resp = await fetch(`${SUPABASE.url}/functions/v1/jwt-auth`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                apikey: SUPABASE.anonKey,
+                Authorization: `Bearer ${stored.jwt}`,
+            },
+            body: JSON.stringify({
+                operation: 'authorize_device_code_account',
+                data: { device_code: userCode },
+            }),
+        });
+        const body = await resp.json().catch(() => ({}));
+        if (!resp.ok || body?.success !== true) {
+            console.warn(`[authorize-device] jwt-auth refused (${resp.status}): ${body?.error || 'unknown'}`);
+            return res.status(resp.status === 200 ? 400 : resp.status).json({
+                error: body?.error || 'authorize_failed',
+                message: body?.message || 'Could not authorize the device.',
+            });
+        }
+        // D1 observability: a silent, human-free provisioning must never be an INVISIBLE one.
+        console.log(`[authorize-device] ✅ kiosk code ${userCode} authorized for ${stored.userId} — the device will poll for its own session`);
+        return res.json({ success: true, account_email: stored.userEmail || null });
+    } catch (e) {
+        console.error('[authorize-device] failed:', e?.message || e);
+        return res.status(502).json({ error: 'upstream_failed', message: 'Could not reach the Dashie cloud to authorize this device.' });
     }
 });
 
