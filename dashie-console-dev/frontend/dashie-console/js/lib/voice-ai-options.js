@@ -355,6 +355,62 @@ const VoiceAiOptions = {
         return `${speaker.charAt(0).toUpperCase()}${speaker.slice(1)} (${this._PIPER_QUALITY[quality] || quality})`;
     },
 
+    // ── voice-language narrowing ─────────────────────────────
+    // A local TTS box offers every language it knows (Piper ships 163 voices across ~30
+    // languages), which is unusable as a dropdown. Narrow to the account's language
+    // (general.language, BCP-47 e.g. 'en-US') — but NEVER to an empty list: Piper has no
+    // Japanese or Korean voices at all, and no exact es-US, so the ladder degrades
+    // exact locale → language family → everything (with a note), rather than stranding
+    // the user with nothing to pick.
+
+    /** Kokoro encodes language in the voice id's first letter (af_heart = American
+     *  female; jf_alpha = Japanese female) — a different scheme from Piper's `en_US-…`.
+     *  Map it to a language family so one filter serves both engines. */
+    _KOKORO_LANG: { a: 'en', b: 'en', e: 'es', f: 'fr', h: 'hi', i: 'it', j: 'ja', p: 'pt', z: 'zh' },
+
+    /** The language of a voice option: its `language` field (piper shim → 'en_US'),
+     *  else parsed from the id — 'en_US-amy-low' → 'en_US', 'af_heart' → 'en'. Null when
+     *  the shape is unrecognized (an option we must never filter away). */
+    voiceLanguage(opt) {
+        const explicit = String(opt?.language || '').replace('-', '_');
+        if (explicit) return explicit;
+        const id = String(opt?.value || '');
+        const piper = id.match(/^([a-z]{2}_[A-Z]{2})-/);
+        if (piper) return piper[1];
+        const kokoro = id.match(/^([abefhijpz])[fm]_/);
+        if (kokoro) return this._KOKORO_LANG[kokoro[1]] || null;
+        return null;
+    },
+
+    /** Narrow a probed voice list to `locale` (e.g. 'en-US'). Returns
+     *  { options, narrowed, note } — `note` explains a fallback so the UI can say why the
+     *  list isn't in the user's language. locale 'system'/absent → no narrowing (we don't
+     *  know what the device resolves to). Options with no detectable language are always
+     *  kept (Kokoro-style lists we can't parse must not vanish). */
+    filterVoicesByLanguage(options, locale) {
+        const all = Array.isArray(options) ? options : [];
+        const loc = String(locale || '').trim();
+        if (!all.length || !loc || loc === 'system') return { options: all, narrowed: false, note: '' };
+        const want = loc.replace('-', '_');            // en-US → en_US
+        const family = want.split('_')[0];             // en
+        const langOf = o => this.voiceLanguage(o);
+        const unknown = all.filter(o => !langOf(o));   // never filtered away
+
+        const exact = all.filter(o => langOf(o) === want);
+        if (exact.length) return { options: [...exact, ...unknown], narrowed: true, note: '' };
+
+        // No exact locale (Piper has es_MX/es_AR but no es_US) → same language, any region.
+        const fam = all.filter(o => String(langOf(o) || '').split('_')[0] === family);
+        if (fam.length) {
+            return { options: [...fam, ...unknown], narrowed: true,
+                     note: `No ${loc} voices on this engine — showing all ${family.toUpperCase()} voices.` };
+        }
+        // The engine has nothing in this language at all (Piper has no ja/ko) → show
+        // everything rather than an empty picker, and say so.
+        return { options: all, narrowed: false,
+                 note: `This engine has no ${loc} voices — showing everything it offers.` };
+    },
+
     _piperOption(detection) {
         const eng = this._matchEngine(detection?.tts, /piper/i);
         if (eng) {

@@ -910,12 +910,26 @@ const VoiceAiPage = {
         if (ttsSelected.engineRecord) {
             if (ttsSelected.engineRecord.kind !== 'tts') return null;
             const probed = this._probedOptions['voice.localTtsVoiceId'];
-            return probed?.length
-                ? { key: 'voice.localTtsVoiceId', label: 'Voice', type: 'select', options: probed }
-                : { key: 'voice.localTtsVoiceId', label: 'Voice', placeholder: 'af_heart' };
+            if (!probed?.length) return { key: 'voice.localTtsVoiceId', label: 'Voice', placeholder: 'af_heart' };
+            // A local box offers every language it knows (Piper: 163 voices) — narrow to
+            // the household's. The ladder never yields an empty list; `note` explains any
+            // fallback (e.g. Piper has no Japanese voices at all).
+            const { options, note } = window.VoiceAiOptions.filterVoicesByLanguage(probed, this._voiceLocale());
+            return { key: 'voice.localTtsVoiceId', label: 'Voice', type: 'select', options, note };
         }
         if (!['ha_engine', 'local_url'].includes(ttsSelected.id)) return null;
         return (ttsSelected.configFields || []).find(f => voiceFieldKeys.includes(f.key)) || null;
+    },
+
+    /** The locale to narrow local voices by. Dashie's own language wins when the user set
+     *  one — it's the language Dashie SPEAKS (AI prompt + cloud voice), so offering voices
+     *  in another language would be incoherent. It defaults to 'system' though, and that's
+     *  where HA helps: the add-on reports HA's configured locale (detection.haLanguage),
+     *  which is what this household actually speaks. Neither → no narrowing. */
+    _voiceLocale() {
+        const own = String(this._defaults?.['general.language'] || '').trim();
+        if (own && own !== 'system') return own;
+        return String(this._engines?.haLanguage || '').trim();
     },
 
     /** The Voice row under Text-to-speech (Piper/Kokoro only): a detection-
@@ -945,11 +959,16 @@ const VoiceAiPage = {
                 autocomplete="off" onchange="VoiceAiPage.saveLocalField('${voiceField.key}', this.value)"
                 style="flex: 1; padding: 7px 9px; border: 1px solid var(--border, #d1d5db); border-radius: 5px; font-size: 13px;">`;
         }
+        // Why the list isn't in your language (the engine has none, or only other
+        // regions) — say it rather than silently showing a surprising set.
+        const note = voiceField.note
+            ? `<div style="font-size: 11px; color: var(--text-muted); margin-top: 4px;">${this._escape(voiceField.note)}</div>`
+            : '';
         return D.renderControlRow({
             label: 'Voice',
             icon: 'icon-voice',
             saving: this._savingKey === voiceField.key,
-            controlHtml: control,
+            controlHtml: control + note,
             caret,
         });
     },

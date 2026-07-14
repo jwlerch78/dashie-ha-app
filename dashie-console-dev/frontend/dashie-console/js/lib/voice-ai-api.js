@@ -23,6 +23,9 @@ const VoiceAiApi = {
         ['ai', 'model'],
         ['ai', 'defaultPersonalityId'],
         ['ai', 'defaultVoiceKey'],
+        // Read-only here (owned by Preferences) — the Voice & AI page narrows a local TTS
+        // box's voice catalog to the household's language. 'system' falls back to HA's.
+        ['general', 'language'],
         ['voice', 'pipelinePreset'],
         ['voice', 'controlMethod'],
         ['voice', 'agentMode'],
@@ -66,6 +69,7 @@ const VoiceAiApi = {
 
     DEFAULTS: {
         'ai.model': 'gemini-2.5-flash',
+        'general.language': 'system',
         // Account defaults (WS-G): devices follow these unless overridden on
         // the Devices page. '' voice = the personality's own preferred voice.
         'ai.defaultPersonalityId': 'dashie',
