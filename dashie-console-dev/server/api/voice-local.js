@@ -213,6 +213,54 @@ function extractOptions(j) {
   return opts.length ? opts : null;
 }
 
+// POST /api/voice/preview  { url, voice, text? }  → audio/wav
+// "Hear this voice" behind the ▶ button on the Console's Voice row. Proxied for the same
+// reason the probe is: the Console is served over HTTPS (ingress) and the engine is a
+// plain-http LAN box, so the browser can't fetch it directly (mixed content). We fetch it
+// here and hand the audio back.
+//
+// Deliberately dumb: one short sentence, whatever engine is at `url`, WAV out. No caching —
+// a preview is a rare, user-initiated click, and a stale cache would be worse than the 300 ms.
+const PREVIEW_TEXT = "Hi, I'm your Dashie voice. Tomorrow looks sunny with a high of seventy five.";
+const PREVIEW_TIMEOUT_MS = 20000;   // a cold high-quality Piper voice can take a few seconds
+
+router.post('/preview', express.json(), async (req, res) => {
+  const { url, voice, text } = req.body || {};
+  if (!/^https?:\/\//i.test(String(url || ''))) {
+    return res.status(400).json({ error: 'bad_url', message: 'enter a full http:// URL (with port)' });
+  }
+  const base = String(url).replace(/\/+$/, '');
+  const ctl = new AbortController();
+  const timer = setTimeout(() => ctl.abort(), PREVIEW_TIMEOUT_MS);
+  try {
+    const upstream = await fetch(`${base}/v1/audio/speech`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      signal: ctl.signal,
+      body: JSON.stringify({
+        model: 'kokoro',                       // ignored by every server we support; Kokoro validates it
+        input: String(text || PREVIEW_TEXT).slice(0, 300),
+        voice: String(voice || ''),
+        response_format: 'wav',
+        speed: 1.0,
+      }),
+    });
+    clearTimeout(timer);
+    if (!upstream.ok) {
+      const detail = await upstream.text().catch(() => '');
+      return res.status(502).json({ error: 'engine_error', message: `HTTP ${upstream.status}`, detail: detail.slice(0, 200) });
+    }
+    const audio = Buffer.from(await upstream.arrayBuffer());
+    res.set('Content-Type', 'audio/wav');
+    res.set('Cache-Control', 'no-store');
+    return res.send(audio);
+  } catch (e) {
+    clearTimeout(timer);
+    const msg = e?.name === 'AbortError' ? 'the engine took too long' : (e?.cause?.code || e?.message || 'fetch failed');
+    return res.status(504).json({ error: 'unreachable', message: msg });
+  }
+});
+
 router.post('/probe', express.json(), async (req, res) => {
   const { url, kind } = req.body || {};
   if (!/^https?:\/\//i.test(String(url || ''))) {
