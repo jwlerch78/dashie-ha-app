@@ -4,7 +4,7 @@
    The voice-conversation brain core, bundled for the Node add-on (on-prem L3).
    ONE core, TWO runtimes: the cloud Deno edge fn runs the TS source directly;
    this CJS bundle is the add-on's copy of the SAME source. Never hand-edit.
-   Source git SHA: e4757e634ad83b77b80724cc7ce64853c31d12d6
+   Source git SHA: 6fc7f80882be457f85d5bf0c7abd2cfd6fde7684
    Regenerate:  node scripts/build-node-brain.mjs && ./sync-brain-bundle.sh
    Contract:    supabase/functions/voice-conversation/README.md + build plan §13.16
    ============================================================ */
@@ -29,6 +29,7 @@ var __toCommonJS = (mod) => __copyProps(__defProp({}, "__esModule", { value: tru
 // supabase/functions/voice-conversation/orchestrator.ts
 var orchestrator_exports = {};
 __export(orchestrator_exports, {
+  looksLikeSportsAsk: () => looksLikeSportsAsk,
   runOrchestration: () => runOrchestration,
   runSports: () => runSports,
   wantsGameDetail: () => wantsGameDetail
@@ -40,9 +41,7 @@ var BASE_CONTEXT = `# Base Context
 
 You are generating responses for a voice-controlled family assistant. Your output will be spoken aloud directly to the user.
 
-You are Dashie \u2014 the voice assistant built into Dashie, a smart home dashboard for families. Dashie runs on wall-mounted tablets, TVs, and web browsers and turns a screen into a shared family hub: a customizable widget dashboard (calendar, photos, weather, clock, chores and rewards), a photo screensaver, timers, a "Hey Dashie" voice assistant, and Home Assistant integration for smart-home control.
-
-If the user asks who or what you are, or about Dashie in general ("tell me about yourself", "what is Dashie", "what can you do"), answer directly from the description above in one or two friendly sentences \u2014 do NOT call a tool or search the web for it. You are Dashie: never describe yourself as a large language model and never name an underlying AI model or provider. For detailed questions about Dashie's settings, how-to steps, or troubleshooting, use the dashie_help tool if it is offered. Never web-search questions about Dashie itself, and never guess about settings locations or prices \u2014 if you cannot find the answer, say so and suggest emailing support@dashieapp.com (that exact address).
+You are Dashie, the voice assistant for a family dashboard \u2014 calendar, photos, weather, chores, timers, and smart-home control. If the user asks who or what you are or what you can do, answer directly in one or two friendly sentences \u2014 do NOT call a tool or search the web. Never describe yourself as a large language model and never name an underlying AI model or provider. For questions about Dashie's settings, how-to steps, or troubleshooting, use the dashie_help tool if it is offered. Never web-search questions about Dashie itself, and never guess about settings, features, or prices \u2014 if you can't answer, say so and suggest emailing support@dashieapp.com (that exact address).
 
 Current date and time: {{DATE_TIME}}
 
@@ -1421,8 +1420,14 @@ Sports results (live from the sports provider):
   is absent, just give the score.
 - If there are multiple games, summarize the most relevant one (the team the user
   asked about) in the voice; put extra games in the text field.
-- If the results are empty or don't contain the game asked about, say you
-  couldn't find that game \u2014 do NOT invent a score or scorers.
+- If the results are EMPTY (no game in the window we checked), use your Google Search
+  to find the real answer, and give the ACTUAL date AND local start time \u2014 e.g. "They
+  don't play today; their next game is Thursday at 7:10 PM." Convert to the user's local
+  timezone and say the day plus the clock time; never answer with just a day, a vague
+  "later this week", or a time in another timezone. If the results are non-empty but
+  don't contain the game asked about, say you couldn't find that game.
+- NEVER invent a score, a scorer, or a kickoff time \u2014 a searched answer must come from
+  the search, not from memory.
 - Keep the spoken \`voice\` answer under 25 words and natural to hear aloud.
 `;
 var INQUIRY_DASHIE_HELP = `# Inquiry Context: Dashie Product Help
@@ -1467,19 +1472,21 @@ about Dashie: answer from it, never from your general knowledge or the web.
 Provide a helpful, spoken-friendly response based only on this documentation.
 `;
 var AVAILABLE_TOOLS_LIST = `- calendar_events: query: {time_range: "today|tomorrow|this_week|next_week|weekend|next_weekend|next_30_days|next_60_days|next_12_months|date_range|<weekday e.g. wednesday for that specific day>", start_date?: "YYYY-MM-DD", end_date?: "YYYY-MM-DD", member_name?: "name (for a specific person)", query?: "keyword to find ONE specific event e.g. physical therapy (for "what time is X")", tags?: ["soccer"], mode?: "next|list"} - Family calendar events. Set member_name when the question is about one person; use "weekend" for "this weekend" and "next_weekend" for "next weekend"; use mode "next" for a single upcoming event ("when is the next game"), "list" (default) for an overview ("what's on this weekend"). For a NAMED month or explicit period ("in December", "the week of the 20th") use time_range "date_range" WITH start_date + end_date covering it (a named month = its NEXT occurrence). For "when is X" with NO period named ("when is Veeva Break"), use query + mode "next" + time_range "next_12_months" so the search can't miss a far-out event
+- calendar_write: query: {action: "create|update|delete|confirm|cancel", title?: "event title (create) or the NEW title (update)", date?: "YYYY-MM-DD (create, or the NEW day on update)", start_time?: "HH:MM 24h", end_time?: "HH:MM 24h", all_day?: true, location?: "place", description?: "details", calendar_name?: "which calendar \u2014 when the user names one OR answers the which-calendar question", calendar_names?: ["Dad work","Mom"] (when they name MORE THAN ONE calendar \u2014 "add it to Dad and Mom's calendars"), match_query?: "words identifying the EXISTING event (update/delete), e.g. dentist", match_date?: "YYYY-MM-DD the existing event is on, if the user named its day", scope?: "all (ONLY when they say the whole series/all of them; default is just that one)"} - CHANGE the family calendar: action "create" to add ("add/put/schedule X on the calendar", "can you add an event\u2026"), "update" to change an existing event ("move/change/reschedule/rename my dentist appointment"), "delete" to remove one ("cancel/delete/remove my dentist appointment" \u2014 cancelling an APPOINTMENT/EVENT is a delete, not a conversation-cancel). Emit the action IMMEDIATELY with whatever the user actually said \u2014 every field is optional (a bare "add an event to dad's calendar" is a valid create with ONLY calendar_name); the DEVICE walks the user through anything missing (what to add, day and time, which calendar, which event) and ALWAYS asks for confirmation before touching the calendar. NEVER invent a field, NEVER ask your own follow-up questions for this tool \u2014 call it and let the device ask. For update/delete identify the existing event in match_query (+ match_date if they named its day) and put ONLY the changes in the top-level fields ("move the dentist to 4pm" = match_query "dentist" + start_time "16:00"). Dates are ABSOLUTE from the current date in your context ("Friday" = a real YYYY-MM-DD; "Friday at 8am" = date + start_time together). Omit end_time unless stated (defaults to one hour / the event's current length; "two hours" = end_time is start plus that). When the user answers a device question, re-emit the SAME action carrying the newly answered field(s) (the device remembers the rest); AFTER the device asks its confirmation question, ANY yes ("yes", "yep", "do it", "go ahead", "delete it") = action "confirm" \u2014 NEVER re-send create/update/delete at that point unless the user CHANGED a detail ("make it two hours" = re-emit the action with the corrected field); "no"/"never mind" there = action "cancel". NOT for reading the calendar (calendar_events), NOT for reminders/timers (schedule_action)
 - family_members: query: {} - Info about family members (age, relationship, etc.)
 - web_search: query: "search string" - Current events, news, external info (IMPORTANT: query is a STRING)
 - chores: query: {hint: "task description", member_hint: "name"} - When someone reports completing a chore
 - rewards: query: {} - Rewards catalog and redemption status
-- schedule_action: query: {time: "HH:MM" (24h local, for a clock time) OR delay_minutes: number (for a relative delay \u2014 "in 5 minutes" \u2192 5, "in 2 hours" \u2192 120), recurrence: "once"|"daily" (daily only valid with time), prompt: "instruction Dashie runs then, phrased as a user request", label: "short confirmation e.g. 'tell you a joke'"} - Schedule Dashie to do/check/say something LATER \u2014 at a clock time ("at 9:30 tonight tell me if the garage is open", "at 6am...") or after a relative delay ("in 5 minutes tell me a joke", "in 2 hours check the pool"). NOT for plain "remind me <text>" reminders (handled elsewhere) or sensor thresholds.
+- schedule_action: query: {time: "HH:MM" (24h local) OR delay_minutes: number, recurrence: "once"|"daily", kind: "command"|"prompt", prompt: "instruction Dashie runs then, as a user request", label: "short confirmation e.g. 'tell you a joke'"} - Use WHENEVER the request has a future time or delay attached, even for things you could answer now: "tell me a joke in 5 minutes", "in 2 hours check the pool", "turn the porch light off at 9:30", "at 6am read me the weather". The delay/time means DEFER \u2014 do NOT answer/act now, schedule it. Set kind="command" when the deferred thing is a smart-home CONTROL action (turn on/off, lock, open \u2014 Dashie issues it directly at that time); kind="prompt" for anything Dashie must think about or answer then (jokes, "tell me if the garage is open", weather). delay_minutes for "in N minutes/hours"; time for a clock time. recurrence defaults to "once" \u2014 a bare clock time ("at 6am read me the weather", "turn the porch light off at 9:30") is a ONE-SHOT; only use "daily" when the user EXPLICITLY asks for a repeat ("every night at 9pm", "each morning", "every day at 6am"). Never turn a one-off into a standing daily alarm. ("daily" requires time, never delay_minutes.) NOT for "remind me <text>" reminders or sensor thresholds.
 - location_events: query: {member_name: "Mary", location_name: "home", timeframe: "today|yesterday|last_night", event_type: "arrive|depart"} - Arrival/departure history
 - travel_time: query: {event_title: "game", member_name: "Jack"} - When to leave for an event
 - family_locations: query: {member_name: "Mary"} - Current GPS location ("where is X right now?")
 - weather_data: query: {timeframe: "current|today|tonight|weekend|this_week|<weekday e.g. saturday>", location?: "city or place, ONLY if the user names one \u2014 omit for the family's home location"} - Current conditions or forecast. Use timeframe to capture what they asked ("right now" \u2192 current, "this weekend" \u2192 weekend, "will it rain today" \u2192 today)
-- home_assistant: query: {command_hint: "transcript"} - Smart home control (lights, thermostat, garage, etc.)
-- sports: query: {sport: "soccer|football|basketball|baseball|hockey", league: "nfl|nba|mlb|nhl|college-football|world-cup|premier-league|...", team: "team or country name", date: "YYYY-MM-DD (optional)", type: "score|schedule"} - Live game scores and schedules for a specific team/league (prefer over web_search for any game result, score, or upcoming game)
+- home_assistant: query: {command_hint: "transcript"} - Smart home control NOW (lights, thermostat, garage, etc.). If the request has a future time or delay ("turn the porch light off in 5 minutes", "turn on the lights at 9:30"), DO NOT use this \u2014 use schedule_action so it runs later, not now.
+- sports: query: {sport: "soccer|football|basketball|baseball|hockey", league: "nfl|nba|mlb|nhl|college-football|world-cup|premier-league|...", team: "team or country name", date: "YYYY-MM-DD (optional)", type: "score|schedule", list: true (for PLURAL "games")} - Live game scores and schedules. MANDATORY for ANY question about a game \u2014 score, result, who won, kickoff time, "what time is the game", who's playing, upcoming fixtures. NEVER answer a game question from your own knowledge or a web/Google search, not even one you are sure about: this tool is the ONLY source with the user's correct LOCAL time (a web answer comes back in the wrong timezone) and the ONLY way the scorecard appears on screen. Always emit an info_request for this tool instead of replying directly. Set list:true for any MULTI-game ask \u2014 "what games are on", "the NEXT games", "upcoming/today's World Cup games" (the plural "games" is the tell); leave it off for one team's score or "the next game" (singular)
 - get_current_time: query: {} - The CURRENT local date, time, and day of week. Call for "what time is it", "what's the date", "what day is it", AND to anchor any today/tomorrow/this-week/next reasoning. Authoritative \u2014 use it instead of your own clock, which is UTC and wrong for the user.
 - music: query: {action: "now_playing|search|play|pause|resume|stop|next|previous|volume_up|volume_down", query?: "song/artist/album text (for search or play)", uri?: "exact uri from a prior search result (for play)", speaker?: "speaker name, ONLY if the user names one"} - Music: what's playing now (action "now_playing" \u2014 "what song is this", "who sings this"), find music ("search" \u2014 returns matches to disambiguate), play it ("play" with the chosen uri, or a query), and transport \u2014 "stop the music"\u2192stop, "pause"\u2192pause, "turn it up/down"\u2192volume_up/volume_down, "next/skip"\u2192next. NEVER use "search" for a transport phrase
+- video_feeds: query: {action: "show|hide|show_all|hide_all|playback", camera?: "the camera name the user said, e.g. \\"pool\\" or \\"front door\\"", time?: "for playback ONLY \u2014 the user's own words for WHEN, e.g. \\"10 minutes ago\\", \\"at 10:30pm\\", \\"last night\\""} - Cameras: show a live feed ("show" + camera), hide it ("hide"), all of them ("show_all"/"hide_all"), or play back RECORDED footage from a past moment ("playback" + camera + time \u2014 "what happened at the front door around 3pm", "show me the pool camera 10 minutes ago"). Pass the user's own words through as "time" \u2014 the device resolves them in its own timezone. Use "show" (live) when no past time is mentioned
 - dashie_help: query: {question: "the user's question"} - Detailed help on Dashie ITSELF: settings and where to find them, how-to steps, troubleshooting ("how do I add a calendar", "where do I change the theme", "why is my screen black"). Do NOT use for who/what-are-you or general "about Dashie" questions \u2014 answer those directly from your identity context. Never web_search Dashie product questions`;
 function fillTemplate(template, values) {
   return template.replace(/\{\{(\w+)\}\}/g, (_match, key) => {
@@ -1620,8 +1627,18 @@ function languageNameFor(code) {
     // deno-lint-ignore no-explicit-any
   }[code] || code;
 }
+var DEVICE_ONLY_TOOLS = ["music", "video_feeds"];
 function toolsListFor(context) {
-  return context.webSearchEnabled === false ? AVAILABLE_TOOLS_LIST.split("\n").filter((l) => !l.trimStart().startsWith("- web_search:")).join("\n") : AVAILABLE_TOOLS_LIST;
+  const drop = [];
+  if (context.webSearchEnabled === false) drop.push("- web_search:");
+  if (context.announcement === true) drop.push("- schedule_action:");
+  if (Array.isArray(context.clientTools)) {
+    for (const tool of DEVICE_ONLY_TOOLS) {
+      if (!context.clientTools.includes(tool)) drop.push(`- ${tool}:`);
+    }
+  }
+  if (drop.length === 0) return AVAILABLE_TOOLS_LIST;
+  return AVAILABLE_TOOLS_LIST.split("\n").filter((l) => !drop.some((d) => l.trimStart().startsWith(d))).join("\n");
 }
 function offeredToolNames(context) {
   const names = [];
@@ -2025,12 +2042,20 @@ var END_INTENT_PHRASES = [
   "that's enough"
 ];
 var HARD_STOP_PHRASES = ["shut up", "stop talking"];
+var TRAILING_CLOSE_PHRASES = [
+  "thanks",
+  "thank you",
+  "that's all",
+  "thats all",
+  "goodbye"
+];
 var normalize = (t) => (t || "").toLowerCase().replace(/[.!?,]+/g, " ").replace(/\s+/g, " ").trim();
 function isEndIntent(text) {
   const t = normalize(text);
   if (!t) return false;
   if (END_INTENT_PHRASES.includes(t)) return true;
-  return HARD_STOP_PHRASES.some((p) => t.includes(p));
+  if (HARD_STOP_PHRASES.some((p) => t.includes(p))) return true;
+  return TRAILING_CLOSE_PHRASES.some((p) => t === p || t.endsWith(` ${p}`));
 }
 function isMissReply(voice) {
   return !!voice && /\bdidn.?t (?:quite )?catch that\b/i.test(voice);
@@ -2453,7 +2478,7 @@ function templateSports(result, query, opts) {
   const games = Array.isArray(result?.games) ? result.games : [];
   const team = String(query?.team ?? "").toLowerCase();
   const when = resolveWhen(query);
-  if (!team && !when) {
+  if (!team && !when && games.length !== 1) {
     return { voice: "", text: null, structured_data: null, fallback: true };
   }
   if (games.length === 0) {
@@ -3523,15 +3548,44 @@ var GAME_DETAIL_RE = /\b(summar(?:y|ize|ise)|recap|rundown|breakdown|break it do
 function wantsGameDetail(text) {
   return !!text && GAME_DETAIL_RE.test(text);
 }
+var SPORTS_ASK_RE = new RegExp(
+  "\\b(world cup|fifa|nfl|nba|mlb|nhl|wnba|mls|premier league|champions league|la liga|bundesliga|serie a|super bowl|world series|stanley cup|march madness|college (?:football|basketball)|score|scores|scored|who won|final score|standings|shut ?out|games?|match(?:es|up)?|kick ?off|innings?|semifinals?|quarterfinals?)\\b",
+  "i"
+);
+var SPORTS_RESULT_RE = /\bdid\b[^?]{0,32}\b(win|won|lose|lost|beat)\b/i;
+var SPORTS_SCHEDULE_RE = /\b(?:when|what time)\b[^?]{0,32}\bplay(?:s|ing)?\b/i;
+function looksLikeSportsAsk(text) {
+  const t = text || "";
+  return !!t && (SPORTS_ASK_RE.test(t) || SPORTS_RESULT_RE.test(t) || SPORTS_SCHEDULE_RE.test(t));
+}
 var TOOL_STATUS = {
-  web_search: "Searching the web\u2026",
-  sports: "Checking the score\u2026",
-  home_assistant: "Asking Home Assistant\u2026",
-  calendar_events: "Checking your calendar\u2026",
-  weather_data: "Checking the weather\u2026"
+  web_search: "Searching the web",
+  sports: "Checking the score",
+  home_assistant: "Asking Home Assistant",
+  calendar_events: "Checking your calendar",
+  weather_data: "Checking the weather",
+  // A tool with no entry here falls back to 'Looking that up' — which is actively WRONG for a
+  // tool that DOES something rather than looks something up. "turn the lights on in 5 minutes"
+  // showed "Looking that up" while it was scheduling (John, 2026-07-13).
+  schedule_action: "Setting that up"
 };
-function statusForTool(tool) {
-  return TOOL_STATUS[tool] || "Looking that up\u2026";
+var CALENDAR_WRITE_STATUS = {
+  create: "Adding that to your calendar",
+  update: "Updating your calendar",
+  delete: "Removing that from your calendar"
+};
+function statusForTool(tool, query) {
+  if (tool === "sports") {
+    const q = query ?? {};
+    const w = String(q.when ?? "").toLowerCase();
+    const t = String(q.type ?? "").toLowerCase();
+    if (w === "next" || w === "upcoming" || t === "schedule" || q.list === true) return "Checking the schedule";
+  }
+  if (tool === "calendar_write") {
+    const a = String((query ?? {}).action ?? "").toLowerCase();
+    return CALENDAR_WRITE_STATUS[a] || "Updating your calendar";
+  }
+  return TOOL_STATUS[tool] || "Looking that up";
 }
 function callerFulfills(req, tool) {
   const list = req.client_fulfilled_tools;
@@ -3604,13 +3658,17 @@ async function orchestrate(deps, io, voiceCtx) {
     // caller stores text HA-locally
     userText: req.text
   };
-  const geminiGrounds = provider === "gemini" && webSearchAllowed;
+  const deviceFulfilledRetain = () => retainFields(retain.serverPersist, retain.userText, "", null);
+  const groundingAvailable = provider === "gemini" && webSearchAllowed;
+  const geminiGrounds = groundingAvailable && !looksLikeSportsAsk(req.text);
   const promptWebSearch = webSearchAllowed && !geminiGrounds;
+  const isAnnouncement = req.announcement === true;
+  const clientTools = req.client_fulfilled_tools;
   const caps = {
     web_search: webSearchAllowed,
     retrieve_pictures: retrievePictures,
     grounding: geminiGrounds,
-    tools: offeredToolNames({ webSearchEnabled: promptWebSearch })
+    tools: offeredToolNames({ webSearchEnabled: promptWebSearch, announcement: isAnnouncement, clientTools })
   };
   const context = {
     customPersonalityConfig: personality,
@@ -3619,6 +3677,9 @@ async function orchestrate(deps, io, voiceCtx) {
     timezone: req.timezone,
     // client IANA zone → correct "today" in the prompt (server is UTC)
     webSearchEnabled: promptWebSearch,
+    announcement: isAnnouncement,
+    clientTools,
+    // → toolsListFor drops device-only tools this caller can't fulfill
     // false → buildPrompt appends the image-unavailable instruction so the model can't
     // claim to show a picture the enrichment layer will drop.
     retrievePicturesEnabled: retrievePictures,
@@ -3641,7 +3702,7 @@ async function orchestrate(deps, io, voiceCtx) {
     tool: "web_search",
     query: req.text,
     context: `forced web_search (mutable entity: ${forced})`,
-    processing_message: "Looking that up\u2026"
+    processing_message: "Looking that up"
   }) : null;
   const pass1 = forcedContent ? { ok: true, latency_ms: 0, raw: { content: forcedContent, usage: { input_tokens: 0, output_tokens: 0, total_tokens: 0 } } } : await io.callGateway({ provider, prompt: p1Prompt, modelId, grounding: geminiGrounds });
   if (!pass1.ok || !pass1.raw) {
@@ -3653,7 +3714,7 @@ async function orchestrate(deps, io, voiceCtx) {
   const turnMeta = toolMeta(p1Parsed, route, caps);
   deps.onStage?.({ stage: "routed", route, elapsed_ms: Date.now() - t0 });
   if (p1Parsed?.type === "info_request" && p1Parsed.tool) {
-    deps.onStage?.({ stage: "fetching", tool: p1Parsed.tool, status: statusForTool(p1Parsed.tool), elapsed_ms: Date.now() - t0 });
+    deps.onStage?.({ stage: "fetching", tool: p1Parsed.tool, status: statusForTool(p1Parsed.tool, p1Parsed.query), elapsed_ms: Date.now() - t0 });
   }
   if (!p1Parsed && /^\s*(```[a-z]*\s*)?[{[]/i.test(pass1.raw.content || "")) {
     const clarifyVoice = "Sorry, I didn't quite catch that \u2014 could you say it again?";
@@ -3772,12 +3833,17 @@ async function orchestrate(deps, io, voiceCtx) {
     await logPass(io, token, REQUEST_TYPE, req.endpoint_id, sessionId, p1Prompt, pass1);
     const sportsQuery = typeof p1Parsed.query === "object" && p1Parsed.query ? p1Parsed.query : { team: req.text };
     if (req.timezone && sportsQuery.tz == null) sportsQuery.tz = req.timezone;
-    if (!String(sportsQuery.team ?? "").trim()) {
-      const w = String(sportsQuery.when ?? "").toLowerCase();
-      if (w && w !== "date") delete sportsQuery.when;
+    {
+      const t = String(sportsQuery.type ?? "").toLowerCase();
+      if (sportsQuery.when == null && t === "schedule") sportsQuery.when = "next";
+      if (sportsQuery.when == null && t === "score") sportsQuery.when = "last";
       delete sportsQuery.type;
       if (/\d{4}-\d{2}-\d{2}/.test(String(sportsQuery.date ?? ""))) sportsQuery.when = "date";
     }
+    const teamless = !String(sportsQuery.team ?? "").trim();
+    const wantsSlate = sportsQuery.list === true || teamless && sportsQuery.when == null;
+    if (wantsSlate) sportsQuery.list = true;
+    else if (teamless && sportsQuery.when == null) sportsQuery.when = "next";
     const tFetch = Date.now();
     let sports;
     try {
@@ -3798,11 +3864,14 @@ async function orchestrate(deps, io, voiceCtx) {
       latency_ms: sports?.latency ?? fetchStage.latency_ms,
       success: true
     });
+    if ((sports?.games?.length || 0) === 0 && groundingAvailable) {
+      return await secondPass(io, deps, t0, "sports", sports, [p1Stage, fetchStage], pass1, provider, modelId, context, sessionId, retain, route, true);
+    }
     if (wantsGameDetail(req.text) && (sports?.games?.length || 0) > 0) {
       return await secondPass(io, deps, t0, "sports", sports, [p1Stage, fetchStage], pass1, provider, modelId, context, sessionId, retain, route);
     }
     const synth = templateSports(sports, sportsQuery, { timezone: req.timezone });
-    if (synth.fallback) {
+    if ((wantsSlate || synth.fallback) && (sports?.games?.length ?? 0) !== 1) {
       const slate = templateSlate(sports, sportsQuery, { timezone: req.timezone });
       if (slate.structured_data) {
         const parsedSlate = { type: "response", voice: slate.voice, text: null, action: null };
@@ -3868,7 +3937,7 @@ async function orchestrate(deps, io, voiceCtx) {
     });
   }
   if (p1Parsed.type === "info_request" && p1Parsed.tool === "calendar_events") {
-    await logPass(io, token, REQUEST_TYPE, req.endpoint_id, sessionId, p1Prompt, pass1, {}, turnMeta);
+    await logPass(io, token, REQUEST_TYPE, req.endpoint_id, sessionId, p1Prompt, pass1, deviceFulfilledRetain(), turnMeta);
     return finalize({
       t0,
       parsed: p1Parsed,
@@ -3881,8 +3950,49 @@ async function orchestrate(deps, io, voiceCtx) {
       route
     });
   }
+  if (p1Parsed.type === "info_request" && p1Parsed.tool === "calendar_write") {
+    const caps2 = req.client_fulfilled_tools;
+    if (!Array.isArray(caps2) || !caps2.includes("calendar_write")) {
+      const declineVoice = "I can read the calendar here, but I can't make calendar changes from this device yet.";
+      const decline = { type: "response", voice: declineVoice, text: null, action: null };
+      await logPass(
+        io,
+        token,
+        REQUEST_TYPE,
+        req.endpoint_id,
+        sessionId,
+        p1Prompt,
+        pass1,
+        retainFields(retain.serverPersist, retain.userText, declineVoice, null),
+        turnMeta
+      );
+      return finalize({
+        t0,
+        parsed: decline,
+        raw: pass1.raw,
+        stages: [p1Stage],
+        usage: pass1.raw.usage,
+        latency: pass1.latency_ms,
+        retain,
+        sessionId,
+        route
+      });
+    }
+    await logPass(io, token, REQUEST_TYPE, req.endpoint_id, sessionId, p1Prompt, pass1, deviceFulfilledRetain(), turnMeta);
+    return finalize({
+      t0,
+      parsed: p1Parsed,
+      raw: pass1.raw,
+      stages: [p1Stage],
+      usage: pass1.raw.usage,
+      latency: pass1.latency_ms,
+      client_tool: { tool: "calendar_write", query: p1Parsed.query },
+      sessionId,
+      route
+    });
+  }
   if (p1Parsed.type === "info_request" && p1Parsed.tool === "music") {
-    await logPass(io, token, REQUEST_TYPE, req.endpoint_id, sessionId, p1Prompt, pass1, {}, turnMeta);
+    await logPass(io, token, REQUEST_TYPE, req.endpoint_id, sessionId, p1Prompt, pass1, deviceFulfilledRetain(), turnMeta);
     return finalize({
       t0,
       parsed: p1Parsed,
@@ -3895,8 +4005,22 @@ async function orchestrate(deps, io, voiceCtx) {
       route
     });
   }
+  if (p1Parsed.type === "info_request" && p1Parsed.tool === "video_feeds") {
+    await logPass(io, token, REQUEST_TYPE, req.endpoint_id, sessionId, p1Prompt, pass1, deviceFulfilledRetain(), turnMeta);
+    return finalize({
+      t0,
+      parsed: p1Parsed,
+      raw: pass1.raw,
+      stages: [p1Stage],
+      usage: pass1.raw.usage,
+      latency: pass1.latency_ms,
+      client_tool: { tool: "video_feeds", query: p1Parsed.query },
+      sessionId,
+      route
+    });
+  }
   if (p1Parsed.type === "info_request" && p1Parsed.tool === "schedule_action") {
-    await logPass(io, token, REQUEST_TYPE, req.endpoint_id, sessionId, p1Prompt, pass1, {}, turnMeta);
+    await logPass(io, token, REQUEST_TYPE, req.endpoint_id, sessionId, p1Prompt, pass1, deviceFulfilledRetain(), turnMeta);
     return finalize({
       t0,
       parsed: p1Parsed,
@@ -3953,7 +4077,7 @@ async function orchestrate(deps, io, voiceCtx) {
         route
       });
     }
-    await logPass(io, token, REQUEST_TYPE, req.endpoint_id, sessionId, p1Prompt, pass1, {}, turnMeta);
+    await logPass(io, token, REQUEST_TYPE, req.endpoint_id, sessionId, p1Prompt, pass1, deviceFulfilledRetain(), turnMeta);
     return finalize({
       t0,
       parsed: p1Parsed,
@@ -4029,7 +4153,7 @@ function routeOf(parsed) {
 }
 async function secondPass(io, deps, t0, inquiryType, retrievedData, priorStages, pass1, provider, modelId, context, sessionId, retain, route, grounding = false) {
   const prompt = buildPrompt({ userRequest: deps.req.text, inquiryType, retrievedData, context });
-  deps.onStage?.({ stage: "synthesizing", status: "Finalizing\u2026", elapsed_ms: Date.now() - t0 });
+  deps.onStage?.({ stage: "synthesizing", status: "Finalizing", elapsed_ms: Date.now() - t0 });
   const pass2 = await io.callGateway({ provider, prompt, modelId, grounding });
   if (!pass2.ok || !pass2.raw) {
     return errorTurn(t0, pass2, [...priorStages, stageErr("pass2", pass2)]);
@@ -4229,7 +4353,9 @@ async function logPass(io, token, requestType, endpointId, sessionId, prompt, pa
   const usage = pass.raw?.usage || {};
   const trace = meta.tool_trace;
   const logMeta = trace && trace.args != null ? { ...meta, tool_trace: { ...trace, args: await redactToolArgs(trace.args) } } : meta;
+  const parsedOk = pass.raw?.provider === "template" ? null : !!parseContent(pass.raw?.content ?? "");
   await io.logInteraction(token, {
+    parsed_ok: parsedOk,
     session_id: sessionId,
     request_type: requestType,
     request_length: prompt.length,
@@ -4253,8 +4379,9 @@ function toolMeta(parsed, route, caps) {
 }
 // Annotate the CommonJS export names for ESM import in node:
 0 && (module.exports = {
+  looksLikeSportsAsk,
   runOrchestration,
   runSports,
   wantsGameDetail
 });
-module.exports.BRAIN_SOURCE_SHA = "e4757e634ad83b77b80724cc7ce64853c31d12d6";
+module.exports.BRAIN_SOURCE_SHA = "6fc7f80882be457f85d5bf0c7abd2cfd6fde7684";
