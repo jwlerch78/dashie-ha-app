@@ -26,6 +26,8 @@ const LocalEnginesPage = {
     _editing: null,       // the engine draft being added/edited: {id?, name, kind, url, model}
     _probe: null,         // { state: 'idle'|'probing'|'ok'|'fail', detail, options[] } for the draft URL
     _busy: false,         // save/delete in flight
+    _scanning: false,     // a network scan is in flight
+    _scan: null,          // last scan result: { subnet, source, engines[], sources[] } | { error }
 
     topBarTitle() { return 'Local Engines'; },
     topBarSubtitle() { return ''; },
@@ -53,6 +55,67 @@ const LocalEnginesPage = {
         this._editing = { id: null, name: '', kind, url: '', model: '' };
         this._probe = null;
         App.renderPage();
+    },
+
+    // ── network scan ─────────────────────────────────────────
+
+    /** Scan the household LAN for known engines (Ollama, Kokoro, Piper, whisper.cpp, …).
+     *  USER-INITIATED — the add-on derives the subnet from HA/tablet IPs (never the browser,
+     *  which can't see the LAN) and sweeps it. Best-effort: a failure shows a message + the
+     *  manual-subnet fallback, never a dead end. */
+    async scan(subnetOverride) {
+        if (this._scanning) return;
+        this._scanning = true;
+        this._scan = null;
+        App.renderPage();
+        try {
+            const r = await fetch(DashieAuth._addonUrl('/api/voice/discover'), {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(subnetOverride ? { subnet: subnetOverride } : {}),
+            });
+            if (r.status === 404) { this._scan = { error: 'Update the Dashie add-on to scan for engines.' }; }
+            else {
+                const data = await r.json();
+                this._scan = data?.ok ? data : { error: data?.reason === 'no_subnet'
+                    ? "Couldn't work out your network automatically — enter it below."
+                    : (data?.reason || 'scan failed'), needSubnet: data?.reason === 'no_subnet' };
+            }
+        } catch (e) {
+            this._scan = { error: e?.message || String(e) };
+        }
+        this._scanning = false;
+        App.renderPage();
+    },
+
+    /** Manual-subnet fallback: read the field and rescan that /24. */
+    scanManual() {
+        const v = String(document.getElementById('scan-subnet')?.value || '').trim();
+        // Accept "192.168.1" or "192.168.1.0" or a full host IP — reduce to the /24 prefix.
+        const m = /^(\d+)\.(\d+)\.(\d+)/.exec(v);
+        if (!m) { Toast.error('Enter a network like 192.168.1'); return; }
+        this.scan(`${m[1]}.${m[2]}.${m[3]}`);
+    },
+
+    dismissScan() { this._scan = null; App.renderPage(); },
+
+    /** Add a discovered engine → prefill the editor (name from the engine + host, kind + URL
+     *  already known). The user confirms/renames and saves — we never write silently. */
+    addFound(idx) {
+        const found = (this._scan?.engines || [])[idx];
+        if (!found) return;
+        const label = found.engine.replace(/\s*\(.*\)$/, '');   // "Whisper (whisper.cpp)" → "Whisper"
+        this._editing = {
+            id: null,
+            name: `${label} (${found.host})`,
+            kind: found.kind,
+            url: found.url,
+            model: found.kind === 'llm' ? (found.models?.[0] || '') : '',
+        };
+        this._probe = null;
+        this._scan = null;
+        App.renderPage();
+        if (found.url) this.probeDraft();   // fills the model/voice dropdown from the box
     },
 
     /** Engine type is a dropdown in the editor (one "Add engine" button, not three) —
@@ -223,11 +286,83 @@ const LocalEnginesPage = {
                         can switch between them without re-typing an address. They're free to run and
                         nothing leaves your network.
                     </div>
-                    <button class="btn btn-primary btn-sm" style="flex-shrink: 0;"
-                        onclick="LocalEnginesPage.add()"${this._editing ? ' disabled' : ''}>+ Add engine</button>
+                    <div style="display: flex; gap: 8px; flex-shrink: 0;">
+                        <button class="btn btn-secondary btn-sm"
+                            onclick="LocalEnginesPage.scan()"${this._editing || this._scanning ? ' disabled' : ''}>${this._scanning ? 'Scanning…' : 'Scan network'}</button>
+                        <button class="btn btn-primary btn-sm"
+                            onclick="LocalEnginesPage.add()"${this._editing ? ' disabled' : ''}>+ Add engine</button>
+                    </div>
                 </div>
+                ${this._renderScanResults()}
                 ${this._editing ? this._renderEditor() : ''}
                 ${EnginesStore.KINDS.map(k => this._renderKindSection(k)).join('')}
+            </div>`;
+    },
+
+    /** Results of the last "Scan network". Each discovered engine gets an Add button that
+     *  prefills the editor; anything already saved (same url+port) is shown as "Added". A
+     *  Wyoming hit isn't OpenAI-compatible → shown with its "configure via HA" note, no Add. */
+    _renderScanResults() {
+        if (this._scanning) {
+            return `<div class="card" style="margin-bottom: 16px;"><div class="card-body" style="color: var(--text-muted); font-size: 13px;">
+                Scanning your network for engines… this takes a few seconds.
+            </div></div>`;
+        }
+        const s = this._scan;
+        if (!s) return '';
+        if (s.error) {
+            const manual = s.needSubnet
+                ? `<div style="display: flex; gap: 8px; margin-top: 10px; align-items: center;">
+                       <input type="text" id="scan-subnet" placeholder="192.168.1" autocomplete="off"
+                           style="${this._inputStyle()} max-width: 200px;">
+                       <button class="btn btn-secondary btn-sm" onclick="LocalEnginesPage.scanManual()">Scan this network</button>
+                   </div>`
+                : '';
+            return `<div class="card" style="margin-bottom: 16px; border-left: 3px solid var(--status-error, #c00);"><div class="card-body">
+                <div style="font-size: 13px;">${this._escape(s.error)}</div>${manual}
+                <button class="btn btn-secondary btn-sm" style="margin-top: 10px;" onclick="LocalEnginesPage.dismissScan()">Dismiss</button>
+            </div></div>`;
+        }
+        const saved = new Set((this._engines || []).map(e => String(e.url || '').replace(/\/+$/, '')));
+        const rows = (s.engines || []).map((f, i) => this._renderFoundRow(f, i, saved)).join('');
+        const body = s.engines?.length
+            ? rows
+            : `<div style="color: var(--text-muted); font-size: 13px;">No engines found on <code>${this._escape(s.subnet)}.0/24</code>. If your box is elsewhere, add it manually.</div>`;
+        // How we picked the network — reassures the user we scanned the right one, and is the
+        // honest disclosure that we read HA/tablet IPs to find it.
+        const src = s.source === 'manual' ? `network <code>${this._escape(s.subnet)}.0/24</code> (entered)`
+            : `network <code>${this._escape(s.subnet)}.0/24</code>, from ${s.votes || 0} device${s.votes === 1 ? '' : 's'} on it`;
+        return `
+            <div class="card" style="margin-bottom: 16px; box-shadow: 0 0 0 2px var(--accent);"><div class="card-body">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+                    <span style="font-weight: 600;">Scan results</span>
+                    <button class="btn btn-secondary btn-sm" onclick="LocalEnginesPage.dismissScan()">Dismiss</button>
+                </div>
+                ${body}
+                <div style="font-size: 11px; color: var(--text-muted); margin-top: 10px;">Scanned ${src}. Nothing left your network.</div>
+            </div></div>`;
+    },
+
+    _renderFoundRow(f, i, saved) {
+        const O = window.VoiceAiOptions || {};
+        const green = (O.COLOR || {}).local || '#16a34a';
+        const already = saved.has(String(f.url || '').replace(/\/+$/, ''));
+        const detail = f.tcpOnly ? (f.note || '')
+            : (f.models?.length ? `${f.models.length} ${f.kind === 'llm' ? 'model' : 'voice'}${f.models.length === 1 ? '' : 's'}` : '');
+        const action = f.tcpOnly
+            ? `<span style="font-size: 11px; color: var(--text-muted); flex-shrink: 0;">via Home Assistant</span>`
+            : already
+                ? `<span style="font-size: 12px; color: ${green}; flex-shrink: 0;">✓ Added</span>`
+                : `<button class="btn btn-secondary btn-sm" style="flex-shrink: 0;" onclick="LocalEnginesPage.addFound(${i})">Add</button>`;
+        return `
+            <div style="display: flex; align-items: center; gap: 12px; padding: 10px 0; border-top: 1px solid var(--border, #eee);">
+                <div style="flex: 1; min-width: 0;">
+                    <div style="font-weight: 600; font-size: 14px;">${this._escape(f.engine)}
+                        <span style="font-size: 10px; font-weight: 700; text-transform: uppercase; color: ${green}; margin-left: 4px;">${this._escape(f.kind)}</span>
+                    </div>
+                    <div style="font-size: 12px; color: var(--text-muted); margin-top: 2px; font-family: ui-monospace, Menlo, monospace;">${this._escape(f.url)}${detail ? ` · ${this._escape(detail)}` : ''}</div>
+                </div>
+                ${action}
             </div>`;
     },
 

@@ -485,7 +485,33 @@ const VoiceAiPage = {
         // A saved engine REPLACES the inline local_url/local_stt_url row, so the stored
         // provider value has no matching row id — but it's a perfectly valid local
         // choice. Without this, switching preset would reseed over the user's engine.
-        const currentValid = has(current) || !!this._engineRowId(stageKey);
+        //
+        // ⚠️ But the engine only VALIDATES the current provider when the target preset
+        // actually permits a local engine — so test the engine's ROW against the same
+        // preset filter, don't just ask "does a saved engine exist?".
+        //
+        // Bug this fixes (2026-07-14): `!!this._engineRowId(stageKey)` is preset-blind —
+        // it asks EnginesStore whether a saved engine matches the current flat settings,
+        // full stop. Any household with a saved local engine therefore had currentValid
+        // === true under EVERY preset, so switching to Cloud hit the `if (currentValid)
+        // return` below and NEVER reseeded the providers. Flipping Hybrid → Cloud wrote
+        // pipelinePreset='cloud' + controlMethod='dashie_cloud' (and agentMode /
+        // alwaysOpenDialog / retrievePictures) while leaving sttProvider='local_stt_url'
+        // and ttsProvider='local_url' pointed at the user's own box.
+        //
+        // The result was a half-applied preset that every downstream surface then synced
+        // faithfully: the console card said "Cloud", the tablet's voice settings showed
+        // the old local providers, and the pipeline really did still run on the user's
+        // Whisper/Kokoro. It reads as "settings sync is stale" — but the sync was right;
+        // the account row itself was inconsistent. (Found on floridalerches, whose three
+        // saved engines made currentValid unconditionally true.)
+        //
+        // presetFilter drops locality:'local' rows under 'cloud', so has(engineRow) is
+        // false there → we now correctly reseed to dashie_cloud. Under hybrid/local/
+        // ha_assist the engine rows survive the filter, so behaviour is unchanged and the
+        // user's saved engine is still protected — which was the point of this hatch.
+        const engineRow = this._engineRowId(stageKey);
+        const currentValid = has(current) || (!!engineRow && has(engineRow));
         const hasHaEngine = has('ha_engine');
 
         if (presetId === 'hybrid') {
@@ -1349,7 +1375,12 @@ const VoiceAiPage = {
     _markKeyed(options) {
         const ks = this._keyStatus;
         if (!ks) return options;
-        return options.map(o => (o.provider && ks[o.provider]) ? { ...o, keyed: true } : o);
+        // An OpenRouter key covers EVERY model in the catalog (providers.js OPENROUTER_MODELS
+        // maps all 14, incl. claude-*/Nova) — so one key flips the whole picker to "API account",
+        // not just the rows whose vendor key is set. Rows without a `provider` (search sources,
+        // the local/hermes rows) are unaffected either way.
+        const universal = !!ks.openrouter;
+        return options.map(o => (o.provider && (ks[o.provider] || universal)) ? { ...o, keyed: true } : o);
     },
 
     /** Detection status + "Re-scan" for the engine-direct HA rows. Add-on mode

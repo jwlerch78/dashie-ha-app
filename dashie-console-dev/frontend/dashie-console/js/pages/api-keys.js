@@ -23,25 +23,35 @@ const ApiKeysPage = {
     _testResult: {},      // { providerId: { ok: true|false|null, detail } } — last validation
 
     /** AI/brain providers (v1). `fields` drive the form; single-key providers
-     *  use one masked input, Bedrock is multi-field. */
+     *  use one masked input, Bedrock is multi-field. `group` buckets the cards on
+     *  the page (see GROUPS): OpenRouter leads as the one-key-covers-everything
+     *  option, individual vendor keys are the "I already have one" path.  */
     PROVIDERS: [
         {
-            id: 'gemini', name: 'Google Gemini',
+            id: 'openrouter', name: 'OpenRouter', group: 'universal', recommended: true,
+            // One key → every model in the picker. OpenRouter proxies the whole catalog over an
+            // OpenAI-compatible endpoint, so it also covers Claude and Nova, which direct-key
+            // BYOK can't serve yet (they'd need the deferred Anthropic/SigV4 adapters).
+            help: 'API key from openrouter.ai. <strong>One key covers every model Dashie offers</strong> — Claude, GPT, Gemini and Nova — so you don’t need a separate account with each provider. Dashie prefers a direct provider key below when you have one.',
+            fields: [{ id: 'key', label: 'API key', placeholder: 'sk-or-v1-…', secret: true }],
+        },
+        {
+            id: 'gemini', name: 'Google Gemini', group: 'direct',
             help: 'API key from Google AI Studio (aistudio.google.com). Used for Gemini models.',
             fields: [{ id: 'key', label: 'API key', placeholder: 'AIza…', secret: true }],
         },
         {
-            id: 'claude', name: 'Anthropic Claude',
+            id: 'claude', name: 'Anthropic Claude', group: 'direct',
             help: 'API key from console.anthropic.com. Used for Claude models.',
             fields: [{ id: 'key', label: 'API key', placeholder: 'sk-ant-…', secret: true }],
         },
         {
-            id: 'openai', name: 'OpenAI',
+            id: 'openai', name: 'OpenAI', group: 'direct',
             help: 'API key from platform.openai.com. Used for GPT models.',
             fields: [{ id: 'key', label: 'API key', placeholder: 'sk-…', secret: true }],
         },
         {
-            id: 'bedrock', name: 'Amazon Bedrock',
+            id: 'bedrock', name: 'Amazon Bedrock', group: 'direct',
             help: 'AWS IAM credentials with Bedrock access. All three fields are required.',
             fields: [
                 { id: 'accessKeyId', label: 'Access key ID', placeholder: 'AKIA…', secret: true },
@@ -50,10 +60,20 @@ const ApiKeysPage = {
             ],
         },
         {
-            id: 'hermes', name: 'Hermes',
+            id: 'hermes', name: 'Hermes', group: 'selfhosted',
             help: 'API key for your self-hosted Hermes agent. Set its endpoint URL under Voice & AI → AI Model → “Hermes Agent”.',
             fields: [{ id: 'key', label: 'API key', placeholder: '', secret: true }],
         },
+    ],
+
+    /** Page sections, in render order. */
+    GROUPS: [
+        { id: 'universal', title: 'One key for every model',
+          blurb: 'The simplest way to bring your own AI — a single OpenRouter key unlocks the entire model list.' },
+        { id: 'direct', title: 'Or use a provider key directly',
+          blurb: 'Already have a key with one of these? Dashie will prefer it over OpenRouter for that provider’s models (no middleman markup).' },
+        { id: 'selfhosted', title: 'Self-hosted',
+          blurb: '' },
     ],
 
     /** Voice/search BYO keys are deferred (local Whisper/Piper already covers
@@ -112,8 +132,14 @@ const ApiKeysPage = {
                     account instead of Dashie credits. Keys are stored <strong>only on this Home
                     Assistant box</strong> — they never leave it and are never synced to Dashie Cloud.
                 </div>
-                <div class="section-header">AI providers</div>
-                ${this.PROVIDERS.map(p => this._renderProviderCard(p)).join('')}
+                ${this.GROUPS.map((g, i) => {
+                    const cards = this.PROVIDERS.filter(p => p.group === g.id);
+                    if (!cards.length) return '';
+                    return `
+                        <div class="section-header" ${i ? 'style="margin-top: 28px;"' : ''}>${this._escape(g.title)}</div>
+                        ${g.blurb ? `<div style="margin: -4px 0 12px; color: var(--text-muted); font-size: 13px; line-height: 1.5;">${g.blurb}</div>` : ''}
+                        ${cards.map(p => this._renderProviderCard(p)).join('')}`;
+                }).join('')}
                 <div class="section-header" style="margin-top: 28px;">Coming later</div>
                 <div class="card"><div class="card-body" style="color: var(--text-muted); font-size: 13px; line-height: 1.6;">
                     ${this.COMING_SOON.join(' · ')} — bring-your-own voice/search keys are planned.
@@ -144,7 +170,10 @@ const ApiKeysPage = {
         return `
             <div class="card" style="margin-bottom: 12px;"><div class="card-body">
                 <div style="display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 6px;">
-                    <div style="font-weight: 600;">${this._escape(p.name)}</div>
+                    <div style="font-weight: 600; display: flex; align-items: center; gap: 8px;">
+                        ${this._escape(p.name)}
+                        ${p.recommended ? `<span style="font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.4px; color: #fff; background: var(--accent); border-radius: 9px; padding: 2px 8px;">Simplest</span>` : ''}
+                    </div>
                     ${pill}
                 </div>
                 <div style="color: var(--text-secondary); font-size: 13px; line-height: 1.5; margin-bottom: 12px;">${p.help}</div>
