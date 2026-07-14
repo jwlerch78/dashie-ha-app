@@ -761,10 +761,86 @@ const VoiceAiPage = {
         }
     },
 
+    /**
+     * D6 (Kiosk Real Login) — turning sharing OFF must actually sign the kiosks out.
+     *
+     * Household sharing is the switch that let a LAN tablet authorize ITSELF into this account
+     * (silently, with no human at the tablet). Before Kiosk Real Login, flipping it off starved
+     * the kiosks within one probe cycle, so "off" meant off.
+     *
+     * Now a provisioned kiosk holds a REAL 72h session. Blocking new provisioning no longer
+     * revokes the existing ones — so without this, "off" would silently mean "no NEW kiosks",
+     * and the tablets already on the account would keep working for up to three days. That is
+     * exactly the invisible trust D1 set out to avoid, and the native kiosk Settings page tells
+     * users this toggle is how to disconnect.
+     *
+     * So: sharing-off removes every `ha_kiosk` device row. The server's refresh check (D5) then
+     * kills each session at its next refresh — worst case the token's remaining TTL.
+     *
+     * Only kiosks. A phone/TV/tablet the user deliberately signed in is untouched.
+     */
+    async _signOutKiosksOnSharingOff() {
+        let kiosks = [];
+        try {
+            const res = await DashieAuth.dbRequest('list_devices', {});
+            const devices = res?.devices || res || [];
+            kiosks = (Array.isArray(devices) ? devices : []).filter(d => d?.device_type === 'ha_kiosk');
+        } catch (e) {
+            console.warn('[VoiceAiPage] could not list devices to sign kiosks out:', e.message);
+            return 0;
+        }
+        if (!kiosks.length) return 0;
+
+        let removed = 0;
+        for (const k of kiosks) {
+            try {
+                // hard_delete: the row must be GONE, not just is_active=false — D5's refresh check
+                // looks the device_id up in user_devices, so a soft-deleted row would still
+                // resolve and the session would keep renewing.
+                await DashieAuth.dbRequest('delete_device', { device_id: k.device_id, hard_delete: true });
+                removed++;
+            } catch (e) {
+                console.warn(`[VoiceAiPage] could not remove kiosk ${k.device_id}:`, e.message);
+            }
+        }
+        return removed;
+    },
+
     async toggleHouseholdSharing(enabled) {
         try {
+            // D6: warn BEFORE flipping — the user is about to sign tablets out of the account.
+            if (!enabled) {
+                let count = 0;
+                try {
+                    const res = await DashieAuth.dbRequest('list_devices', {});
+                    const devices = res?.devices || res || [];
+                    count = (Array.isArray(devices) ? devices : [])
+                        .filter(d => d?.device_type === 'ha_kiosk').length;
+                } catch { /* non-fatal — fall through to a generic confirm */ }
+                if (count > 0) {
+                    const ok = confirm(
+                        `Turn off Household Sharing?\n\n` +
+                        `${count} Home Assistant kiosk ${count === 1 ? 'tablet' : 'tablets'} will be ` +
+                        `signed out of this account. ${count === 1 ? 'It' : 'They'} will keep showing ` +
+                        `Home Assistant, but will lose access to your calendars, chores and Dashie voice.\n\n` +
+                        `Turning sharing back on lets ${count === 1 ? 'it' : 'them'} re-authorize automatically.`
+                    );
+                    if (!ok) { App.renderPage(); return; }
+                }
+            }
+
             // ACCOUNT-scoped: the console owns settings writes (serialized patchUserSetting).
             await this.saveDefault('voice.householdSharing', enabled);
+
+            // D6: now actually sign the kiosks out. Order matters — sharing is already false, so
+            // a tablet that re-provisions in this window is refused by jwt-auth's sharing gate
+            // (the authoritative one) rather than racing us back onto the account.
+            if (!enabled) {
+                const removed = await this._signOutKiosksOnSharingOff();
+                if (removed > 0) {
+                    Toast.success(`Sharing off — ${removed} kiosk ${removed === 1 ? 'device' : 'devices'} signed out.`);
+                }
+            }
             // Then tell the add-on to drop its cached account config and push a voice-config
             // refresh to the kiosks, so the change takes effect immediately rather than after
             // the 30s account-config TTL. Best-effort — the setting is already saved.
@@ -914,22 +990,37 @@ const VoiceAiPage = {
             // A local box offers every language it knows (Piper: 163 voices) — narrow to
             // the household's. The ladder never yields an empty list; `note` explains any
             // fallback (e.g. Piper has no Japanese voices at all).
-            const { options, note } = window.VoiceAiOptions.filterVoicesByLanguage(probed, this._voiceLocale());
+            const { options, note } = this._narrowVoices(probed);
             return { key: 'voice.localTtsVoiceId', label: 'Voice', type: 'select', options, note };
         }
         if (!['ha_engine', 'local_url'].includes(ttsSelected.id)) return null;
         return (ttsSelected.configFields || []).find(f => voiceFieldKeys.includes(f.key)) || null;
     },
 
-    /** The locale to narrow local voices by. Dashie's own language wins when the user set
-     *  one — it's the language Dashie SPEAKS (AI prompt + cloud voice), so offering voices
-     *  in another language would be incoherent. It defaults to 'system' though, and that's
-     *  where HA helps: the add-on reports HA's configured locale (detection.haLanguage),
-     *  which is what this household actually speaks. Neither → no narrowing. */
+    /** The locale to narrow local voices by, in precedence order:
+     *   1. Dashie's own language — the language Dashie SPEAKS (AI prompt + cloud voice), so
+     *      offering voices in another language would be incoherent. Defaults to 'system'.
+     *   2. HA's configured locale (detection.haLanguage) — what the household speaks.
+     *      Only present on add-on >= 0.1.219.
+     *   3. The browser's locale — the console runs in this household's browser. Without this
+     *      rung, an older add-on (no haLanguage) + language 'system' (the DEFAULT) resolved
+     *      to '' and NOTHING was narrowed — all 163 Piper voices. Never hang the common case
+     *      on one signal that's often absent.
+     *  All three absent → no narrowing (filterVoicesByLanguage returns everything). */
     _voiceLocale() {
         const own = String(this._defaults?.['general.language'] || '').trim();
         if (own && own !== 'system') return own;
-        return String(this._engines?.haLanguage || '').trim();
+        const ha = String(this._engines?.haLanguage || '').trim();
+        if (ha) return ha;
+        return String(navigator?.language || '').trim();
+    },
+
+    /** Probed voice options, narrowed to the household's language. THE one place voice lists
+     *  get filtered — both render paths (a saved engine's Voice row and the inline local_url
+     *  config field) go through here, so a 163-voice dropdown can't sneak back via the path
+     *  that forgot to call it. */
+    _narrowVoices(probed) {
+        return window.VoiceAiOptions.filterVoicesByLanguage(probed, this._voiceLocale());
     },
 
     /** The Voice row under Text-to-speech (Piper/Kokoro only): a detection-
@@ -1088,6 +1179,12 @@ const VoiceAiPage = {
             const fields = o.configFields.map(f => {
                 const probed = this._probedOptions[f.key];
                 if (!probed || f.type === 'select') return f;
+                // Voice lists get language-narrowed here too — this is the INLINE local_url
+                // path (no saved engine), which used to splice all 163 Piper voices in raw.
+                if (f.key === 'voice.localTtsVoiceId') {
+                    const { options: opts, note } = this._narrowVoices(probed);
+                    return { ...f, type: 'select', options: opts, note };
+                }
                 return { ...f, type: 'select', options: probed };
             });
             return { ...o, configFields: fields };

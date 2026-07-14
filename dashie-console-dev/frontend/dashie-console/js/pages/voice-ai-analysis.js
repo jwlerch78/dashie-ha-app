@@ -690,7 +690,7 @@ const VoiceAiAnalysis = {
             // Local (free) STT/TTS from voice_turn_timing — Whisper/Piper on the HA box.
             // Friendly engine name + a "local" hint (the ms column carries the latency).
             const e = String(s.label || '').replace(/^(stt|tts)\./, '').toLowerCase();
-            const known = { faster_whisper: 'Whisper', whisper: 'Whisper', piper: 'Piper', kokoro: 'Kokoro' };
+            const known = { faster_whisper: 'Whisper', whisper: 'Whisper', piper: 'Piper', local: 'Local TTS', kokoro: 'Kokoro' };   // 'kokoro' = legacy rows (pre-2026-07-13 the local transport misreported itself)
             const base = known[e] || (e ? e.charAt(0).toUpperCase() + e.slice(1) : kind.toLowerCase());
             const times = s.count > 1 ? ` ×${s.count}` : '';
             desc = `${this._escape(base)} <span style="color: var(--text-muted);">(local)${times}</span>`;

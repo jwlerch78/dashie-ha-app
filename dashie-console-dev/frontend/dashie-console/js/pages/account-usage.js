@@ -1057,7 +1057,7 @@ const AccountUsage = {
     _localEngineLabel(engine) {
         if (!engine) return 'Local';
         const e = String(engine).replace(/^(stt|tts)\./, '').toLowerCase();
-        const known = { faster_whisper: 'Whisper', whisper: 'Whisper', piper: 'Piper', kokoro: 'Kokoro' };
+        const known = { faster_whisper: 'Whisper', whisper: 'Whisper', piper: 'Piper', local: 'Local TTS', kokoro: 'Kokoro' };   // 'kokoro' = legacy rows (pre-2026-07-13 the local transport misreported itself)
         const base = known[e] || (e.charAt(0).toUpperCase() + e.slice(1));
         return `${base} (local)`;
     },
