@@ -398,6 +398,13 @@ async function getHaConfig() {
     return _send({ type: 'get_config' });
 }
 
+/** Raw HA state list. Used by LAN discovery to read the `ip_address` attribute Dashie
+ *  tablets publish on their `*_wifi_signal` sensor — the proxy-proof source of the local
+ *  subnet (a device can't misreport its own NIC the way `internal_url` can). */
+async function getStates() {
+    return _send({ type: 'get_states' });
+}
+
 /** Force a re-pull of the device registry (e.g., after we know HA changed). */
 function refresh() {
     registryCache = null;
@@ -474,5 +481,6 @@ module.exports = {
     getTtsVoices,
     listSttEngines,
     getHaConfig,
+    getStates,
     refresh,
 };

@@ -18,6 +18,7 @@ const providers = require('../brain/providers');
 const { createNodeIO } = require('../brain/node-io');
 const brain = require('../brain/voice-brain.bundle.js');
 const { detectVoiceEngines } = require('../voice-engines');
+const lanDiscovery = require('../lan-discovery');
 
 const router = express.Router();
 
@@ -258,6 +259,22 @@ router.post('/preview', express.json(), async (req, res) => {
     clearTimeout(timer);
     const msg = e?.name === 'AbortError' ? 'the engine took too long' : (e?.cause?.code || e?.message || 'fetch failed');
     return res.status(504).json({ error: 'unreachable', message: msg });
+  }
+});
+
+// POST /api/voice/discover  { subnet? }  → { ok, subnet, source, engines[] }
+// The Local Engines "Scan network" button. USER-INITIATED ONLY — never called automatically —
+// and confined to the household's private /24 (derived from HA/tablet IPs, or the manual
+// `subnet` override). See lan-discovery.js for the consensus + fingerprint logic. Best-effort:
+// a scan failure returns { ok:false } so the button can fall back to manual entry, never a 500.
+router.post('/discover', express.json(), async (req, res) => {
+  try {
+    const subnetOverride = String(req.body?.subnet || '').trim() || null;
+    const result = await lanDiscovery.discover({ subnetOverride });
+    res.json(result);
+  } catch (e) {
+    console.error('[voice-local] discovery failed:', (e && e.stack) || e);
+    res.json({ ok: false, reason: (e && e.message) || String(e), engines: [] });
   }
 });
 
