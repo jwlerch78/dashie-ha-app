@@ -171,19 +171,49 @@ router.get('/engines', async (req, res) => {
   }
 });
 
-// POST /api/voice/probe  { url, kind: 'tts' | 'stt' }
-// Reachability test behind the Console's "Test" button on the own-box engine
-// URL fields (Local TTS / Local Whisper). Runs server-side because the browser
-// can't hit a LAN engine cross-origin. tts → GET /v1/audio/voices (Kokoro /
-// OpenAI-compat); stt → GET /v1/models, falling back to /health. 5s timeout
-// per path; never 500s — { ok, detail } either way.
+// POST /api/voice/probe  { url, kind: 'tts' | 'stt' | 'llm' }
+// Reachability test behind the Console's "Test" button on the own-box engine URL
+// fields (Local TTS / Local Whisper / My own AI). Runs server-side because the
+// browser can't hit a LAN engine cross-origin.
+//
+// It also RETURNS THE ENGINE'S OPTION LIST so the Console can turn the sibling
+// free-text field (voice / model) into a dropdown — the same upgrade detection
+// gives the Kokoro add-on (§5.3), extended to any own-box URL the user types:
+//   tts → GET /v1/audio/voices  → { voices: [...] }  → options
+//   llm → GET /v1/models (OpenAI) or /api/tags (Ollama) → options
+//   stt → GET /v1/models, falling back to /health (whisper.cpp serves no model list)
+// 5s timeout per path; never 500s — { ok, detail, options? } either way.
+const PROBE_PATHS = {
+  tts: ['/v1/audio/voices'],
+  llm: ['/v1/models', '/api/tags'],
+  stt: ['/v1/models', '/health'],
+};
+
+/** Pull an option list out of whatever shape the engine answered with:
+ *  {voices:[…]} (Kokoro/piper-shim), {data:[{id}]} (OpenAI), {models:[{name}]} (Ollama). */
+function extractOptions(j) {
+  const norm = (v) => (typeof v === 'string'
+    ? { value: v, label: v }
+    : (v && (v.voice_id || v.id || v.name))
+      ? { value: String(v.voice_id || v.id || v.name), label: String(v.name || v.voice_id || v.id) }
+      : null);
+  const list = Array.isArray(j?.voices) ? j.voices
+    : Array.isArray(j?.data) ? j.data
+    : Array.isArray(j?.models) ? j.models
+    : null;
+  if (!list) return null;
+  const opts = list.map(norm).filter(Boolean);
+  return opts.length ? opts : null;
+}
+
 router.post('/probe', express.json(), async (req, res) => {
   const { url, kind } = req.body || {};
   if (!/^https?:\/\//i.test(String(url || ''))) {
     return res.json({ ok: false, detail: 'enter a full http:// URL (with port)' });
   }
   const base = String(url).replace(/\/+$/, '');
-  const paths = kind === 'tts' ? ['/v1/audio/voices'] : ['/v1/models', '/health'];
+  const paths = PROBE_PATHS[kind] || PROBE_PATHS.stt;
+  const noun = kind === 'llm' ? 'model' : kind === 'tts' ? 'voice' : 'model';
   let lastDetail = 'no response';
   for (const p of paths) {
     const ctl = new AbortController();
@@ -193,12 +223,13 @@ router.post('/probe', express.json(), async (req, res) => {
       clearTimeout(timer);
       if (resp.ok) {
         let detail = `HTTP ${resp.status}`;
+        let options = null;
         try {
           const j = await resp.json();
-          if (Array.isArray(j?.voices)) detail = `${j.voices.length} voices found`;
-          else if (Array.isArray(j?.data)) detail = `${j.data.length} models found`;
-        } catch (_) { /* non-JSON body is still a reachable server */ }
-        return res.json({ ok: true, detail });
+          options = extractOptions(j);
+          if (options) detail = `${options.length} ${noun}${options.length === 1 ? '' : 's'} found`;
+        } catch (_) { /* non-JSON body is still a reachable server (e.g. /health) */ }
+        return res.json({ ok: true, detail, ...(options ? { options } : {}) });
       }
       lastDetail = `HTTP ${resp.status} on ${p}`;
     } catch (e) {
