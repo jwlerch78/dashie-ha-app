@@ -824,13 +824,21 @@ const VoiceAiPage = {
                         .filter(d => d?.device_type === 'ha_kiosk').length;
                 } catch { /* non-fatal — fall through to a generic confirm */ }
                 if (count > 0) {
-                    const ok = confirm(
-                        `Turn off Household Sharing?\n\n` +
-                        `${count} Home Assistant kiosk ${count === 1 ? 'tablet' : 'tablets'} will be ` +
-                        `signed out of this account. ${count === 1 ? 'It' : 'They'} will keep showing ` +
-                        `Home Assistant, but will lose access to your calendars, chores and Dashie voice.\n\n` +
-                        `Turning sharing back on lets ${count === 1 ? 'it' : 'them'} re-authorize automatically.`
-                    );
+                    const one = count === 1;
+                    // ConfirmModal, not native confirm() — the browser dialog shows the raw
+                    // origin ("192.168.86.46:8123 says") and ignores our styling. This page
+                    // already uses ConfirmModal everywhere else.
+                    const ok = await ConfirmModal.confirm({
+                        title: 'Turn off Household Sharing?',
+                        message:
+                            `${count} Home Assistant kiosk ${one ? 'tablet' : 'tablets'} will be signed out of ` +
+                            `this account. ${one ? 'It' : 'They'} will keep showing Home Assistant, but will ` +
+                            `lose access to your calendars, chores and Dashie voice. ` +
+                            `Turning sharing back on lets ${one ? 'it' : 'them'} re-authorize automatically.`,
+                        confirmLabel: `Sign out ${one ? 'tablet' : 'tablets'}`,
+                        cancelLabel: 'Cancel',
+                        danger: true,
+                    });
                     if (!ok) { App.renderPage(); return; }
                 }
             }
