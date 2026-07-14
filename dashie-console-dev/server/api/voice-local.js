@@ -147,6 +147,10 @@ router.get('/local-status', async (req, res) => {
     brain_source_sha: brain.BRAIN_SOURCE_SHA || null,
     route: acct.route,
     route_reason: acct.routeReason || null,
+    // 'live' = read from Supabase just now · 'cache' = Dashie cloud unreachable, replaying the
+    // last-known-good config from /data (the local stack keeps working) · 'default' = this box
+    // has never successfully read its config.
+    config_source: acct.configSource || null,
     endpoint: target.chatUrl || target.endpoint,
     model: target.model,
     source: target.source,

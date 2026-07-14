@@ -11,12 +11,53 @@
 // anything else → 'cloud'. Both are local-family sentinels: the model runs on the user's own
 // hardware and the cloud edge fn can't reach it.
 
+const fs = require('fs');
+const path = require('path');
 const auth = require('./auth');
-const { SUPABASE } = require('./config');
+const { SUPABASE, DATA_DIR } = require('./config');
 const { resolveBrainRoute } = require('./brain/providers');
 
 const TTL_MS = 30_000; // user_settings changes rarely; a short cache keeps converse latency low.
 let _cache = null; // { at, value }
+
+// ── Last-known-good config, persisted to the box ────────────────────────────────
+// WHY (2026-07-14): every ingredient of a fully-local voice turn already lives on this
+// box — the brain bundle (vendored), the BYO keys (/data/api-keys.json), Hermes/Ollama,
+// Piper/Whisper. The ONLY cloud-resident piece was this config. So a Supabase outage used
+// to hand back SAFE_DEFAULT (route:'cloud') and the add-on would dutifully route voice to
+// a cloud edge fn it couldn't reach — bricking a household whose entire stack was local
+// and healthy, and making the perpetual voice license a lie the moment Dashie had a bad day.
+//
+// Now: every SUCCESSFUL read is persisted here, and a failed read falls back to the last
+// known good instead of SAFE_DEFAULT. That's not just outage insurance — it's strictly MORE
+// correct in the normal case: on a transient blip we replay the user's actual last choice
+// rather than guessing 'cloud'. SAFE_DEFAULT is now only for a box that has never once
+// read its config (never configured / never signed in).
+//
+// 0600: the blob carries localLlmKey (a BYO bearer), same trust boundary as key-store.js.
+const CONFIG_CACHE_FILE = path.join(DATA_DIR, 'account-config.cache.json');
+
+function _writeCachedConfig(value) {
+  try {
+    const tmp = CONFIG_CACHE_FILE + '.tmp';
+    fs.writeFileSync(tmp, JSON.stringify(value, null, 2), { mode: 0o600 });
+    fs.renameSync(tmp, CONFIG_CACHE_FILE);
+    try { fs.chmodSync(CONFIG_CACHE_FILE, 0o600); } catch (e) { /* best effort */ }
+  } catch (e) {
+    console.warn('[account-config] could not persist last-known-good config:', e?.message || e);
+  }
+}
+
+function _readCachedConfig() {
+  try {
+    if (!fs.existsSync(CONFIG_CACHE_FILE)) return null;
+    const v = JSON.parse(fs.readFileSync(CONFIG_CACHE_FILE, 'utf8'));
+    return (v && typeof v === 'object') ? v : null;
+  } catch (e) {
+    console.warn('[account-config] last-known-good config unreadable:', e?.message || e);
+    return null;
+  }
+}
 
 // pipeline: null on the degraded path — NOT an empty pipeline. The kiosk applier
 // hard-applies any boolean the block CONTAINS (it gates on key presence, and only
@@ -38,6 +79,7 @@ async function getAccountVoiceConfig() {
   if (_cache && Date.now() - _cache.at < TTL_MS) return withRoute(_cache.value);
 
   let value = SAFE_DEFAULT;
+  let readOk = false;   // did we actually get a live answer out of Supabase?
   try {
     const { jwt, userId } = await auth.getValidJwt();
     if (jwt && userId) {
@@ -134,11 +176,30 @@ async function getAccountVoiceConfig() {
             alwaysOpenDialog: settings?.voice?.alwaysOpenDialog === true,
           },
         };
+        readOk = true;
       }
     }
   } catch (e) {
-    console.warn('[account-config] user_settings read failed; defaulting to cloud:', e?.message || e);
-    value = SAFE_DEFAULT;
+    console.warn('[account-config] user_settings read failed:', e?.message || e);
+  }
+
+  if (readOk) {
+    // Live answer — this becomes the last-known-good for any future outage.
+    value = { ...value, configSource: 'live' };
+    _writeCachedConfig(value);
+  } else {
+    // Supabase unreachable / signed out. Replay the user's LAST ACTUAL CHOICE rather than
+    // guessing 'cloud' — a local-first household keeps working even if Dashie is gone for
+    // good. Only a box that has never successfully read its config falls to SAFE_DEFAULT.
+    const cached = _readCachedConfig();
+    if (cached) {
+      value = { ...cached, configSource: 'cache' };
+      console.warn('[account-config] using last-known-good config from /data'
+        + ` (model=${cached.model || 'none'}) — Dashie cloud unreachable, local setup unaffected.`);
+    } else {
+      value = { ...SAFE_DEFAULT, configSource: 'default' };
+      console.warn('[account-config] no cached config on this box — defaulting to cloud route.');
+    }
   }
 
   _cache = { at: Date.now(), value };
