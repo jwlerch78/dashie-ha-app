@@ -108,15 +108,14 @@ const DevicesDetailModals = {
         ['weather', 'Weather & Time'],
     ],
 
-    // Mirror Kotlin WakeWordModel.BUNDLED_MODEL_IDS — keep these ids in
-    // sync with the persisted format the Android side reads/writes.
-    WAKE_WORDS: [
-        ['hey_dashie', 'Hey Dashie'],
-        ['mww_okay_nabu', 'Okay Nabu'],
-        ['mww_hey_jarvis', 'Hey Jarvis'],
-        ['mww_hey_mycroft', 'Hey Mycroft'],
-        ['mww_alexa', 'Alexa'],
-    ],
+    // Wake words now come from VoiceAiOptions.WAKE_WORDS — ONE console copy, shared with
+    // the Voice & AI page, whose ids are lint-gated against Kotlin's WakeWordModel
+    // (npm run lint:voice-options). This used to be a second hand-copy here, carrying the
+    // comment "Mirror Kotlin WakeWordModel.BUNDLED_MODEL_IDS" — i.e. a hand-mirror that
+    // nothing checked. Don't reintroduce it.
+    get WAKE_WORDS() {
+        return window.VoiceAiOptions?.WAKE_WORDS || [];
+    },
 
     // ── Account-settings cache (for ai.wakeWord and other account-wide
     //    fields we surface read/edit from the device detail page) ─────
@@ -140,8 +139,17 @@ const DevicesDetailModals = {
         });
     },
 
+    /**
+     * The household's default wake word — what a device with no override follows.
+     *
+     * Reads `ai.defaultWakeWord` (ACCOUNT default, WS-G §13.2). It used to read
+     * `ai.wakeWord`, which since D5 is the DEVICE-scoped key and does not live in
+     * user_settings at all — so this returned '' for every household and the Devices
+     * page's "Account default" always rendered blank. Nothing errored; it just showed
+     * nothing, forever. (Kiosk-mirror audit #5, the second half.)
+     */
     getAccountWakeWord() {
-        return this._accountSettings?.ai?.wakeWord || '';
+        return this._accountSettings?.ai?.defaultWakeWord || '';
     },
 
     // ── Section body ──────────────────────────────────────────
@@ -605,8 +613,8 @@ const DevicesDetailModals = {
         const current = this._wakeWordPending != null
             ? this._wakeWordPending
             : (device?.settings?.aiVoice?.wakeWord || 'hey_dashie');
-        const optionsHtml = this.WAKE_WORDS.map(([val, label]) =>
-            `<option value="${this._escape(val)}" ${val === current ? 'selected' : ''}>${this._escape(label)}</option>`
+        const optionsHtml = this.WAKE_WORDS.map(({ id, label }) =>
+            `<option value="${this._escape(id)}" ${id === current ? 'selected' : ''}>${this._escape(label)}</option>`
         ).join('');
         const body = `
             <div class="form-group">

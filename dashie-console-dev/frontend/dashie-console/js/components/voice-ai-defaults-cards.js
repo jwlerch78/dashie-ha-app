@@ -71,6 +71,37 @@ const VoiceAiDefaultsCards = {
             controlHtml: `<select style="${this.SELECT_STYLE}" onchange="VoiceAiPage.saveDefault('ai.defaultPersonalityId', this.value)">${groups.join('')}</select>`,
         });
     },
+
+    /**
+     * Default wake-word row → ai.defaultWakeWord (WS-G §13.2 account default).
+     *
+     * Devices follow this unless overridden on the Devices page (aiVoice.wakeWord;
+     * '' / unset = follow the account). A device whose APK doesn't bundle the chosen
+     * model keeps its own word and reports aiVoice.defaultWakeWordUnavailable rather
+     * than silently degrading — that badge isn't surfaced here yet.
+     *
+     * Options come from VoiceAiOptions.WAKE_WORDS — the single console copy, whose ids
+     * are lint-gated against Kotlin's WakeWordModel (see lint:voice-options). Don't
+     * inline a list here.
+     *
+     * @param {object} o { currentId, saving }
+     */
+    renderWakeWordCard(o) {
+        const words = window.VoiceAiOptions?.WAKE_WORDS || [];
+        const current = String(o.currentId || 'hey_dashie');
+        const opts = words
+            .map(w => `<option value="${this._esc(w.id)}" ${w.id === current ? 'selected' : ''}>${this._esc(w.label)}</option>`)
+            .join('');
+        return this.renderControlRow({
+            // Dashie's microphone — the same icon the webapp's volume slider and Android's
+            // ic_mic_on use. (icon-ear is the Speech-to-text stage icon; reusing it here
+            // would read as "another STT card" rather than "the word that wakes the mic".)
+            label: 'Wake word',
+            icon: 'icon-microphone',
+            saving: o.saving,
+            controlHtml: `<select style="${this.SELECT_STYLE}" onchange="VoiceAiPage.saveDefault('ai.defaultWakeWord', this.value)">${opts}</select>`,
+        });
+    },
 };
 
 window.VoiceAiDefaultsCards = VoiceAiDefaultsCards;

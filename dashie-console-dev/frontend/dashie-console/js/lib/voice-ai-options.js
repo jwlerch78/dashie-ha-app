@@ -70,6 +70,35 @@ const VoiceAiOptions = {
         return options;
     },
 
+    /**
+     * Wake-word models (account default `ai.defaultWakeWord`; devices may override via
+     * `aiVoice.wakeWord`, '' = follow the account — WS-G §13.2 two-slot).
+     *
+     * THE ONE console copy. The Devices page reads this too — do NOT re-declare it there.
+     * (It used to have its own hand-copy in devices-detail-modals.js; a third copy is
+     * exactly what JS_KOTLIN_CONTRACTS' tier rule exists to prevent.)
+     *
+     * The **ids** are the cross-boundary contract and are gated: `npm run lint:voice-options`
+     * asserts they equal Kotlin's `WakeWordModel.availableModelIds()` (ALL_MODELS ∘
+     * BUNDLED_MODEL_IDS) — the same catalog the `getAvailableWakeWords` bridge reports. So
+     * this picker can never offer a word no APK bundles, nor hide one that every APK does.
+     * Labels are ours; only ids must match.
+     *
+     * `ei_hey_dashie` is absent on purpose — internal Edge-Impulse model, not user-facing.
+     */
+    WAKE_WORDS: [
+        { id: 'hey_dashie',      label: 'Hey Dashie' },
+        { id: 'mww_okay_nabu',   label: 'Okay Nabu' },
+        { id: 'mww_hey_jarvis',  label: 'Hey Jarvis' },
+        { id: 'mww_hey_mycroft', label: 'Hey Mycroft' },
+        { id: 'mww_alexa',       label: 'Alexa' },
+    ],
+
+    /** Display label for a persisted wake-word id ('' / unknown → ''). */
+    wakeWordLabel(id) {
+        return this.WAKE_WORDS.find(w => w.id === String(id || ''))?.label || '';
+    },
+
     // Provider section order + display labels for the AI Model card.
     _PROVIDER_ORDER: ['gemini', 'claude', 'openai', 'bedrock'],
     _PROVIDER_LABEL: { claude: 'Claude', openai: 'OpenAI', gemini: 'Google Gemini', bedrock: 'Amazon Bedrock' },

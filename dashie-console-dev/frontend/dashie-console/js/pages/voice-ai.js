@@ -219,6 +219,13 @@ const VoiceAiPage = {
             // Fresh-account default seed — persist the effective config once so the
             // account's stored config == what the UI shows.
             this._seedFreshAccountDefaults();
+            // Wake word needs its OWN seed, not a line inside the fresh-account one:
+            // that seed early-returns on any account that already picked a preset, i.e.
+            // every existing household. They'd render "Hey Dashie" (from DEFAULTS) while
+            // user_settings held nothing — and everything downstream reads the PERSISTED
+            // value (Kotlin, the brain, the kiosk mirror), so they'd all see nothing.
+            // That's Invariant 5's exact gap. Runs for every account, exactly once.
+            this._seedWakeWordIfMissing();
             // Saved local engines (Local Engines page) — they render as named rows in the
             // TTS/STT/model pickers, so the list must be cached before the first paint.
             if (window.EnginesStore && DashieAuth.isAddonMode) {
@@ -304,7 +311,7 @@ const VoiceAiPage = {
         let value = rawValue;
         const STRING_KEYS = ['ai.model', 'voice.controlMethod', 'voice.conversationModel', 'voice.agentMode',
             'voice.pipelinePreset',   // cloud | hybrid | local | ha_assist (Open Brain §6)
-            'ai.defaultPersonalityId', 'ai.defaultVoiceKey',   // account defaults (WS-G Round A)
+            'ai.defaultPersonalityId', 'ai.defaultVoiceKey', 'ai.defaultWakeWord',   // account defaults (WS-G Round A)
             'voice.sttProvider', 'voice.ttsProvider',
             'voice.searchSource', 'voice.sportsSource', 'voice.localLlmUrl', 'voice.localLlmModel',
             'voice.searxngUrl', 'voice.localTtsUrl', 'voice.localTtsVoiceId', 'voice.localSttUrl',
@@ -441,6 +448,29 @@ const VoiceAiPage = {
      * (credits / BYO key), and a fresh $0 account would seed nothing — but Cloud IS its
      * default config regardless of balance.
      */
+    /**
+     * Persist ai.defaultWakeWord once, if the account never stored one (Invariant 5 —
+     * "a writer must PERSIST what it SHOWS"; display-defaults are not state).
+     *
+     * Gated on _storedKeys, NOT on the merged `_defaults` value: post-merge you cannot
+     * tell "unset" from "stored, equal to the default", and a seed that can't tell the
+     * difference will happily overwrite a household's real choice on every page load.
+     * That is the haTtsVoiceId self-clobber (audit #2), which silently re-defaulted the
+     * user's Piper voice on EVERY console load and mirrored it out to every tablet.
+     *
+     * Idempotent: once the key is stored, _storedKeys carries it and this no-ops.
+     */
+    _seedWakeWordIfMissing() {
+        const stored = this._storedKeys;
+        if (!stored || stored.has('ai.defaultWakeWord')) return;
+        const fallback = VoiceAiApi.DEFAULTS['ai.defaultWakeWord'];
+        // Never seed a word no APK bundles — the id list is lint-gated against Kotlin's
+        // WakeWordModel, so a bad value here can't reach a device, but be explicit.
+        const valid = (window.VoiceAiOptions?.WAKE_WORDS || []).some(w => w.id === fallback);
+        if (!valid) return;
+        this.saveDefault('ai.defaultWakeWord', fallback);
+    },
+
     _seedFreshAccountDefaults() {
         const d = this._defaults;
         if (!d) return;
@@ -976,6 +1006,10 @@ const VoiceAiPage = {
             ${showPipeline ? card('Speech-to-text', 'stt', this._applyProbed(filtered('stt', O.sttOptions(this._engines))), sttSelectedId) : ''}` : `
             ${P.renderCustomizeRow(customPipeline, !isLive)}
             ${card('AI Model', 'model', this._markKeyed(this._applyProbed(this._modelOptions(preset))), this._selectedModelId(agentMode))}
+            ${D.renderWakeWordCard({
+                currentId: String(d['ai.defaultWakeWord'] || 'hey_dashie'),
+                saving: this._savingKey === 'ai.defaultWakeWord',
+            })}
             ${D.renderPersonalityCard({
                 templates: this._templates, custom: this._custom,
                 currentId: String(d['ai.defaultPersonalityId'] || 'dashie'),

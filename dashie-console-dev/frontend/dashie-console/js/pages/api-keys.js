@@ -51,6 +51,10 @@ const ApiKeysPage = {
             fields: [{ id: 'key', label: 'API key', placeholder: 'sk-…', secret: true }],
         },
         {
+            // Bedrock is NOT in the server's `routable` list (SigV4 signing, no OpenAI-compat
+            // endpoint), so this card is filtered out — its Nova models are covered by
+            // OpenRouter instead. Kept in the array only so an ALREADY-STORED bedrock key
+            // still renders (with a warning) and can be removed. See _visibleProviders().
             id: 'bedrock', name: 'Amazon Bedrock', group: 'direct',
             help: 'AWS IAM credentials with Bedrock access. All three fields are required.',
             fields: [
@@ -96,6 +100,9 @@ const ApiKeysPage = {
             if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
             const data = await resp.json();
             this._providers = data?.providers || {};
+            // Providers whose key actually flips routing. null on an older add-on that doesn't
+            // report it → render everything (previous behaviour), rather than hiding cards.
+            this._routable = Array.isArray(data?.routable) ? data.routable : null;
         } catch (e) {
             console.error('[ApiKeysPage] fetch failed:', e);
             this._error = e?.message || String(e);
@@ -133,7 +140,7 @@ const ApiKeysPage = {
                     Assistant box</strong> — they never leave it and are never synced to Dashie Cloud.
                 </div>
                 ${this.GROUPS.map((g, i) => {
-                    const cards = this.PROVIDERS.filter(p => p.group === g.id);
+                    const cards = this._visibleProviders().filter(p => p.group === g.id);
                     if (!cards.length) return '';
                     return `
                         <div class="section-header" ${i ? 'style="margin-top: 28px;"' : ''}>${this._escape(g.title)}</div>
@@ -146,6 +153,19 @@ const ApiKeysPage = {
                     Local voice (Whisper/Piper) already runs key-free under Voice &amp; AI.
                 </div></div>
             </div>`;
+    },
+
+    /** Only offer a key field the brain can actually USE. A provider the server doesn't list
+     *  as routable is hidden — UNLESS a key is already stored for it, in which case we still
+     *  show the card (flagged `orphaned`) so the user can see it's inert and remove it.
+     *  Guards against the class of bug where Claude/Bedrock keys saved, validated green, and
+     *  then silently did nothing while turns kept billing Dashie credits. */
+    _visibleProviders() {
+        const routable = this._routable;
+        if (!routable) return this.PROVIDERS;   // old add-on → previous behaviour
+        return this.PROVIDERS
+            .filter(p => routable.includes(p.id) || this._providers?.[p.id]?.set)
+            .map(p => (routable.includes(p.id) ? p : { ...p, orphaned: true }));
     },
 
     _renderProviderCard(p) {
@@ -173,10 +193,15 @@ const ApiKeysPage = {
                     <div style="font-weight: 600; display: flex; align-items: center; gap: 8px;">
                         ${this._escape(p.name)}
                         ${p.recommended ? `<span style="font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.4px; color: #fff; background: var(--accent); border-radius: 9px; padding: 2px 8px;">Simplest</span>` : ''}
+                        ${p.orphaned ? `<span style="font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.4px; color: var(--status-warn, #b45309); background: rgba(180,83,9,0.10); border-radius: 9px; padding: 2px 8px;">Not used</span>` : ''}
                     </div>
-                    ${pill}
+                    ${p.orphaned ? '' : pill}
                 </div>
-                <div style="color: var(--text-secondary); font-size: 13px; line-height: 1.5; margin-bottom: 12px;">${p.help}</div>
+                <div style="color: var(--text-secondary); font-size: 13px; line-height: 1.5; margin-bottom: 12px;">
+                    ${p.orphaned
+                        ? `Dashie can’t run its brain on this key yet, so it currently does <strong>nothing</strong> — your turns still use Dashie credits. Use an <strong>OpenRouter</strong> key above to run these models on your own account, and remove this one.`
+                        : p.help}
+                </div>
                 <div style="display: flex; gap: 12px; flex-wrap: wrap; align-items: flex-end;">
                     ${inputs}
                     <div style="display: flex; gap: 8px;">

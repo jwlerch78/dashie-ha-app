@@ -643,8 +643,12 @@ const DevicesDetail = {
         // Wake word is DEVICE-scoped (D5): user_devices.aiVoice.wakeWord, reported up
         // from the device's WakeWordModelManager. '—' until the device has synced one.
         const wakeWordValue = aiVoice.wakeWord || '';
+        // Label via the shared catalog (VoiceAiOptions.wakeWordLabel). This used to
+        // destructure [id, label] PAIRS out of a local hand-copy of the list; that copy is
+        // gone, so a pair-destructure here would silently yield undefined and render the raw
+        // id ("mww_okay_nabu") instead of "Okay Nabu".
         const wakeWordLabel = wakeWordValue
-            ? (DevicesDetailModals.WAKE_WORDS.find(([v]) => v === wakeWordValue)?.[1] || wakeWordValue)
+            ? (window.VoiceAiOptions?.wakeWordLabel(wakeWordValue) || wakeWordValue)
             : '—';
 
         // Voice (aiVoice.voiceKey) — separate from personality (WS-G): unset =

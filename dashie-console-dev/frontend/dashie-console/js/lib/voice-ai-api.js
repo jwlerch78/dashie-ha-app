@@ -23,6 +23,16 @@ const VoiceAiApi = {
         ['ai', 'model'],
         ['ai', 'defaultPersonalityId'],
         ['ai', 'defaultVoiceKey'],
+        // WS-G account default wake word. Added 2026-07-14, closing the LAST open finding
+        // of the kiosk-mirror audit (#5): hops 2-7 of the chain (account-config →
+        // /voice-config → voice_view → KioskAccountVoiceApplier → VoicePreferences) have
+        // always worked, but the console had NO writer and rendered no row — so a
+        // console-plus-kiosk household could never actually set the household wake word.
+        // lint:kiosk-mirror warned about this on every run; that KNOWN_GAP entry is gone now.
+        // Must be READ BACK as well as written (it's in this list, not just DEFAULTS) —
+        // check A / the haTtsVoiceId self-clobber: a key the page writes but never reads
+        // back gets re-seeded to its default on every load.
+        ['ai', 'defaultWakeWord'],
         // Read-only here (owned by Preferences) — the Voice & AI page narrows a local TTS
         // box's voice catalog to the household's language. 'system' falls back to HA's.
         ['general', 'language'],
@@ -74,6 +84,9 @@ const VoiceAiApi = {
         // the Devices page. '' voice = the personality's own preferred voice.
         'ai.defaultPersonalityId': 'dashie',
         'ai.defaultVoiceKey': '',
+        // Every APK bundles hey_dashie (WakeWordModel.HEY_DASHIE), so it is always a safe
+        // household default — no device can report it unavailable via the model-gap rule.
+        'ai.defaultWakeWord': 'hey_dashie',
         // '' = preset not chosen yet — the page derives one from the granular
         // keys (display-only) and persists on the user's first preset click.
         'voice.pipelinePreset': '',
