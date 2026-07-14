@@ -391,6 +391,13 @@ async function listSttEngines() {
     return _send({ type: 'stt/engine/list' });
 }
 
+/** HA's own config → { language: 'en', country: 'US', … }. Used to narrow the local-TTS
+ *  voice list when the account's Dashie language is 'system' (the default): a box's voice
+ *  catalog spans ~30 languages, and HA already knows which one this household speaks. */
+async function getHaConfig() {
+    return _send({ type: 'get_config' });
+}
+
 /** Force a re-pull of the device registry (e.g., after we know HA changed). */
 function refresh() {
     registryCache = null;
@@ -466,5 +473,6 @@ module.exports = {
     listTtsEngines,
     getTtsVoices,
     listSttEngines,
+    getHaConfig,
     refresh,
 };

@@ -190,12 +190,19 @@ const PROBE_PATHS = {
 };
 
 /** Pull an option list out of whatever shape the engine answered with:
- *  {voices:[…]} (Kokoro/piper-shim), {data:[{id}]} (OpenAI), {models:[{name}]} (Ollama). */
+ *  {voices:[…]} (Kokoro/piper-shim), {data:[{id}]} (OpenAI), {models:[{name}]} (Ollama).
+ *  `language` (piper shim: "en_US") is passed through when present so the Console can
+ *  narrow the voice list to the account's language — we deliberately do NOT filter here;
+ *  only the Console knows the user's locale. */
 function extractOptions(j) {
   const norm = (v) => (typeof v === 'string'
     ? { value: v, label: v }
     : (v && (v.voice_id || v.id || v.name))
-      ? { value: String(v.voice_id || v.id || v.name), label: String(v.name || v.voice_id || v.id) }
+      ? {
+          value: String(v.voice_id || v.id || v.name),
+          label: String(v.name || v.voice_id || v.id),
+          ...(v.language ? { language: String(v.language) } : {}),
+        }
       : null);
   const list = Array.isArray(j?.voices) ? j.voices
     : Array.isArray(j?.data) ? j.data

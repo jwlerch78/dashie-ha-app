@@ -261,6 +261,23 @@ async function _detectBrain(debug) {
     return { configured: true, url, ...probe };
 }
 
+/** HA's configured locale as 'en_US' (language + country). The Console uses it to narrow a
+ *  local box's voice catalog when the account's own language is 'system' — HA already knows
+ *  what this household speaks. Best-effort: '' just means "don't narrow". */
+async function _detectHaLanguage(debug) {
+    try {
+        const cfg = await haRegistry.getHaConfig();
+        const lang = String(cfg?.language || '').trim();          // 'en'
+        const country = String(cfg?.country || '').trim();        // 'US'
+        if (debug) debug.ha_config_locale = { language: lang, country };
+        if (!lang) return '';
+        return country ? `${lang}_${country.toUpperCase()}` : lang;
+    } catch (e) {
+        if (debug) debug.ha_config_error = e.message;
+        return '';
+    }
+}
+
 async function detectVoiceEngines({ refresh = false, debug = false } = {}) {
     if (!haRegistry.isAvailable()) {
         return { available: false, tts: [], stt: [], kokoro: { installed: false, reason: 'ha_unavailable' }, hermes: { installed: false, reason: 'ha_unavailable' }, brain: { configured: false } };
@@ -270,14 +287,15 @@ async function detectVoiceEngines({ refresh = false, debug = false } = {}) {
     }
 
     const dbg = debug ? {} : null;
-    const [tts, stt, kokoro, hermes, brain] = await Promise.all([
+    const [tts, stt, kokoro, hermes, brain, haLanguage] = await Promise.all([
         _detectTts(dbg),
         _detectStt(dbg),
         _detectKokoro(dbg),
         _detectHermes(dbg),
         _detectBrain(dbg),
+        _detectHaLanguage(dbg),
     ]);
-    const result = { available: true, tts, stt, kokoro, hermes, brain };
+    const result = { available: true, tts, stt, kokoro, hermes, brain, haLanguage };
 
     // Cache only the clean (non-debug) result so a debug call never poisons it.
     if (!debug) _cache = { result, fetchedAt: Date.now() };
