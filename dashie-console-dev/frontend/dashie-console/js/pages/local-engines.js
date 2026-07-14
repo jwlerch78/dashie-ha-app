@@ -55,6 +55,17 @@ const LocalEnginesPage = {
         App.renderPage();
     },
 
+    /** Engine type is a dropdown in the editor (one "Add engine" button, not three) —
+     *  switching it resets the probe, since the new kind hits a different path. */
+    setKind(kind) {
+        if (!this._editing || !EnginesStore.kind(kind)) return;
+        this._editing.kind = kind;
+        this._editing.model = '';
+        this._probe = null;
+        App.renderPage();
+        if (String(this._editing.url || '').trim()) this.probeDraft();
+    },
+
     edit(id) {
         const e = (this._engines || []).find(x => x.id === id);
         if (!e) return;
@@ -205,17 +216,23 @@ const LocalEnginesPage = {
         }
         return `
             <div style="max-width: 800px;">
-                <div style="margin-bottom: 20px; color: var(--text-secondary); font-size: var(--font-size-sm); line-height: 1.5;">
-                    Engines you run yourself — an AI model, a voice, or speech-to-text on your own
-                    hardware. Saved engines appear by name in <strong>Voice &amp; AI</strong>, so you
-                    can switch between them without re-typing an address. They're free to run and
-                    nothing leaves your network.
+                <div style="display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; margin-bottom: 20px;">
+                    <div style="color: var(--text-secondary); font-size: var(--font-size-sm); line-height: 1.5;">
+                        Engines you run yourself — an AI model, a voice, or speech-to-text on your own
+                        hardware. Saved engines appear by name in <strong>Voice &amp; AI</strong>, so you
+                        can switch between them without re-typing an address. They're free to run and
+                        nothing leaves your network.
+                    </div>
+                    <button class="btn btn-primary btn-sm" style="flex-shrink: 0;"
+                        onclick="LocalEnginesPage.add()"${this._editing ? ' disabled' : ''}>+ Add engine</button>
                 </div>
                 ${this._editing ? this._renderEditor() : ''}
                 ${EnginesStore.KINDS.map(k => this._renderKindSection(k)).join('')}
             </div>`;
     },
 
+    /** Engines stay GROUPED by kind below — one section per kind, but the section headers
+     *  no longer carry their own Add button (the type is a dropdown in the one editor). */
     _renderKindSection(kind) {
         const list = (this._engines || []).filter(e => e.kind === kind.id);
         const rows = list.length
@@ -224,23 +241,29 @@ const LocalEnginesPage = {
                    None yet — ${this._escape(kind.hint)}.
                </div></div>`;
         return `
-            <div class="section-header" style="margin-top: 24px; display: flex; justify-content: space-between; align-items: center;">
-                <span>${this._escape(kind.label)}</span>
-                <button class="btn btn-secondary btn-sm" onclick="LocalEnginesPage.add('${kind.id}')"${this._editing ? ' disabled' : ''}>+ Add</button>
-            </div>
+            <div class="section-header" style="margin-top: 24px;">${this._escape(kind.label)}</div>
             ${rows}`;
     },
 
+    /** Local-green row treatment, matching how local engines read on the Voice & AI page
+     *  (tint + LOCAL tag + left accent bar) so the two pages tell the same colour story. */
     _renderEngineRow(e) {
+        const O = window.VoiceAiOptions || {};
+        const green = (O.COLOR || {}).local || '#16a34a';
+        const tint = (O.BG || {}).local || 'rgba(22, 163, 74, 0.10)';
         const sub = [e.url, e.model].filter(Boolean).join(' · ');
         return `
-            <div class="card" style="margin-bottom: 8px;"><div class="card-body" style="display: flex; align-items: center; gap: 12px; padding: 12px 14px;">
+            <div class="card" style="margin-bottom: 8px;"><div class="card-body"
+                style="display: flex; align-items: center; gap: 12px; padding: 12px 14px; background: ${tint}; border-left: 3px solid ${green};">
                 <div style="flex: 1; min-width: 0;">
-                    <div style="font-weight: 600; font-size: 14px;">${this._escape(e.name)}</div>
+                    <div style="font-weight: 600; font-size: 14px; display: flex; align-items: center; gap: 8px;">
+                        ${this._escape(e.name)}
+                        <span style="font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.4px; color: ${green};">Local</span>
+                    </div>
                     <div style="font-size: 12px; color: var(--text-muted); margin-top: 2px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; overflow: hidden; text-overflow: ellipsis;">${this._escape(sub)}</div>
                 </div>
                 <button class="btn btn-secondary btn-sm" onclick="LocalEnginesPage.edit('${e.id}')">Edit</button>
-                <button class="btn btn-secondary btn-sm" onclick="LocalEnginesPage.duplicate('${e.id}')" title="Add another model/voice on this same box">Duplicate</button>
+                <button class="btn btn-secondary btn-sm" onclick="LocalEnginesPage.duplicate('${e.id}')" title="Add another model on this same box">Duplicate</button>
                 <button class="btn btn-secondary btn-sm" onclick="LocalEnginesPage.remove('${e.id}')">Remove</button>
             </div></div>`;
     },
@@ -279,11 +302,19 @@ const LocalEnginesPage = {
 
         return `
             <div class="card" style="margin-bottom: 20px; box-shadow: 0 0 0 2px var(--accent);"><div class="card-body">
-                <div style="font-weight: 600; margin-bottom: 14px;">${d.id ? 'Edit engine' : `New ${this._escape(kind.label.toLowerCase())}`}</div>
+                <div style="font-weight: 600; margin-bottom: 14px;">${d.id ? 'Edit engine' : 'New engine'}</div>
                 <div style="display: grid; gap: 12px;">
                     <label style="display: grid; gap: 4px; font-size: 12px; color: var(--text-muted);">
+                        Type
+                        <select onchange="LocalEnginesPage.setKind(this.value)" style="${this._inputStyle()}"${d.id ? ' disabled' : ''}>
+                            ${EnginesStore.KINDS.map(k =>
+                                `<option value="${k.id}" ${k.id === d.kind ? 'selected' : ''}>${this._escape(k.label)}</option>`).join('')}
+                        </select>
+                        <span style="font-size: 11px; color: var(--text-muted);">${this._escape(kind.hint)}</span>
+                    </label>
+                    <label style="display: grid; gap: 4px; font-size: 12px; color: var(--text-muted);">
                         Name
-                        <input type="text" value="${this._escape(d.name || '')}" placeholder="e.g. Qwen 7B on the Mac"
+                        <input type="text" value="${this._escape(d.name || '')}" placeholder="${this._escape(kind.namePlaceholder || '')}"
                             autocomplete="off" oninput="LocalEnginesPage.setField('name', this.value)" style="${this._inputStyle()}">
                     </label>
                     <label style="display: grid; gap: 4px; font-size: 12px; color: var(--text-muted);">

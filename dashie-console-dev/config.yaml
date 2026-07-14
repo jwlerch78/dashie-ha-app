@@ -1,5 +1,5 @@
 name: Dashie Console (Dev)
-version: "0.1.217"
+version: "0.1.218"
 slug: dashie_dev
 description: Dashie Console (Dev channel — tracks dashie-console main). For testing before a prod cut; install alongside the stable "Dashie Console" add-on.
 url: https://github.com/jwlerch78/dashie-ha-app

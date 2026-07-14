@@ -44,10 +44,13 @@ const EnginesStore = {
     // models).
     KINDS: [
         { id: 'llm', label: 'AI model',      hint: 'Ollama / llama.cpp / any OpenAI-compatible chat endpoint', probe: 'llm',
+          namePlaceholder: 'e.g. Qwen 7B on the Mac',
           urlPlaceholder: 'http://192.168.1.50:11434', modelLabel: 'Model', modelPlaceholder: 'qwen2.5:7b' },
         { id: 'tts', label: 'Text-to-speech', hint: 'Kokoro / Piper / any OpenAI-compatible speech endpoint',  probe: 'tts',
+          namePlaceholder: 'e.g. Piper on the Mac',
           urlPlaceholder: 'http://192.168.1.50:8880' },
         { id: 'stt', label: 'Speech-to-text', hint: 'whisper.cpp / faster-whisper / speaches (OpenAI-compatible)', probe: 'stt',
+          namePlaceholder: 'e.g. Whisper on the Mac',
           urlPlaceholder: 'http://192.168.1.50:8000' },
     ],
 
