@@ -782,7 +782,13 @@ const VoiceAiPage = {
     async _signOutKiosksOnSharingOff() {
         let kiosks = [];
         try {
-            const res = await DashieAuth.dbRequest('list_devices', {});
+            // ⚠️ controllable_only:false is REQUIRED — list_devices defaults to `tv_only = true`,
+            // which filters to `tv_%` / `tablet_%` only. `ha_kiosk` matches NEITHER, so the
+            // default call returns zero kiosks and this whole sweep silently no-ops while
+            // reporting success. That is exactly what happened on the first live test
+            // (2026-07-13): sharing flipped off, no confirm appeared, and the kiosk kept its
+            // session. Do not "simplify" this back to `{}`.
+            const res = await DashieAuth.dbRequest('list_devices', { controllable_only: false });
             const devices = res?.devices || res || [];
             kiosks = (Array.isArray(devices) ? devices : []).filter(d => d?.device_type === 'ha_kiosk');
         } catch (e) {
@@ -812,7 +818,7 @@ const VoiceAiPage = {
             if (!enabled) {
                 let count = 0;
                 try {
-                    const res = await DashieAuth.dbRequest('list_devices', {});
+                    const res = await DashieAuth.dbRequest('list_devices', { controllable_only: false });
                     const devices = res?.devices || res || [];
                     count = (Array.isArray(devices) ? devices : [])
                         .filter(d => d?.device_type === 'ha_kiosk').length;
