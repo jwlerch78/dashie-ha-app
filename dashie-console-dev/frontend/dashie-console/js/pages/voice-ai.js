@@ -31,6 +31,8 @@ const VoiceAiPage = {
     _syncRegistered: false,
     _activeTab: 'settings', // 'settings' | 'chat' | 'analysis'
     _expandedCards: new Set(), // expanded component cards (model/stt/tts/search)
+    _probedOptions: {},     // dotted key → [{value,label}] learned by probing an own-box URL
+                            // (Kokoro/Piper voices, Ollama models) → renders as a dropdown
 
     setTab(tab) {
         if (tab !== 'settings' && tab !== 'personalities' && tab !== 'chat' && tab !== 'analysis' && tab !== 'benchmark') return;
@@ -216,6 +218,15 @@ const VoiceAiPage = {
             // Fresh-account default seed — persist the effective config once so the
             // account's stored config == what the UI shows.
             this._seedFreshAccountDefaults();
+            // Saved local engines (Local Engines page) — they render as named rows in the
+            // TTS/STT/model pickers, so the list must be cached before the first paint.
+            if (window.EnginesStore && DashieAuth.isAddonMode) {
+                await EnginesStore.list().catch(() => []);
+            }
+            // Ask any already-configured own-box engine for its voice/model list so those
+            // fields render as dropdowns without the user pressing Test. Not awaited —
+            // a LAN box that's off must not delay the page; it re-renders if it answers.
+            this._autoProbeLocalUrls();
         } catch (e) {
             console.error('[VoiceAiPage] fetch failed:', e);
             this._error = e.message || String(e);
@@ -470,7 +481,10 @@ const VoiceAiPage = {
         const opts = O.presetFilter(presetId, this._haFilter(all)).filter(o => !o.install);
         const current = String(this._defaults[dottedKey] || '');
         const has = id => opts.some(o => o.id === id);
-        const currentValid = has(current);
+        // A saved engine REPLACES the inline local_url/local_stt_url row, so the stored
+        // provider value has no matching row id — but it's a perfectly valid local
+        // choice. Without this, switching preset would reseed over the user's engine.
+        const currentValid = has(current) || !!this._engineRowId(stageKey);
         const hasHaEngine = has('ha_engine');
 
         if (presetId === 'hybrid') {
@@ -503,6 +517,15 @@ const VoiceAiPage = {
             // Piper always has a concrete voice — default amy (low) (John, 2026-07-12).
             if (!String(this._defaults['voice.haTtsVoiceId'] || '')) {
                 this.saveDefault('voice.haTtsVoiceId', this._defaultPiperVoice() || 'en_US-amy-low');
+            }
+        } else if (stageKey === 'tts' && id === 'local_url') {
+            // Own-box TTS always needs a concrete voice: the native client's built-in
+            // default is Kokoro's 'af_heart', which a Piper box doesn't have. Seed the
+            // first probed/detected voice so an un-touched Voice field still speaks.
+            if (!String(this._defaults['voice.localTtsVoiceId'] || '')) {
+                const v = this._probedOptions['voice.localTtsVoiceId']?.[0]?.value
+                    || (this._engines?.kokoro?.voices || [])[0];
+                if (v) this.saveDefault('voice.localTtsVoiceId', typeof v === 'string' ? v : v.voice_id);
             }
         } else if (stageKey === 'stt' && id === 'ha_engine') {
             const eng = O.sttOptions(this._engines).find(o => o.id === 'ha_engine');
@@ -560,7 +583,32 @@ const VoiceAiPage = {
      *  (ai.model untouched); picking a cascade model saves ai.model and drops
      *  a live agent back to single (the Dialog toggle re-enables dialog). */
     selectOption(stageKey, id) {
-        this._expandedCards.delete(stageKey);   // collapse back to the chosen option
+        // A saved-engine row (Local Engines page): "+ Add…" navigates there; a real
+        // engine resolves into the flat account keys the tablets read — the device
+        // never learns the engine registry exists.
+        const P = window.VoiceAiOptions.ENGINE_ROW_PREFIX;
+        if (typeof id === 'string' && id.startsWith(P)) {
+            this._expandedCards.delete(stageKey);
+            const engineId = id.slice(P.length);
+            if (engineId === 'add') { App.navigate('local-engines'); return; }
+            const engine = window.EnginesStore?.get(engineId);
+            if (!engine) return;
+            for (const [key, value] of window.EnginesStore.resolveToSettings(engine)) {
+                this.saveDefault(key, value);
+            }
+            // A local model can't run the Live (S2S) agent — drop back to the cascade.
+            if (engine.kind === 'llm' && this._agentMode() === 'live') this.saveDefault('voice.agentMode', 'single');
+            // TTS: the voice lives on this page, not in the engine — and the voice that was
+            // set for the PREVIOUS box almost certainly doesn't exist on this one. Ask the
+            // new box what it has and re-seed if the current voice isn't among them.
+            if (engine.kind === 'tts') this._reseedVoiceForEngine(engine);
+            return;
+        }
+        // Collapse back to the chosen option — unless it still needs config
+        // (a local engine with no URL/model yet): keep the picker open so the
+        // required fields are right there, instead of forcing a reopen.
+        if (this._needsConfig(stageKey, id)) this._expandedCards.add(stageKey);
+        else this._expandedCards.delete(stageKey);
         if (stageKey === 'model') {
             const isLiveModel = this.CONVERSATION_MODELS.some(([v]) => v === id);
             if (isLiveModel) {
@@ -595,6 +643,24 @@ const VoiceAiPage = {
     /** Inline local-config field (endpoint URL, model, SearXNG URL) → persist as string. */
     saveLocalField(dottedKey, value) {
         this.saveDefault(dottedKey, value);
+    },
+
+    /** True when an option carries `required` config fields that are still
+     *  empty (e.g. a local engine whose box URL was never entered) — used by
+     *  selectOption to keep the picker open until the option is usable. */
+    _needsConfig(stageKey, id) {
+        const opt = this._stageOptions(stageKey).find(o => o.id === id);
+        return (opt?.configFields || []).some(f =>
+            f.required && !String(this._defaults[f.key] || '').trim());
+    },
+
+    /** The full (unfiltered) option list backing a stage card. */
+    _stageOptions(stageKey) {
+        const O = window.VoiceAiOptions;
+        if (stageKey === 'tts') return O.ttsOptions(this._engines);
+        if (stageKey === 'stt') return O.sttOptions(this._engines);
+        if (stageKey === 'model') return this._modelOptions(this._activePreset());
+        return [];
     },
 
     /** Expand/collapse a component card. */
@@ -770,11 +836,13 @@ const VoiceAiPage = {
         // engines with a selectable voice (Piper ha_engine / Kokoro local_url).
         // The URL/other fields stay in the card.
         const VOICE_FIELD_KEYS = ['voice.haTtsVoiceId', 'voice.localTtsVoiceId'];
-        const ttsAll = filtered('tts', O.ttsOptions(this._engines));
-        const ttsSelected = ttsAll.find(x => x.id === String(d['voice.ttsProvider'])) || null;
-        const voiceField = (ttsSelected && ['ha_engine', 'local_url'].includes(ttsSelected.id))
-            ? (ttsSelected.configFields || []).find(f => VOICE_FIELD_KEYS.includes(f.key)) || null
-            : null;
+        const ttsAll = this._applyProbed(filtered('tts', O.ttsOptions(this._engines)));
+        // A saved engine's row id stands in for the raw provider value, so the card
+        // shows "Kokoro (Mac)" rather than the generic "Local TTS (your box)".
+        const ttsSelectedId = this._engineRowId('tts') || String(d['voice.ttsProvider']);
+        const sttSelectedId = this._engineRowId('stt') || String(d['voice.sttProvider']);
+        const ttsSelected = ttsAll.find(x => x.id === ttsSelectedId) || null;
+        const voiceField = this._voiceFieldFor(ttsSelected, VOICE_FIELD_KEYS);
         const ttsCardOpts = ttsAll.map(x => {
             if (!x.configFields) return x;
             const rest = x.configFields.filter(f => !VOICE_FIELD_KEYS.includes(f.key));
@@ -786,11 +854,11 @@ const VoiceAiPage = {
         const body = isHaAssist ? `
             ${P.renderHaAssistCard()}
             ${P.renderCustomizeRow(customPipeline, true)}
-            ${showPipeline ? card('Text-to-speech', 'tts', ttsCardOpts, String(d['voice.ttsProvider'])) : ''}
+            ${showPipeline ? card('Text-to-speech', 'tts', ttsCardOpts, ttsSelectedId) : ''}
             ${showPipeline && voiceField ? this._renderVoiceRow(voiceField, d) : ''}
-            ${showPipeline ? card('Speech-to-text', 'stt', filtered('stt', O.sttOptions(this._engines)), String(d['voice.sttProvider'])) : ''}` : `
+            ${showPipeline ? card('Speech-to-text', 'stt', this._applyProbed(filtered('stt', O.sttOptions(this._engines))), sttSelectedId) : ''}` : `
             ${P.renderCustomizeRow(customPipeline, !isLive)}
-            ${card('AI Model', 'model', this._markKeyed(this._modelOptions(preset)), this._selectedModelId(agentMode))}
+            ${card('AI Model', 'model', this._markKeyed(this._applyProbed(this._modelOptions(preset))), this._selectedModelId(agentMode))}
             ${D.renderPersonalityCard({
                 templates: this._templates, custom: this._custom,
                 currentId: String(d['ai.defaultPersonalityId'] || 'dashie'),
@@ -798,9 +866,9 @@ const VoiceAiPage = {
             })}
             ${isLive ? P.renderLiveNote() : ''}
             ${showPipeline ? this._renderEngineDetectionRow() : ''}
-            ${showPipeline ? card('Text-to-speech', 'tts', ttsCardOpts, String(d['voice.ttsProvider'])) : ''}
+            ${showPipeline ? card('Text-to-speech', 'tts', ttsCardOpts, ttsSelectedId) : ''}
             ${showPipeline && voiceField ? this._renderVoiceRow(voiceField, d) : ''}
-            ${showPipeline ? card('Speech-to-text', 'stt', filtered('stt', O.sttOptions(this._engines)), String(d['voice.sttProvider'])) : ''}
+            ${showPipeline ? card('Speech-to-text', 'stt', this._applyProbed(filtered('stt', O.sttOptions(this._engines))), sttSelectedId) : ''}
             ${showPipeline ? card('Web search source', 'search', this._markKeyed(searchOptions), searchSelected) : ''}`;
             // Sports source card hidden for now (John, 2026-07-11) — ESPN is the
             // only option. The account default-VOICE card was removed 2026-07-12
@@ -830,6 +898,24 @@ const VoiceAiPage = {
         // Conversation memory (+ duration) hidden for now (John, 2026-07-12) —
         // not in use yet. Re-add via ai.conversationContextEnabled /
         // ai.conversationTimeout toggle+select rows when it ships.
+    },
+
+    /** The voice-id field to render as the Voice row under Text-to-speech, for whatever
+     *  is selected: a SAVED ENGINE (voices probed from its own URL — the engine's address
+     *  lives on the Local Engines page, but its voice stays switchable right here), the
+     *  HA Piper engine (voices from detection), or the inline own-box row. Null for cloud/
+     *  Android/HA-pipeline, which don't expose a voice here. */
+    _voiceFieldFor(ttsSelected, voiceFieldKeys) {
+        if (!ttsSelected) return null;
+        if (ttsSelected.engineRecord) {
+            if (ttsSelected.engineRecord.kind !== 'tts') return null;
+            const probed = this._probedOptions['voice.localTtsVoiceId'];
+            return probed?.length
+                ? { key: 'voice.localTtsVoiceId', label: 'Voice', type: 'select', options: probed }
+                : { key: 'voice.localTtsVoiceId', label: 'Voice', placeholder: 'af_heart' };
+        }
+        if (!['ha_engine', 'local_url'].includes(ttsSelected.id)) return null;
+        return (ttsSelected.configFields || []).find(f => voiceFieldKeys.includes(f.key)) || null;
     },
 
     /** The Voice row under Text-to-speech (Piper/Kokoro only): a detection-
@@ -868,38 +954,125 @@ const VoiceAiPage = {
         });
     },
 
-    /** Reachability test for the own-box engine URLs (Local TTS / Local
-     *  Whisper). Add-on mode proxies through the box (the browser can't reach
-     *  a LAN engine cross-origin); elsewhere a best-effort direct fetch. */
+    /** Reachability test for the own-box engine URLs (Local TTS / Local Whisper /
+     *  My own AI). Add-on mode proxies through the box (the browser can't reach a
+     *  LAN engine cross-origin); elsewhere a best-effort direct fetch. On success
+     *  the engine's own option list (voices / models) is cached under the field the
+     *  URL `fills`, upgrading that field to a dropdown. */
     async testLocalUrl(fieldKey, kind, btn) {
         const input = document.getElementById(`cfg-${fieldKey}`);
         const url = String(input?.value || this._defaults?.[fieldKey] || '').trim();
         if (!url) { Toast.info('Enter the URL first.'); return; }
         const restore = () => { if (btn) { btn.disabled = false; btn.textContent = 'Test'; } };
         if (btn) { btn.disabled = true; btn.textContent = 'Testing…'; }
+        const result = await this._probeUrl(kind, url, fieldKey);
+        if (result?.ok) Toast.success(`Reachable ✓ ${result.detail || ''}`);
+        else Toast.error(`Not reachable — ${result?.detail || 'no response'}`);
+        restore();
+        App.renderPage();   // a fresh option list turns the sibling field into a dropdown
+    },
+
+    /** Probe an own-box engine URL. Caches any returned option list under the key the
+     *  URL field `fills` (voice.localTtsVoiceId / voice.localLlmModel) → _probedOptions,
+     *  which _applyProbed() splices into the config fields. Never throws. */
+    async _probeUrl(kind, url, urlFieldKey) {
+        let result = null;
         try {
-            let result;
             if (DashieAuth.isAddonMode) {
                 const r = await fetch(DashieAuth._addonUrl('/api/voice/probe'), {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ url, kind }),
                 });
-                // A 404 = the add-on predates the probe endpoint — fall through
-                // to a direct attempt rather than reporting a bogus failure.
+                // A 404 = the add-on predates the probe endpoint — fall through to a
+                // direct attempt rather than reporting a bogus failure.
                 result = r.status === 404 ? null : await r.json();
             }
             if (!result) {
+                // Direct browser fetch (website console / old add-on): works only for a
+                // CORS-permissive box, so failure here is not conclusive — but a success
+                // still yields the option list.
                 const path = kind === 'tts' ? '/v1/audio/voices' : '/v1/models';
                 const r = await fetch(url.replace(/\/+$/, '') + path, { signal: AbortSignal.timeout(5000) });
-                result = { ok: r.ok, detail: `HTTP ${r.status}` };
+                const j = await r.json().catch(() => null);
+                const list = Array.isArray(j?.voices) ? j.voices : Array.isArray(j?.data) ? j.data : null;
+                const options = (list || []).map(v => (typeof v === 'string'
+                    ? { value: v, label: v }
+                    : { value: String(v.voice_id || v.id || v.name), label: String(v.name || v.voice_id || v.id) }))
+                    .filter(o => o.value && o.value !== 'undefined');
+                result = { ok: r.ok, detail: `HTTP ${r.status}`, ...(options.length ? { options } : {}) };
             }
-            if (result.ok) Toast.success(`Reachable ✓ ${result.detail || ''}`);
-            else Toast.error(`Not reachable — ${result.detail || 'no response'}`);
         } catch (e) {
-            Toast.error(`Not reachable — ${e?.message || e}`);
+            result = { ok: false, detail: e?.message || String(e) };
         }
-        restore();
+        const fills = this._fillsKey(urlFieldKey);
+        if (fills && result?.options?.length) this._probedOptions[fills] = result.options;
+        return result;
+    },
+
+    /** The dropdown key a probed URL field populates. A static map, NOT a scan of the
+     *  option rows' `fills`: saved engines REPLACE the inline local_url row, so the row
+     *  that declares `fills` may not exist — but a selected engine still needs its
+     *  voice/model list. */
+    _PROBE_FILLS: {
+        'voice.localTtsUrl': 'voice.localTtsVoiceId',
+        'voice.localLlmUrl': 'voice.localLlmModel',
+    },
+    _fillsKey(urlFieldKey) {
+        return this._PROBE_FILLS[urlFieldKey] || null;
+    },
+
+    /** Silently probe the own-box URLs that are already configured, so their voice /
+     *  model dropdowns are populated on page load — the user shouldn't have to press
+     *  Test to get a picker. Best-effort and fire-and-forget: a re-render follows only
+     *  if something new was learned. Runs once per page fetch. */
+    async _autoProbeLocalUrls() {
+        const d = this._defaults || {};
+        const targets = [
+            { kind: 'tts', urlKey: 'voice.localTtsUrl' },
+            { kind: 'llm', urlKey: 'voice.localLlmUrl' },
+        ];
+        let learned = false;
+        await Promise.all(targets.map(async ({ kind, urlKey }) => {
+            const url = String(d[urlKey] || '').trim();
+            const fills = this._fillsKey(urlKey);
+            if (!url || !fills || this._probedOptions[fills]) return;
+            const before = this._probedOptions[fills];
+            await this._probeUrl(kind, url, urlKey);
+            if (this._probedOptions[fills] !== before) learned = true;
+        }));
+        if (learned) App.renderPage();
+    },
+
+    /** Selecting a TTS engine points the account at a new box, whose voice list is its own.
+     *  Drop the previous box's cached voices, probe this one, and re-seed the voice when the
+     *  stored one isn't offered here — otherwise the tablets would ask (say) Piper for
+     *  Kokoro's `af_heart`. Async + fire-and-forget: the picker already collapsed. */
+    async _reseedVoiceForEngine(engine) {
+        delete this._probedOptions['voice.localTtsVoiceId'];
+        await this._probeUrl('tts', engine.url, 'voice.localTtsUrl');
+        const voices = this._probedOptions['voice.localTtsVoiceId'] || [];
+        if (!voices.length) { App.renderPage(); return; }   // box unreachable → leave the voice alone
+        const current = String(this._defaults['voice.localTtsVoiceId'] || '');
+        if (!voices.some(v => v.value === current)) {
+            await this.saveDefault('voice.localTtsVoiceId', voices[0].value);
+        }
+        App.renderPage();
+    },
+
+    /** Splice probed option lists into an option's configFields — a free-text field whose
+     *  key was probed becomes a `type:'select'`. Detection-supplied options (the Kokoro
+     *  add-on / Piper voices) already arrive as selects and are left alone. */
+    _applyProbed(options) {
+        return options.map(o => {
+            if (!o.configFields) return o;
+            const fields = o.configFields.map(f => {
+                const probed = this._probedOptions[f.key];
+                if (!probed || f.type === 'select') return f;
+                return { ...f, type: 'select', options: probed };
+            });
+            return { ...o, configFields: fields };
+        });
     },
 
     /** Conversation-dialog rows at the top of AI Tools & Settings (moved from
@@ -937,11 +1110,19 @@ const VoiceAiPage = {
     },
 
     /** Selected id for the AI Model card: the Live model while agentMode='live',
-     *  else the cascade model. */
+     *  else the cascade model — or, when the account is on a local model that
+     *  matches a saved engine, that engine's row (so the card shows its NAME). */
     _selectedModelId(agentMode) {
         const d = this._defaults;
         if (agentMode === 'live') return String(d['voice.conversationModel'] || this.CONVERSATION_MODELS[0][0]);
-        return String(d['ai.model']);
+        return this._engineRowId('llm') || String(d['ai.model']);
+    },
+
+    /** The `engine:<id>` row id for the saved engine the current flat settings resolve
+     *  to, or null (cloud / HA / Android / a hand-typed URL that matches nothing). */
+    _engineRowId(kind) {
+        const e = window.EnginesStore?.matchSelected(kind, this._defaults);
+        return e ? `${window.VoiceAiOptions.ENGINE_ROW_PREFIX}${e.id}` : null;
     },
 
     /** Live S2S models in the same option shape as O.models() so the AI-model card

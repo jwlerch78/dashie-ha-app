@@ -1422,8 +1422,14 @@ Sports results (live from the sports provider):
   is absent, just give the score.
 - If there are multiple games, summarize the most relevant one (the team the user
   asked about) in the voice; put extra games in the text field.
-- If the results are empty or don't contain the game asked about, say you
-  couldn't find that game — do NOT invent a score or scorers.
+- If the results are EMPTY (no game in the window we checked), use your Google Search
+  to find the real answer, and give the ACTUAL date AND local start time — e.g. "They
+  don't play today; their next game is Thursday at 7:10 PM." Convert to the user's local
+  timezone and say the day plus the clock time; never answer with just a day, a vague
+  "later this week", or a time in another timezone. If the results are non-empty but
+  don't contain the game asked about, say you couldn't find that game.
+- NEVER invent a score, a scorer, or a kickoff time — a searched answer must come from
+  the search, not from memory.
 - Keep the spoken \`voice\` answer under 25 words and natural to hear aloud.
 `;
 
@@ -1470,6 +1476,7 @@ Provide a helpful, spoken-friendly response based only on this documentation.
 `;
 
     const AVAILABLE_TOOLS_LIST = `- calendar_events: query: {time_range: "today|tomorrow|this_week|next_week|weekend|next_weekend|next_30_days|next_60_days|next_12_months|date_range|<weekday e.g. wednesday for that specific day>", start_date?: "YYYY-MM-DD", end_date?: "YYYY-MM-DD", member_name?: "name (for a specific person)", query?: "keyword to find ONE specific event e.g. physical therapy (for "what time is X")", tags?: ["soccer"], mode?: "next|list"} - Family calendar events. Set member_name when the question is about one person; use "weekend" for "this weekend" and "next_weekend" for "next weekend"; use mode "next" for a single upcoming event ("when is the next game"), "list" (default) for an overview ("what's on this weekend"). For a NAMED month or explicit period ("in December", "the week of the 20th") use time_range "date_range" WITH start_date + end_date covering it (a named month = its NEXT occurrence). For "when is X" with NO period named ("when is Veeva Break"), use query + mode "next" + time_range "next_12_months" so the search can't miss a far-out event
+- calendar_write: query: {action: "create|confirm|cancel", title?: "event title", date?: "YYYY-MM-DD", start_time?: "HH:MM 24h", end_time?: "HH:MM 24h", all_day?: true, location?: "place", description?: "details", calendar_name?: "which calendar — when the user names one OR answers the which-calendar question"} - ADD an event to the family calendar ("add/put/schedule X on the/my calendar", "can you add an event…"). Emit action "create" IMMEDIATELY with whatever fields the user actually said — every field is optional, and a bare "add an event to dad's calendar" is a valid call with ONLY calendar_name; the DEVICE walks the user through the missing pieces (what to add, day and time, which calendar) and always asks for confirmation before writing. NEVER invent a field the user didn't say, and NEVER ask your own follow-up questions for this tool — call it and let the device ask. Dates must be ABSOLUTE, resolved from the current date/time in your context ("next Tuesday"/"Friday" = a real YYYY-MM-DD; an answer like "Friday at 8am" = date + start_time together). Omit end_time unless stated (defaults to one hour; a duration answer like "two hours" = end_time is start_time plus that). When the user answers one of the device's questions, emit action "create" again carrying the newly answered field(s) (already-given fields are remembered on the device; resend any you have); when the user answers the confirmation question, emit action "confirm" for yes or action "cancel" for no/never-mind — and if they answer the confirmation with a CHANGE ("make it two hours", "actually 9am"), emit action "create" with the corrected field instead. NOT for reading the calendar (calendar_events), NOT for reminders/timers (schedule_action)
 - family_members: query: {} - Info about family members (age, relationship, etc.)
 - web_search: query: "search string" - Current events, news, external info (IMPORTANT: query is a STRING)
 - chores: query: {hint: "task description", member_hint: "name"} - When someone reports completing a chore

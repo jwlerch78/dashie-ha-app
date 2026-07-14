@@ -363,6 +363,12 @@ const VoiceAiAnalysis = {
             ? `<span style="background: var(--accent-soft, #eef2ff); color: var(--accent, #4f46e5); font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.4px; padding: 2px 6px; border-radius: 4px;">Complex</span>`
             : `<span style="background: var(--surface-muted, #f3f4f6); color: var(--text-muted); font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.4px; padding: 2px 6px; border-radius: 4px;">Simple</span>`;
         const meta = `${this._fmtMs(intr.total_latency_ms)} · ${this._fmtTokens(intr.total_tokens)} tokens`;
+        // Model on the COLLAPSED row (it used to appear only once expanded). A model swap is the
+        // single most confusing thing that can happen here — the same prompt suddenly behaves
+        // differently and nothing in the code changed. Seen 2026-07-13: an account switched to a
+        // local qwen2.5:7b, which stopped calling tools entirely, and it read as a regression until
+        // someone thought to check `model`. In a fixed column it's a glance instead of a query.
+        const modelCell = this._modelCell(this._modelOf(intr));
 
         // DLG-3: a cascade DIALOG (multi-turn) threads every turn like a realtime
         // conversation — but keeps the cascade complexity badge + steps table. When
@@ -410,7 +416,8 @@ const VoiceAiAnalysis = {
                     <span style="color: var(--text-muted); width: 12px; font-size: 11px;">${caret}</span>
                     <span style="color: var(--text-muted); width: 72px; font-size: 12px;">${this._escape(time)}</span>
                     <span style="flex-shrink: 0;">${badge}</span>
-                    <span style="flex: 1; text-align: right; color: var(--text-muted); font-size: 12px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace;">${meta}</span>
+                    ${modelCell}
+                    <span style="flex: 1; text-align: right; color: var(--text-muted); font-size: 12px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace;">${this._escape(meta)}</span>
                 </div>
                 <div style="padding: 0 16px 12px 38px;">
                     ${transcript}
@@ -444,6 +451,7 @@ const VoiceAiAnalysis = {
                     <span style="width: 12px;"></span>
                     <span style="color: var(--text-muted); width: 72px; font-size: 12px;">${this._escape(time)}</span>
                     <span style="flex-shrink: 0;">${badge}</span>
+                    ${this._modelCell(this._modelOf(intr))}
                     <span style="flex: 1; text-align: right; color: var(--text-muted); font-size: 12px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace;">${this._escape(meta)}</span>
                 </div>
                 <div style="padding: 0 16px 12px 38px;">
@@ -536,6 +544,14 @@ const VoiceAiAnalysis = {
         if (intr.model) return intr.model;
         const ai = (intr.steps || []).find(s => s.kind === 'ai');
         return ai ? ai.label : null;
+    },
+
+    /** The model column on a collapsed row — fixed width so it reads as a COLUMN when you scan
+     *  the list. That's the whole point: a swap (gemini-2.5-flash → qwen2.5:7b) should jump out
+     *  as the column changing, not require expanding a row or querying ai_interactions. */
+    _modelCell(model) {
+        if (!model) return '';
+        return `<span title="${this._escape(model)}" style="flex-shrink: 0; width: 128px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-muted); font-size: 11px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace;">${this._escape(model)}</span>`;
     },
 
     /** Primary route of a cascade turn (the tool it used), else 'direct'. Realtime

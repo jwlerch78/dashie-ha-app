@@ -66,6 +66,7 @@ const Sidebar = {
                 ${this._navItem('account', 'Account', 'icon-account-settings', activePage)}
                 ${this._gatedNavItem('credits', 'Credits', 'icon-credits', activePage)}
                 ${this._gatedNavItem('api-keys', 'API Keys', 'icon-key', activePage)}
+                ${this._gatedNavItem('local-engines', 'Local Engines', 'icon-server', activePage)}
             </div>
 
             <div class="sidebar-footer">

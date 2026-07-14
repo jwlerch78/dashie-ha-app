@@ -133,9 +133,14 @@ const VoiceAiOptions = {
             description: 'Point the brain at your own model — local Ollama / llama.cpp or any OpenAI-compatible endpoint. Dashie keeps its cards, tools & dialog; only the model changes.',
             locality: 'local',
             cost: 'Free',
+            // `required` fields keep the picker open on select until filled
+            // (VoiceAiPage._needsConfig) — no reopen-to-configure dance.
+            // `probe` + `fills`: Test (or an auto-probe on load) asks the box for its
+            // model list and turns the named sibling field into a dropdown.
             configFields: [
-                { key: 'voice.localLlmUrl', label: 'Endpoint URL', placeholder: 'http://192.168.1.50:11434' },
-                { key: 'voice.localLlmModel', label: 'Model', placeholder: 'qwen3:8b' },
+                { key: 'voice.localLlmUrl', label: 'Endpoint URL', placeholder: 'http://192.168.1.50:11434', required: true,
+                  probe: 'llm', fills: 'voice.localLlmModel' },
+                { key: 'voice.localLlmModel', label: 'Model', placeholder: 'qwen3:8b', required: true },
                 { key: 'voice.localLlmKey', label: 'API key (optional)', type: 'password', placeholder: 'for remote endpoints' },
             ],
         }, {
@@ -154,9 +159,13 @@ const VoiceAiOptions = {
             cost: 'Free',
             ...this._hermesRowExtras(detection),
             configFields: [
-                { key: 'voice.hermesUrl', label: 'Hermes endpoint URL', placeholder: 'http://homeassistant.local:8642' },
+                { key: 'voice.hermesUrl', label: 'Hermes endpoint URL', placeholder: 'http://homeassistant.local:8642', required: true },
             ],
         }];
+        // Saved own-AI engines replace the generic "My own AI" inline-URL row.
+        const withEngines = this.withSavedEngines('llm', out, 'local');
+        out.length = 0;
+        out.push(...withEngines);
         for (const prov of this._PROVIDER_ORDER) {
             for (const m of all.filter(x => x.provider === prov)) {
                 const live = this._liveModelRates?.[m.id];   // margined, from rate card
@@ -191,7 +200,7 @@ const VoiceAiOptions = {
         { id: 'local_stt_url', label: 'Local Whisper (your box)', locality: 'local', cost: 'Free',
           description: 'Whisper server on your own box (OpenAI-compatible, LAN, direct).',
           configFields: [
-            { key: 'voice.localSttUrl', label: 'Whisper box URL', placeholder: 'http://192.168.1.50:8000', probe: 'stt' },
+            { key: 'voice.localSttUrl', label: 'Whisper box URL', placeholder: 'http://192.168.1.50:8000', probe: 'stt', required: true },
           ] },
         { id: 'va_default', label: 'Home Assistant', locality: 'local', cost: 'Free', haOnly: true,
           description: "Your Home Assistant voice pipeline's speech-to-text." },
@@ -212,7 +221,8 @@ const VoiceAiOptions = {
         { id: 'local_url', label: 'Local TTS (your box)', locality: 'local', cost: 'Free',
           description: 'Kokoro / OpenAI-compatible TTS on your own box (LAN, direct).',
           configFields: [
-            { key: 'voice.localTtsUrl', label: 'TTS box URL', placeholder: 'http://192.168.1.50:8880', probe: 'tts' },
+            { key: 'voice.localTtsUrl', label: 'TTS box URL', placeholder: 'http://192.168.1.50:8880', probe: 'tts', required: true,
+              fills: 'voice.localTtsVoiceId' },
             { key: 'voice.localTtsVoiceId', label: 'Voice', placeholder: 'af_heart' },
           ] },
         { id: 'va_default', label: 'Home Assistant', locality: 'local', cost: 'Free', haOnly: true,
@@ -238,13 +248,74 @@ const VoiceAiOptions = {
         return list.find(e => re.test(String(e.engine_id || '')) || re.test(String(e.name || ''))) || null;
     },
 
+    // ── saved local engines (Local Engines page) ─────────────
+    // A saved engine renders as a NAMED row (id `engine:<uuid>`) in the picker;
+    // choosing it resolves to the flat account keys the tablets read
+    // (EnginesStore.resolveToSettings) — the device never sees the registry.
+    // When the user has saved engines of a kind, they REPLACE that kind's inline
+    // URL row (own-box TTS/STT, "My own AI") — the address now lives on the
+    // Local Engines page, so the picker stays uncluttered. With none saved (or
+    // off-add-on, where engines can't be probed) the inline row stays exactly as
+    // it is today, so nobody loses the ability to just type a URL.
+
+    ENGINE_ROW_PREFIX: 'engine:',
+
+    /** Saved engines of a kind, as picker rows. */
+    savedEngineRows(kind) {
+        const S = window.EnginesStore;
+        if (!S || !DashieAuth?.isAddonMode) return [];
+        return S.cached(kind).map(e => ({
+            id: `${this.ENGINE_ROW_PREFIX}${e.id}`,
+            label: e.name,
+            locality: 'local',
+            cost: 'Free',
+            group: kind === 'llm' ? 'Local' : undefined,
+            description: [e.url, e.model].filter(Boolean).join(' · '),
+            engineRecord: e,
+        }));
+    },
+
+    /** The "no engines saved yet" row: a pointer to the Local Engines page rather
+     *  than a dead end. Not selectable (like an install row). */
+    _addEngineRow(kind, label) {
+        return {
+            id: `${this.ENGINE_ROW_PREFIX}add`,
+            label,
+            locality: 'local',
+            cost: 'Free',
+            group: kind === 'llm' ? 'Local' : undefined,
+            description: 'Run your own AI, voice, or speech-to-text — add it once and it shows up here by name.',
+            navigateTo: 'local-engines',
+        };
+    },
+
+    /** Splice saved engines into a picker list, replacing the inline-URL row for that
+     *  kind. Off-add-on (or when EnginesStore is absent) the list is returned as-is. */
+    withSavedEngines(kind, options, inlineRowId) {
+        if (!DashieAuth?.isAddonMode || !window.EnginesStore) return options;
+        const saved = this.savedEngineRows(kind);
+        const rows = saved.length ? saved : [this._addEngineRow(kind, this._ADD_LABEL[kind])];
+        const out = [];
+        for (const o of options) {
+            if (o && o.id === inlineRowId) out.push(...rows);   // inline URL row → engine rows
+            else out.push(o);
+        }
+        return out;
+    },
+
+    _ADD_LABEL: {
+        tts: '+ Add a local voice',
+        stt: '+ Add local speech-to-text',
+        llm: '+ Add my own AI',
+    },
+
     /** TTS option list in the §3 order: cloud, Piper (if detected), your-box, HA
      *  pipeline, Android. */
     ttsOptions(detection) {
         const base = Object.fromEntries(this.TTS.map(o => [o.id, o]));
         const out = [base.dashie_cloud, this._piperOption(detection), this._localUrlOption(base.local_url, detection),
                      base.va_default, base.android_voice];
-        return out.filter(Boolean);
+        return this.withSavedEngines('tts', out.filter(Boolean), 'local_url');
     },
 
     /** STT option list in the §3 order: cloud, Whisper (if detected), your-box,
@@ -253,7 +324,7 @@ const VoiceAiOptions = {
         const base = Object.fromEntries(this.STT.map(o => [o.id, o]));
         const out = [base.dashie_cloud, this._whisperOption(detection), base.local_stt_url,
                      base.va_default, base.android_voice];
-        return out.filter(Boolean);
+        return this.withSavedEngines('stt', out.filter(Boolean), 'local_stt_url');
     },
 
     /** Piper (Home Assistant) engine-direct TTS row — only when a Piper TTS engine

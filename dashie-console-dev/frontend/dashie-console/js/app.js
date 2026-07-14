@@ -24,6 +24,7 @@ const App = {
         account:       { page: AccountPage },
         credits:       { page: CreditsPage },
         'api-keys':    { page: ApiKeysPage },
+        'local-engines': { page: LocalEnginesPage },
     },
 
     async init() {

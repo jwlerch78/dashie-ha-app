@@ -123,6 +123,11 @@ const FeatureGate = {
         // /data volume, so the page only exists inside the add-on console.
         apiKeys:    'addon',
 
+        // Local Engines (own-box Ollama / Kokoro / Piper / whisper URLs) — the
+        // save flow probes the LAN box through the add-on (an https:// website
+        // console can't reach a http:// LAN engine), so it's add-on only.
+        localEngines: 'addon',
+
         // Locations / GPS — STAYS alpha (dev/innermost only), mirroring the
         // feature_access catalog (rollout='alpha').
         locations:  'alpha-only',
@@ -161,6 +166,7 @@ const FeatureGate = {
         'scheduled-actions': 'scheduledActions',
         'credits':     'credits',
         'api-keys':    'apiKeys',
+        'local-engines': 'localEngines',
     },
 
     /**
