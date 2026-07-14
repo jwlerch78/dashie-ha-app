@@ -33,6 +33,7 @@ const VoiceAiPage = {
     _expandedCards: new Set(), // expanded component cards (model/stt/tts/search)
     _probedOptions: {},     // dotted key → [{value,label}] learned by probing an own-box URL
                             // (Kokoro/Piper voices, Ollama models) → renders as a dropdown
+    _previewAudio: null,    // the ▶ voice sample currently playing (never two at once)
 
     setTab(tab) {
         if (tab !== 'settings' && tab !== 'personalities' && tab !== 'chat' && tab !== 'analysis' && tab !== 'benchmark') return;
@@ -1064,18 +1065,77 @@ const VoiceAiPage = {
                 autocomplete="off" onchange="VoiceAiPage.saveLocalField('${voiceField.key}', this.value)"
                 style="flex: 1; padding: 7px 9px; border: 1px solid var(--border, #d1d5db); border-radius: 5px; font-size: 13px;">`;
         }
-        // NOTHING else goes in controlHtml. renderControlRow is a flex row
-        // (label | control | caret) and SELECT_STYLE relies on `flex: 1` to span it — an
-        // extra sibling here steals that space and squeezes the <select> to a sliver you
-        // can't click. That's exactly what a language-fallback note did (John, 2026-07-14);
-        // the note is gone now, but the constraint stands.
+        // ▶ Preview — hear the selected voice before committing to it. Only for own-box
+        // engines (we proxy the synthesis through the add-on; see previewVoice).
+        // ⚠️ renderControlRow is a flex row (label | control | caret) and SELECT_STYLE spans
+        // it via `flex: 1`. Any sibling added here MUST be `flex-shrink: 0` and fixed-width,
+        // or it steals that space and squeezes the <select> to an unclickable sliver — which
+        // is exactly what a language-fallback note did (John, 2026-07-14).
+        const canPreview = DashieAuth.isAddonMode
+            && voiceField.key === 'voice.localTtsVoiceId'
+            && String(d['voice.localTtsUrl'] || '').trim();
+        const preview = canPreview
+            ? `<button id="voice-preview-btn" title="Hear this voice"
+                   onclick="event.stopPropagation(); VoiceAiPage.previewVoice(this)"
+                   style="flex-shrink: 0; width: 30px; height: 30px; border-radius: 50%; border: 1px solid var(--border, #d1d5db);
+                          background: var(--bg-card, #fff); color: var(--text-primary); cursor: pointer; font-size: 11px; line-height: 1;
+                          display: inline-flex; align-items: center; justify-content: center;">▶</button>`
+            : '';
         return D.renderControlRow({
             label: 'Voice',
             icon: 'icon-voice',
             saving: this._savingKey === voiceField.key,
-            controlHtml: control,
+            controlHtml: control + preview,
             caret,
         });
+    },
+
+    /** Play a sample of the currently-selected own-box voice. The synthesis is proxied by
+     *  the add-on (`/api/voice/preview`): this console is HTTPS and the engine is a plain-http
+     *  LAN box, so the browser cannot fetch it directly — mixed content. Same reason the
+     *  URL probe is server-side. */
+    async previewVoice(btn) {
+        const d = this._defaults || {};
+        const url = String(d['voice.localTtsUrl'] || '').trim();
+        const voice = String(d['voice.localTtsVoiceId'] || '').trim();
+        if (!url) { Toast.info('Add the engine first.'); return; }
+        // Already playing → the button is a stop button. (Also covers a double-click and
+        // switching voices mid-sample: never two samples at once.)
+        if (this._previewAudio) {
+            this._previewAudio.pause();
+            URL.revokeObjectURL(this._previewAudio.src);
+            this._previewAudio = null;
+            if (btn) { btn.disabled = false; btn.textContent = '▶'; }
+            return;
+        }
+        const restore = () => { if (btn) { btn.disabled = false; btn.textContent = '▶'; } };
+        if (btn) { btn.disabled = true; btn.textContent = '…'; }
+        try {
+            const r = await fetch(DashieAuth._addonUrl('/api/voice/preview'), {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ url, voice }),
+            });
+            if (!r.ok) {
+                // The endpoint 404s on an add-on older than this feature — say so plainly
+                // rather than reporting a bogus engine failure.
+                if (r.status === 404) { Toast.error('Update the Dashie add-on to preview voices.'); restore(); return; }
+                const err = await r.json().catch(() => ({}));
+                Toast.error(`Couldn't play a sample — ${err.message || `HTTP ${r.status}`}`);
+                restore();
+                return;
+            }
+            const blob = await r.blob();
+            const audio = new Audio(URL.createObjectURL(blob));
+            this._previewAudio = audio;
+            audio.onended = () => { URL.revokeObjectURL(audio.src); if (this._previewAudio === audio) this._previewAudio = null; restore(); };
+            audio.onerror = () => { Toast.error("Couldn't play the sample."); restore(); };
+            await audio.play();
+            if (btn) btn.textContent = '⏸';
+        } catch (e) {
+            Toast.error(`Couldn't play a sample — ${e?.message || e}`);
+            restore();
+        }
     },
 
     /** Reachability test for the own-box engine URLs (Local TTS / Local Whisper /
