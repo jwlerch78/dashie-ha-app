@@ -1004,8 +1004,8 @@ const VoiceAiPage = {
             // A local box offers every language it knows (Piper: 163 voices) — narrow to
             // the household's. The ladder never yields an empty list; `note` explains any
             // fallback (e.g. Piper has no Japanese voices at all).
-            const { options, note } = this._narrowVoices(probed);
-            return { key: 'voice.localTtsVoiceId', label: 'Voice', type: 'select', options, note };
+            const { options } = this._narrowVoices(probed);
+            return { key: 'voice.localTtsVoiceId', label: 'Voice', type: 'select', options };
         }
         if (!['ha_engine', 'local_url'].includes(ttsSelected.id)) return null;
         return (ttsSelected.configFields || []).find(f => voiceFieldKeys.includes(f.key)) || null;
@@ -1064,16 +1064,16 @@ const VoiceAiPage = {
                 autocomplete="off" onchange="VoiceAiPage.saveLocalField('${voiceField.key}', this.value)"
                 style="flex: 1; padding: 7px 9px; border: 1px solid var(--border, #d1d5db); border-radius: 5px; font-size: 13px;">`;
         }
-        // Why the list isn't in your language (the engine has none, or only other
-        // regions) — say it rather than silently showing a surprising set.
-        const note = voiceField.note
-            ? `<div style="font-size: 11px; color: var(--text-muted); margin-top: 4px;">${this._escape(voiceField.note)}</div>`
-            : '';
+        // NOTHING else goes in controlHtml. renderControlRow is a flex row
+        // (label | control | caret) and SELECT_STYLE relies on `flex: 1` to span it — an
+        // extra sibling here steals that space and squeezes the <select> to a sliver you
+        // can't click. That's exactly what a language-fallback note did (John, 2026-07-14);
+        // the note is gone now, but the constraint stands.
         return D.renderControlRow({
             label: 'Voice',
             icon: 'icon-voice',
             saving: this._savingKey === voiceField.key,
-            controlHtml: control + note,
+            controlHtml: control,
             caret,
         });
     },
@@ -1196,8 +1196,7 @@ const VoiceAiPage = {
                 // Voice lists get language-narrowed here too — this is the INLINE local_url
                 // path (no saved engine), which used to splice all 163 Piper voices in raw.
                 if (f.key === 'voice.localTtsVoiceId') {
-                    const { options: opts, note } = this._narrowVoices(probed);
-                    return { ...f, type: 'select', options: opts, note };
+                    return { ...f, type: 'select', options: this._narrowVoices(probed).options };
                 }
                 return { ...f, type: 'select', options: probed };
             });

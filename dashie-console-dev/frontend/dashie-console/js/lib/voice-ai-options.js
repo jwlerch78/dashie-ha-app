@@ -368,6 +368,30 @@ const VoiceAiOptions = {
      *  Map it to a language family so one filter serves both engines. */
     _KOKORO_LANG: { a: 'en', b: 'en', e: 'es', f: 'fr', h: 'hi', i: 'it', j: 'ja', p: 'pt', z: 'zh' },
 
+    // …and to a human accent, so the picker can say "Nicole (American female)" instead of
+    // dumping the raw id `af_nicole` on the user.
+    _KOKORO_ACCENT: { a: 'American', b: 'British', e: 'Spanish', f: 'French', h: 'Hindi',
+                      i: 'Italian', j: 'Japanese', p: 'Portuguese', z: 'Mandarin' },
+
+    /** Human label for a local-engine voice id. Both engines encode everything the user
+     *  cares about IN the id, so decode it rather than showing `af_nicole` / `en_US-amy-low`:
+     *    Kokoro `af_nicole`      → "Nicole (American female)"
+     *    Piper  `en_US-amy-low`  → "Amy (fast)"      (see _piperVoiceLabel)
+     *  Anything unrecognized keeps whatever label the engine gave us. */
+    localVoiceLabel(value, fallback) {
+        const id = String(value || '');
+        const kokoro = id.match(/^([abefhijpz])([fm])_(.+)$/);
+        if (kokoro) {
+            const [, lang, gender, name] = kokoro;
+            const accent = this._KOKORO_ACCENT[lang] || '';
+            const who = [accent, gender === 'm' ? 'male' : 'female'].filter(Boolean).join(' ');
+            const pretty = name.charAt(0).toUpperCase() + name.slice(1).replace(/_/g, ' ');
+            return who ? `${pretty} (${who})` : pretty;
+        }
+        if (/^[a-z]{2}_[A-Z]{2}-/.test(id)) return this._piperVoiceLabel(fallback, id);
+        return fallback || id;
+    },
+
     /** The language of a voice option: its `language` field (piper shim → 'en_US'),
      *  else parsed from the id — 'en_US-amy-low' → 'en_US', 'af_heart' → 'en'. Null when
      *  the shape is unrecognized (an option we must never filter away). */
@@ -382,33 +406,34 @@ const VoiceAiOptions = {
         return null;
     },
 
-    /** Narrow a probed voice list to `locale` (e.g. 'en-US'). Returns
-     *  { options, narrowed, note } — `note` explains a fallback so the UI can say why the
-     *  list isn't in the user's language. locale 'system'/absent → no narrowing (we don't
-     *  know what the device resolves to). Options with no detectable language are always
-     *  kept (Kokoro-style lists we can't parse must not vanish). */
+    /** Narrow a probed voice list to `locale` (e.g. 'en-US') and give every entry a human
+     *  label. Returns { options }. The ladder — exact locale → language family → everything
+     *  — can never yield an empty picker (Piper has no Japanese voices at all; Kokoro's ids
+     *  only carry a language family, never a region, so `en-US` lands on the family rung for
+     *  every Kokoro user). It does so SILENTLY: an explanatory note fired on the common path
+     *  and just read as clutter (John, 2026-07-14). Options with no detectable language are
+     *  always kept — a list we can't parse must not vanish. */
     filterVoicesByLanguage(options, locale) {
-        const all = Array.isArray(options) ? options : [];
+        const all = (Array.isArray(options) ? options : [])
+            .map(o => ({ ...o, label: this.localVoiceLabel(o.value, o.label) }));
         const loc = String(locale || '').trim();
-        if (!all.length || !loc || loc === 'system') return { options: all, narrowed: false, note: '' };
+        if (!all.length || !loc || loc === 'system') return { options: all };
         const want = loc.replace('-', '_');            // en-US → en_US
         const family = want.split('_')[0];             // en
         const langOf = o => this.voiceLanguage(o);
         const unknown = all.filter(o => !langOf(o));   // never filtered away
 
         const exact = all.filter(o => langOf(o) === want);
-        if (exact.length) return { options: [...exact, ...unknown], narrowed: true, note: '' };
+        if (exact.length) return { options: [...exact, ...unknown] };
 
-        // No exact locale (Piper has es_MX/es_AR but no es_US) → same language, any region.
+        // No exact locale (Piper has es_MX/es_AR but no es_US; Kokoro only ever says "en") →
+        // same language, any region.
         const fam = all.filter(o => String(langOf(o) || '').split('_')[0] === family);
-        if (fam.length) {
-            return { options: [...fam, ...unknown], narrowed: true,
-                     note: `No ${loc} voices on this engine — showing all ${family.toUpperCase()} voices.` };
-        }
-        // The engine has nothing in this language at all (Piper has no ja/ko) → show
-        // everything rather than an empty picker, and say so.
-        return { options: all, narrowed: false,
-                 note: `This engine has no ${loc} voices — showing everything it offers.` };
+        if (fam.length) return { options: [...fam, ...unknown] };
+
+        // The engine has nothing in this language at all → show everything rather than an
+        // empty picker.
+        return { options: all };
     },
 
     _piperOption(detection) {
