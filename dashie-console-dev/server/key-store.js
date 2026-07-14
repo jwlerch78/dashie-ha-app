@@ -20,6 +20,11 @@ const KEYS_FILE = path.join(DATA_DIR, 'api-keys.json');
 /** Provider → required fields. A provider counts as "configured" only when
  *  every required field is a non-empty string. */
 const PROVIDERS = {
+    // OpenRouter is the "one key, every model" option: it proxies EVERY model in our
+    // catalog over an OpenAI-compatible endpoint, so a single key covers Claude/GPT/
+    // Gemini/Nova without the user signing up for four accounts — and without us
+    // building the deferred Anthropic-messages / SigV4 adapters. See brain/providers.js.
+    openrouter: ['key'],
     gemini:  ['key'],
     claude:  ['key'],
     openai:  ['key'],

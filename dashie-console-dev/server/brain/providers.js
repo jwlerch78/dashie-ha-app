@@ -38,7 +38,42 @@ function providerForModel(modelId) {
 const OPENAI_COMPAT = {
     openai: { chatUrl: 'https://api.openai.com/v1/chat/completions', label: 'OpenAI' },
     gemini: { chatUrl: 'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions', label: 'Gemini' },
+    openrouter: { chatUrl: 'https://openrouter.ai/api/v1/chat/completions', label: 'OpenRouter' },
 };
+
+/** OUR model id → OpenRouter wire id ("one key, every model", John 2026-07-14).
+ *
+ *  OpenRouter proxies every model in our catalog over an OpenAI-compatible endpoint, so an
+ *  OpenRouter key alone lights up the WHOLE picker — including claude-* and the Nova
+ *  (bedrock) ids, which direct-key BYOK still can't serve (they'd need the deferred
+ *  Anthropic-messages / SigV4 adapters). All 14 catalog ids verified present on
+ *  GET https://openrouter.ai/api/v1/models (2026-07-14).
+ *
+ *  Explicit table, NOT a derivation rule: the transforms differ per family (claude dashes →
+ *  dots, bedrock strips `us.` and `:0`), and an unmapped model must resolve to "no OpenRouter
+ *  route" rather than a guessed slug that 404s at request time. Add a row when the catalog
+ *  gains a model (js/ai/ai-models-catalog.js). */
+const OPENROUTER_MODELS = {
+    'claude-sonnet-4-6':          'anthropic/claude-sonnet-4.6',
+    'claude-opus-4-8':            'anthropic/claude-opus-4.8',
+    'claude-haiku-4-5':           'anthropic/claude-haiku-4.5',
+    'gpt-5.5':                    'openai/gpt-5.5',
+    'gpt-5.4':                    'openai/gpt-5.4',
+    'gpt-5.4-mini':               'openai/gpt-5.4-mini',
+    'gpt-5.4-nano':               'openai/gpt-5.4-nano',
+    'gemini-3.5-flash':           'google/gemini-3.5-flash',
+    'gemini-2.5-flash':           'google/gemini-2.5-flash',
+    'gemini-3.1-flash-lite':      'google/gemini-3.1-flash-lite',
+    'gemini-2.5-pro':             'google/gemini-2.5-pro',
+    'us.amazon.nova-2-lite-v1:0': 'amazon/nova-2-lite-v1',
+    'us.amazon.nova-pro-v1:0':    'amazon/nova-pro-v1',
+    'us.amazon.nova-micro-v1:0':  'amazon/nova-micro-v1',
+};
+
+/** Can an OpenRouter key serve this model? (mapped id + a stored openrouter key) */
+function openRouterCovers(modelId) {
+    return !!OPENROUTER_MODELS[modelId] && !!keyStore.status().openrouter;
+}
 
 /**
  * Should this account's brain run in the add-on, and why?
@@ -50,24 +85,50 @@ function resolveBrainRoute(acct) {
     if (model === 'hermes') return { route: 'local', reason: 'hermes' };
     if (model === 'local') return { route: 'local', reason: 'local_model' };
     const provider = providerForModel(model);
+    // Direct provider key first (cheaper — no OpenRouter margin — and the more specific
+    // configuration), then OpenRouter as the universal fallback for anything else.
     if (provider && OPENAI_COMPAT[provider] && keyStore.status()[provider]) {
         return { route: 'local', reason: 'byok', provider };
     }
+    if (openRouterCovers(model)) return { route: 'local', reason: 'byok', provider: 'openrouter' };
     return { route: 'cloud', reason: 'cloud' };
 }
 
 /**
- * Resolve the concrete inference target for a BYOK cloud model. Returns null when the model's
- * provider has no stored key or no adapter — callers surface an EXPLICIT error (degradation
- * rule WS-I.8: never silently fall back to the metered Dashie brain).
- * @returns {{chatUrl: string, key: string, provider: string, label: string} | null}
+ * Resolve the concrete inference target for a BYOK cloud model. Returns null when the model has
+ * neither a direct provider key (with an adapter) nor OpenRouter coverage — callers surface an
+ * EXPLICIT error (degradation rule WS-I.8: never silently fall back to the metered Dashie brain).
+ *
+ * Precedence: direct key → OpenRouter. `model` in the result is the WIRE id to send (our catalog
+ * id for a direct call, the `vendor/model` slug for OpenRouter) — callers must use it, not acct.model.
+ * @returns {{chatUrl: string, key: string, provider: string, label: string, model: string} | null}
  */
 function resolveByokTarget(model) {
     const provider = providerForModel(model);
-    if (!provider || !OPENAI_COMPAT[provider]) return null;
-    const entry = keyStore.readKeys()[provider];
-    if (!entry || !entry.key) return null;
-    return { chatUrl: OPENAI_COMPAT[provider].chatUrl, key: entry.key, provider, label: OPENAI_COMPAT[provider].label };
+    if (provider && OPENAI_COMPAT[provider]) {
+        const entry = keyStore.readKeys()[provider];
+        if (entry && entry.key) {
+            return {
+                chatUrl: OPENAI_COMPAT[provider].chatUrl, key: entry.key, provider,
+                label: OPENAI_COMPAT[provider].label, model,
+            };
+        }
+    }
+    // OpenRouter fallback: proxies the whole catalog (incl. claude-* / Nova, which direct-key
+    // BYOK still can't serve) over the same OpenAI-compatible path, under one key.
+    const orModel = OPENROUTER_MODELS[model];
+    if (orModel) {
+        const entry = keyStore.readKeys().openrouter;
+        if (entry && entry.key) {
+            return {
+                chatUrl: OPENAI_COMPAT.openrouter.chatUrl, key: entry.key, provider: 'openrouter',
+                label: 'OpenRouter', model: orModel,
+                // OpenRouter's app-attribution headers (optional, but they rank/allow-list on them).
+                headers: { 'HTTP-Referer': 'https://dashieapp.com', 'X-Title': 'Dashie' },
+            };
+        }
+    }
+    return null;
 }
 
 /** Free key-validation probes: each provider's model-LIST endpoint (GET, no
@@ -78,6 +139,10 @@ const VALIDATE = {
     openai: { url: 'https://api.openai.com/v1/models', headers: (k) => ({ Authorization: `Bearer ${k}` }) },
     gemini: { url: 'https://generativelanguage.googleapis.com/v1beta/openai/models', headers: (k) => ({ Authorization: `Bearer ${k}` }) },
     claude: { url: 'https://api.anthropic.com/v1/models', headers: (k) => ({ 'x-api-key': k, 'anthropic-version': '2023-06-01' }) },
+    // /key returns the key's own metadata (label, limit, usage) — auth-required and free,
+    // so it's the right no-charge probe. (/models is PUBLIC on OpenRouter and would 200
+    // for a garbage key, which would make the Test button lie.)
+    openrouter: { url: 'https://openrouter.ai/api/v1/key', headers: (k) => ({ Authorization: `Bearer ${k}` }) },
 };
 
 /**

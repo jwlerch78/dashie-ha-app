@@ -52,7 +52,9 @@ function resolveLanTarget(acct) {
     // resolver saw a BYO key for its provider (providers.js). Re-resolve it fresh.
     const byok = providers.resolveByokTarget(acct.model);
     if (byok) {
-      return { endpoint: '', chatUrl: byok.chatUrl, model: acct.model, key: byok.key, providerLabel: byok.label, source: 'byok' };
+      // byok.model is the WIRE id — our catalog id for a direct provider call, the
+      // `vendor/model` slug when it routes via OpenRouter. Never send acct.model here.
+      return { endpoint: '', chatUrl: byok.chatUrl, model: byok.model, key: byok.key, providerLabel: byok.label, headers: byok.headers, source: 'byok' };
     }
     return { endpoint: '', model: acct.model, key: '', source: 'byok_key_missing' };
   }
@@ -112,6 +114,7 @@ router.post('/converse-local', express.json(), async (req, res) => {
     model,
     key: target.key,
     providerLabel: target.providerLabel || '',
+    extraHeaders: target.headers || {},   // OpenRouter attribution headers
     accountToken: token,   // BYOK tool gate: checkSpendable reads the balance under the account
   });
 
