@@ -4,7 +4,7 @@
    The voice-conversation brain core, bundled for the Node add-on (on-prem L3).
    ONE core, TWO runtimes: the cloud Deno edge fn runs the TS source directly;
    this CJS bundle is the add-on's copy of the SAME source. Never hand-edit.
-   Source git SHA: f556deefbd7afc4a35fd73e771e6c55d83317310
+   Source git SHA: 185647a7fb88a067ff7056f87fb28270c4bb954b
    Regenerate:  node scripts/build-node-brain.mjs && ./sync-brain-bundle.sh
    Contract:    supabase/functions/voice-conversation/README.md + build plan §13.16
    ============================================================ */
@@ -4148,6 +4148,22 @@ async function orchestrate(deps, io, voiceCtx) {
   await logPass(io, token, REQUEST_TYPE, req.endpoint_id, sessionId, p1Prompt, pass1);
   return finalize({ t0, parsed: p1Parsed, raw: pass1.raw, stages: [p1Stage], usage: pass1.raw.usage, latency: pass1.latency_ms, unsupported_tool: p1Parsed.tool, sessionId, route });
 }
+function recoverHaAction(parsed) {
+  const p = parsed;
+  const query = p.query ?? {};
+  const params = p.parameters ?? p.action?.parameters ?? {};
+  const raw = Array.isArray(query.commands) ? query.commands : Array.isArray(params.commands) ? params.commands : Array.isArray(p.commands) ? p.commands : null;
+  if (!raw) return null;
+  const commands = raw.filter((c) => !!c && typeof c === "object" && typeof c.domain === "string" && typeof c.service === "string");
+  if (commands.length === 0) return null;
+  const voice = typeof parsed.voice === "string" && parsed.voice ? parsed.voice : "Done.";
+  return {
+    type: "action",
+    voice,
+    text: null,
+    action: { category: "homeassistant", command: "execute_commands", parameters: { commands } }
+  };
+}
 function routeOf(parsed) {
   if (!parsed) return "direct";
   if (parsed.type === "response") return "direct";
@@ -4164,6 +4180,10 @@ async function secondPass(io, deps, t0, inquiryType, retrievedData, priorStages,
     return errorTurn(t0, pass2, [...priorStages, stageErr("pass2", pass2)]);
   }
   let parsed = parseContent(pass2.raw.content);
+  if (inquiryType === "home-assistant" && parsed && parsed.type === "info_request") {
+    const recovered = recoverHaAction(parsed);
+    if (recovered) parsed = recovered;
+  }
   const jsonish = /^\s*(```[a-z]*\s*)?[{[]/i.test(pass2.raw.content || "");
   if (parsed && parsed.type === "info_request" || !parsed && jsonish) {
     console.warn(`\u26A0\uFE0F pass2 non-terminal (${parsed?.type ?? "unparsed JSON-ish"}) \u2014 clarifying instead of leaking`);
@@ -4389,4 +4409,4 @@ function toolMeta(parsed, route, caps) {
   runSports,
   wantsGameDetail
 });
-module.exports.BRAIN_SOURCE_SHA = "f556deefbd7afc4a35fd73e771e6c55d83317310";
+module.exports.BRAIN_SOURCE_SHA = "185647a7fb88a067ff7056f87fb28270c4bb954b";
