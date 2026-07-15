@@ -113,16 +113,40 @@ const CreditsControls = {
         }
         this._busy = false; App.renderPage();
     },
-    toggleAutorefill() { this._saveAutorefill({ enabled: !(this._autorefill?.enabled) }); },
+    /** ASYMMETRIC BY DESIGN.
+     *  Turning auto-replenish ON grants standing authority to charge a saved
+     *  payment method off-session, so it goes through the consent modal (terms,
+     *  instrument, 1/day guarantee) — an affirmative, informed act.
+     *  Turning it OFF is instant and unguarded: never make someone jump a hurdle
+     *  to STOP being charged. See build-plan 20260714_TABLET_AUTOREFILL_UX.md D2. */
+    toggleAutorefill() {
+        const on = !!this._autorefill?.enabled;
+        if (on) { this._saveAutorefill({ enabled: false }); return; }   // kill switch: immediate
+        this.openAutorefillModal('enable');
+        // The browser already flipped the checkbox visually on click. Re-render so it
+        // snaps back to the real (still-off) state — otherwise cancelling the consent
+        // modal leaves a checked box over a disabled rule. The modal is body-attached,
+        // so it survives the re-render.
+        App.renderPage();
+    },
 
-    /** Open the modal to edit the threshold + top-up amount. */
-    openAutorefillModal() {
+    /** mode 'enable' → consent modal (also flips enabled:true on confirm).
+     *  mode 'edit'   → plain rule editor for an already-on rule. */
+    openAutorefillModal(mode = 'edit') {
         if (typeof AutorefillModal === 'undefined') return;
         const ar = this._autorefill || {};
+        const enabling = mode === 'enable';
         AutorefillModal.open({
+            mode,
             threshold: Number(ar.threshold_usd ?? 1),
             topup: Number(ar.topup_usd ?? 10),
-            onSave: (threshold, topup) => this._saveAutorefill({ threshold_usd: threshold, topup_usd: topup }),
+            dailyCap: Number(ar.daily_cap ?? 1),
+            card: ar.has_card ? { brand: ar.card_brand, last4: ar.card_last4 } : null,
+            onSave: (threshold, topup) => this._saveAutorefill(
+                enabling
+                    ? { enabled: true, threshold_usd: threshold, topup_usd: topup }
+                    : { threshold_usd: threshold, topup_usd: topup }
+            ),
         });
     },
 
@@ -132,6 +156,17 @@ const CreditsControls = {
     _buyButton() {
         return `<button class="btn btn-primary btn-sm" ${this._busy ? 'disabled' : ''}
             onclick="CreditsControls.openBuyModal()" style="font-weight:600; flex-shrink:0;">Buy more</button>`;
+    },
+
+    /** Name the saved instrument. NOT always a card — Stripe Link is Checkout's
+     *  default wallet, so card_brand may be a PM *type* ('link') with no last4.
+     *  Never render "Visa ending 4242" for a Link user. */
+    _describeCard(ar) {
+        const brand = ar && ar.card_brand;
+        if (!brand) return 'your saved payment method';
+        if (brand === 'link') return 'your Link wallet';
+        const pretty = brand.charAt(0).toUpperCase() + brand.slice(1);
+        return ar.card_last4 ? `your ${pretty} ••${ar.card_last4}` : `your saved ${pretty}`;
     },
 
     /** Auto-replenish checkbox + a subtext summary of the rule. The rule itself
@@ -154,7 +189,12 @@ const CreditsControls = {
         if (enableDisabled) {
             inline = `<span style="color: var(--text-muted); font-size:11px;">Buy a pack once to save a card, then enable.</span>`;
         } else if (ar.enabled) {
-            inline = `<span style="color: var(--text-muted); font-size:12px;">When below $${threshold.toFixed(2)}, add $${topup}<a href="#" onclick="event.preventDefault(); CreditsControls.openAutorefillModal()" style="color: var(--accent); margin-left:6px;">Edit</a></span>`;
+            // State the instrument and the cap, not just the rule — this is the only
+            // place a user sees, at a glance, what standing authority they granted.
+            const cap = Number(ar.daily_cap ?? 1);
+            const per = cap === 1 ? 'max 1/day' : `max ${cap}/day`;
+            const instrument = this._describeCard(ar);
+            inline = `<span style="color: var(--text-muted); font-size:12px;">When below $${threshold.toFixed(2)}, add $${topup} to ${this._escape(instrument)} · ${per}<a href="#" onclick="event.preventDefault(); CreditsControls.openAutorefillModal('edit')" style="color: var(--accent); margin-left:6px;">Edit</a></span>`;
         }
 
         return `

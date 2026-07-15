@@ -156,3 +156,24 @@
     .usage-service { width: 120px; }
     .usage-count { width: 80px; }
 }
+
+/* ── Credit Usage tab (build-plan 20260714_TABLET_AUTOREFILL_UX §P3) ──────────
+   The tablet's Add-Credits QR sends people to this tab on a PHONE, so it has to
+   survive a ~390px viewport. Two things broke: a hardcoded 2-col stat grid, and
+   full-width usage tables. The grid's columns are set inline, so !important is
+   required to override it. */
+
+/* Tables scroll inside their card rather than blowing out the page width.
+   Safe at every breakpoint — on desktop there's nothing to scroll. */
+.table-scroll {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+}
+
+@media (max-width: 640px) {
+    /* Balance card (with the auto-replenish control) stacks above the period card,
+       instead of being squeezed into a half-width column. */
+    .credits-stat-grid {
+        grid-template-columns: 1fr !important;
+    }
+}

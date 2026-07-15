@@ -437,7 +437,7 @@ const AccountUsage = {
         const weekCost = this._totalCostForWeek();
         const monthCost = this._totalCostForMonth();
         return `
-            <div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; margin-bottom: 20px; align-items: stretch;">
+            <div class="credits-stat-grid" style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; margin-bottom: 20px; align-items: stretch;">
                 ${CreditsControls.renderBalanceCard(this._balance)}
                 ${this._renderPeriodCard(todayCost, weekCost, monthCost)}
             </div>`;
@@ -558,7 +558,7 @@ const AccountUsage = {
 
         const grand = rows.reduce((sum, r) => sum + this._costForRow(r), 0);
         return `
-            <div class="card" style="margin-bottom: 20px;"><div class="card-body" style="padding: 0;">
+            <div class="card" style="margin-bottom: 20px;"><div class="card-body table-scroll" style="padding: 0;">
                 <table style="width: 100%; border-collapse: collapse;">
                     <tbody>${sections}</tbody>
                     <tfoot>
@@ -626,7 +626,7 @@ const AccountUsage = {
         const days = this._daily?.days || [];
         if (days.length === 0) return '';
         return `
-            <div class="card"><div class="card-body" style="padding: 0;">
+            <div class="card"><div class="card-body table-scroll" style="padding: 0;">
                 <div style="display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap; padding: 10px 16px; border-bottom: 1px solid var(--border, #e5e7eb);">
                     <span style="font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; color: var(--text-muted);">Breakdown</span>
                     ${this._renderBreakdownSelector()}
