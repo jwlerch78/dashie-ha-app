@@ -65,7 +65,7 @@ async function postDbOp(token, operation, data) {
  * @param {function} [opts.log]   Optional logger (defaults to console.log).
  * @returns {object} an OrchestratorIO
  */
-function createNodeIO({ endpoint, chatUrl: chatUrlOpt, model, key = '', providerLabel = '', accountToken = '', extraHeaders = {}, log = console.log }) {
+function createNodeIO({ endpoint, chatUrl: chatUrlOpt, model, key = '', providerLabel = '', accountToken = '', extraHeaders = {}, extraBody = {}, log = console.log }) {
   const chatUrl = chatUrlOpt || (String(endpoint).replace(/\/+$/, '') + '/v1/chat/completions');
   // BYO-model (WS-I): send a bearer when the account configured a key — required
   // for a Hermes API server or any remote OpenAI-compatible endpoint. Local
@@ -92,6 +92,11 @@ function createNodeIO({ endpoint, chatUrl: chatUrlOpt, model, key = '', provider
           messages: [{ role: 'user', content: prompt }],
           temperature: TEMPERATURE[kind] ?? 0.7,
           stream: false,
+          // Optional per-endpoint extras (default {}). OpenRouter uses this for `provider`
+          // routing prefs — pinning to one backend so temp-0 is reproducible (shared-GPU batching
+          // across backends otherwise makes MoE inference non-bit-stable). Additive; production
+          // passes nothing → unchanged.
+          ...extraBody,
         }),
       });
       const body = await resp.json().catch(() => ({}));
