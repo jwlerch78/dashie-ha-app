@@ -73,7 +73,14 @@ function createNodeIO({ endpoint, chatUrl: chatUrlOpt, model, key = '', provider
   // extraHeaders carries provider-specific extras (OpenRouter's HTTP-Referer/X-Title).
   const authHeaders = { ...(key ? { Authorization: `Bearer ${key}` } : {}), ...extraHeaders };
 
-  async function callGateway({ provider, prompt, modelId }) {
+  // Sampling temperature by call INTENT, mirroring the cloud gateway.ts (see
+  // 20260714_LOCAL_MODEL_BENCHMARK_RESULTS.md "DECIDE-vs-NARRATE"). A routing decision or an
+  // ACTION emission is a classification — one right answer, so sample deterministically (0);
+  // sending 0.7 made the same utterance route differently across runs. Prose synthesis keeps
+  // warmth. Default 'narrate' preserves the prior 0.7 for any caller that doesn't declare intent.
+  const TEMPERATURE = { decide: 0, narrate: 0.7 };
+
+  async function callGateway({ provider, prompt, modelId, kind = 'narrate' }) {
     const t0 = Date.now();
     const useModel = modelId || model;
     try {
@@ -83,7 +90,7 @@ function createNodeIO({ endpoint, chatUrl: chatUrlOpt, model, key = '', provider
         body: JSON.stringify({
           model: useModel,
           messages: [{ role: 'user', content: prompt }],
-          temperature: 0.7,
+          temperature: TEMPERATURE[kind] ?? 0.7,
           stream: false,
         }),
       });

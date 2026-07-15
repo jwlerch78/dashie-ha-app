@@ -4,7 +4,7 @@
    The voice-conversation brain core, bundled for the Node add-on (on-prem L3).
    ONE core, TWO runtimes: the cloud Deno edge fn runs the TS source directly;
    this CJS bundle is the add-on's copy of the SAME source. Never hand-edit.
-   Source git SHA: 6fc7f80882be457f85d5bf0c7abd2cfd6fde7684
+   Source git SHA: f556deefbd7afc4a35fd73e771e6c55d83317310
    Regenerate:  node scripts/build-node-brain.mjs && ./sync-brain-bundle.sh
    Contract:    supabase/functions/voice-conversation/README.md + build plan §13.16
    ============================================================ */
@@ -100,8 +100,10 @@ Available tools:
   "action": {"category": "theme|voice|display|chores", "command": "...", "parameters": {...}}
 }
 \`\`\`
+The "action" category is CLOSED \u2014 only theme, voice, display, or chores. Controlling smart-home devices (lights, locks, thermostat, garage door, switches, media players) is NOT an action: route it to the home_assistant tool as an info_request. Never invent a category. And do NOT answer a device command with a direct "response" \u2014 saying "Turning on the light" without a tool call turns nothing on.
 
 Examples:
+- "Turn off the kitchen lights" \u2192 info_request with tool: "home_assistant"
 - "What's the weather?" \u2192 info_request with tool: "weather_data"
 - "When is Charlie's next game?" \u2192 info_request with tool: "calendar_events"
 - "Charlie fed the dogs" \u2192 info_request with tool: "chores", query: {hint: "fed the dogs", member_hint: "Charlie"}
@@ -172,8 +174,10 @@ Tools:
   "action": {"category": "theme|voice|display|chores", "command": "...", "parameters": {...}}
 }
 \`\`\`
+The "action" category is CLOSED \u2014 only theme, voice, display, or chores. Controlling smart-home devices (lights, locks, thermostat, garage door, switches, media players) is NOT an action: route it to the home_assistant tool as an info_request. Never invent a category. And do NOT answer a device command with a direct "response" \u2014 saying "Turning on the light" without a tool call turns nothing on.
 
 Examples:
+- "Turn off the kitchen lights" \u2192 info_request with tool: "home_assistant"
 - "Charlie fed the dogs" \u2192 info_request with tool: "chores", query: {hint: "fed the dogs", member_hint: "Charlie"}
 - "Mary walked the dogs" \u2192 info_request with tool: "chores", query: {hint: "walked the dogs", member_hint: "Mary"}
 - "When did Mary get home last night?" \u2192 info_request with tool: "location_events", query: {member_name: "Mary", location_name: "home", timeframe: "last night", event_type: "arrive"}
@@ -3704,7 +3708,7 @@ async function orchestrate(deps, io, voiceCtx) {
     context: `forced web_search (mutable entity: ${forced})`,
     processing_message: "Looking that up"
   }) : null;
-  const pass1 = forcedContent ? { ok: true, latency_ms: 0, raw: { content: forcedContent, usage: { input_tokens: 0, output_tokens: 0, total_tokens: 0 } } } : await io.callGateway({ provider, prompt: p1Prompt, modelId, grounding: geminiGrounds });
+  const pass1 = forcedContent ? { ok: true, latency_ms: 0, raw: { content: forcedContent, usage: { input_tokens: 0, output_tokens: 0, total_tokens: 0 } } } : await io.callGateway({ provider, prompt: p1Prompt, modelId, grounding: geminiGrounds, kind: "decide" });
   if (!pass1.ok || !pass1.raw) {
     return errorTurn(t0, pass1, [stageErr("pass1", pass1)]);
   }
@@ -4154,7 +4158,8 @@ function routeOf(parsed) {
 async function secondPass(io, deps, t0, inquiryType, retrievedData, priorStages, pass1, provider, modelId, context, sessionId, retain, route, grounding = false) {
   const prompt = buildPrompt({ userRequest: deps.req.text, inquiryType, retrievedData, context });
   deps.onStage?.({ stage: "synthesizing", status: "Finalizing", elapsed_ms: Date.now() - t0 });
-  const pass2 = await io.callGateway({ provider, prompt, modelId, grounding });
+  const kind = inquiryType === "home-assistant" ? "decide" : "narrate";
+  const pass2 = await io.callGateway({ provider, prompt, modelId, grounding, kind });
   if (!pass2.ok || !pass2.raw) {
     return errorTurn(t0, pass2, [...priorStages, stageErr("pass2", pass2)]);
   }
@@ -4384,4 +4389,4 @@ function toolMeta(parsed, route, caps) {
   runSports,
   wantsGameDetail
 });
-module.exports.BRAIN_SOURCE_SHA = "6fc7f80882be457f85d5bf0c7abd2cfd6fde7684";
+module.exports.BRAIN_SOURCE_SHA = "f556deefbd7afc4a35fd73e771e6c55d83317310";
