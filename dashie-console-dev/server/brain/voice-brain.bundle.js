@@ -4,7 +4,7 @@
    The voice-conversation brain core, bundled for the Node add-on (on-prem L3).
    ONE core, TWO runtimes: the cloud Deno edge fn runs the TS source directly;
    this CJS bundle is the add-on's copy of the SAME source. Never hand-edit.
-   Source git SHA: 185647a7fb88a067ff7056f87fb28270c4bb954b
+   Source git SHA: e32afbc003eea52c993dc67c052df70be38cdb6d
    Regenerate:  node scripts/build-node-brain.mjs && ./sync-brain-bundle.sh
    Contract:    supabase/functions/voice-conversation/README.md + build plan §13.16
    ============================================================ */
@@ -209,19 +209,30 @@ Parse the user's natural language command into Home Assistant service calls. The
 
 ## Available Entities
 
-These are the controllable entities in the user's Home Assistant:
+These are the controllable entities in the user's Home Assistant. Each has an \`area\` (the room it is in):
 
 \`\`\`json
 {{HA_ENTITIES}}
 \`\`\`
+
+## Current Room
+
+This device is in: **{{DEVICE_AREA}}**
+
+When the user names no room, resolve the command to entities whose \`area\` matches the Current Room. If the Current Room above is blank, no room is known \u2014 ask which room instead of guessing.
 
 ## Matching Guidelines
 
 **Entity Matching:**
 - Match the user's spoken name to the \`friendly_name\` field
 - Be flexible with variations: "living room lights" matches "Living Room Light"
-- "the lights" with no room specified \u2192 ask which lights, OR use context if only one area mentioned
-- "all the lights" \u2192 return multiple service calls for each matching light entity
+- **Room resolution:** when the user names NO room, restrict matching to entities whose \`area\` equals the Current Room. A named room ("the kitchen lights") OR a named entity ("the desk lamp") OVERRIDES the current room.
+- **Plural vs singular \u2014 the disambiguation rule:**
+  - PLURAL ("the lights", "turn everything off in here") \u2192 act on ALL matching entities in the resolved room. Do NOT ask.
+  - SINGULAR ("the light", "the fan") when the resolved room has 2+ matching entities \u2192 ASK which one, naming the options (e.g. "Did you mean the overhead or the desk lamp?"). Do NOT guess and do NOT act.
+  - SINGULAR with exactly ONE match in the room \u2192 act on it (no need to ask).
+- "all the lights" \u2192 multiple service calls for each matching light entity in the resolved room
+- Never control an entity in a DIFFERENT room than the one resolved above unless the user named that room
 
 **Action Mapping:**
 | User Says | Domain | Service |
@@ -275,6 +286,14 @@ Return an ACTION response with \`category: "homeassistant"\` and \`command: "exe
 }
 \`\`\`
 
+**When you must ask (singular + 2+ matches in the room, per the disambiguation rule):** return a RESPONSE with the question in \`voice\` and NO action. Name the options.
+\`\`\`json
+{
+  "type": "response",
+  "voice": "Did you mean the overhead or the desk lamp?"
+}
+\`\`\`
+
 ## Examples
 
 **Single light:**
@@ -311,6 +330,34 @@ User: "Turn on the family room lights and close the garage door"
       ]
     }
   }
+}
+\`\`\`
+
+**Room-relative (no room named \u2192 resolve to the Current Room):**
+Current Room: Living Room. User: "Turn off the lights"  (Living Room has a ceiling light + a lamp)
+\`\`\`json
+{
+  "type": "action",
+  "voice": "Turning off the living room lights.",
+  "action": {
+    "category": "homeassistant",
+    "command": "execute_commands",
+    "parameters": {
+      "commands": [
+        {"domain": "light", "service": "turn_off", "data": {"entity_id": "light.living_room_ceiling"}},
+        {"domain": "light", "service": "turn_off", "data": {"entity_id": "light.living_room_lamp"}}
+      ]
+    }
+  }
+}
+\`\`\`
+
+**Disambiguation (singular + 2 matches \u2192 ask, do not guess):**
+Current Room: Office. User: "Turn off the light"  (Office has an overhead + a desk lamp)
+\`\`\`json
+{
+  "type": "response",
+  "voice": "Did you mean the overhead or the desk lamp?"
 }
 \`\`\`
 
@@ -1781,6 +1828,9 @@ function buildPrompt({ userRequest, inquiryType, retrievedData, context = {} }) 
     CHAT_HISTORY: context.chatHistory || "",
     AVAILABLE_TOOLS_LIST: toolsList,
     LANGUAGE_INSTRUCTION: languageInstruction,
+    // Room awareness: the device's HA area (or '' when unknown → the template's fallback prose).
+    // Rendered as {{DEVICE_AREA}} in the home_assistant prompt for room-relative resolution.
+    DEVICE_AREA: context.deviceArea || "",
     ...context
   };
   let prompt = fillTemplate(BASE_CONTEXT, baseValues);
@@ -2063,6 +2113,11 @@ function isEndIntent(text) {
 }
 function isMissReply(voice) {
   return !!voice && /\bdidn.?t (?:quite )?catch that\b/i.test(voice);
+}
+function classifyMiss(route, voice) {
+  if (route === "noise") return { miss: true, reason: "noise" };
+  if (isMissReply(voice)) return { miss: true, reason: "no_intent" };
+  return { miss: false, reason: null };
 }
 
 // supabase/functions/voice-conversation/models.ts
@@ -3609,7 +3664,7 @@ async function runOrchestration(deps, io) {
   const turn = await orchestrate(deps, io, voiceCtx);
   if (turn.voice_id === void 0 && voiceCtx.voiceId) turn.voice_id = voiceCtx.voiceId;
   if (turn.voice_provider === void 0 && voiceCtx.voiceProvider) turn.voice_provider = voiceCtx.voiceProvider;
-  if (turn.route === "noise" || isMissReply(turn.voice)) {
+  if (classifyMiss(turn.route, turn.voice).miss) {
     const isFirstTurn = !deps.req.history || deps.req.history.length === 0;
     turn.metadata = { ...turn.metadata ?? {}, miss: true };
     if (isFirstTurn) turn.metadata.end_conversation = true;
@@ -3620,7 +3675,24 @@ async function runOrchestration(deps, io) {
 async function orchestrate(deps, io, voiceCtx) {
   const { req, userId, token, supabase } = deps;
   const t0 = Date.now();
-  if (isLikelyNoise(req.text)) return noiseTurn(t0);
+  if (isLikelyNoise(req.text)) {
+    io.logInteraction(token, {
+      miss: true,
+      miss_reason: "noise",
+      session_id: req.conversation_id || crypto.randomUUID(),
+      request_type: REQUEST_TYPE,
+      request_length: (req.text ?? "").length,
+      model: "",
+      input_tokens: 0,
+      output_tokens: 0,
+      total_tokens: 0,
+      total_latency_ms: Date.now() - t0,
+      success: true,
+      endpoint_id: req.endpoint_id
+    }).catch(() => {
+    });
+    return noiseTurn(t0);
+  }
   if (isEndIntent(req.text)) return endIntentTurn(t0);
   const sessionId = req.conversation_id || crypto.randomUUID();
   const [personality, retainEnabled, spend, account, rateLimit] = await Promise.all([
@@ -3687,6 +3759,10 @@ async function orchestrate(deps, io, voiceCtx) {
     // false → buildPrompt appends the image-unavailable instruction so the model can't
     // claim to show a picture the enrichment layer will drop.
     retrievePicturesEnabled: retrievePictures,
+    // Room awareness (20260715): the HA area this device is in, so an unqualified command
+    // ("turn off the lights") resolves to THIS room. Flows to both passes via `...context` in
+    // buildPrompt → rendered as {{DEVICE_AREA}} in the home_assistant prompt. Absent → area-blind.
+    deviceArea: req.provided_context?.device_area ?? null,
     caps
   };
   const forced = webSearchAllowed ? detectMutableEntity(req.text) : null;
@@ -4378,9 +4454,16 @@ async function logPass(io, token, requestType, endpointId, sessionId, prompt, pa
   const usage = pass.raw?.usage || {};
   const trace = meta.tool_trace;
   const logMeta = trace && trace.args != null ? { ...meta, tool_trace: { ...trace, args: await redactToolArgs(trace.args) } } : meta;
-  const parsedOk = pass.raw?.provider === "template" ? null : !!parseContent(pass.raw?.content ?? "");
+  const isTemplate = pass.raw?.provider === "template";
+  const parsed = parseContent(pass.raw?.content ?? "");
+  const parsedOk = isTemplate ? null : !!parsed;
+  const route = logMeta.tool_trace?.route ?? meta.tool_trace?.route;
+  const isAnswerRow = isTemplate || parsed?.type === "response" || parsed?.type === "action" || !!route;
+  const missClass = isAnswerRow ? classifyMiss(route, parsed?.voice ?? (isTemplate ? pass.raw?.content ?? null : null)) : { miss: null, reason: null };
   await io.logInteraction(token, {
     parsed_ok: parsedOk,
+    miss: missClass.miss,
+    miss_reason: missClass.reason,
     session_id: sessionId,
     request_type: requestType,
     request_length: prompt.length,
@@ -4409,4 +4492,4 @@ function toolMeta(parsed, route, caps) {
   runSports,
   wantsGameDetail
 });
-module.exports.BRAIN_SOURCE_SHA = "185647a7fb88a067ff7056f87fb28270c4bb954b";
+module.exports.BRAIN_SOURCE_SHA = "e32afbc003eea52c993dc67c052df70be38cdb6d";
