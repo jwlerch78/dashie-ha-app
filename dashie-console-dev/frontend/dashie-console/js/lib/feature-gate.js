@@ -138,6 +138,10 @@ const FeatureGate = {
 
         // Scheduled Actions (voice reminders) — STAYS alpha, mirrors feature_access.
         scheduledActions: 'alpha-only',
+
+        // Prompt-for-feedback (thumbs up/down after voice responses) — alpha,
+        // mirrors the native settings page's voice_feedback gate (feature_access).
+        promptForFeedback: 'alpha-only',
     },
 
     shouldShow(key) {

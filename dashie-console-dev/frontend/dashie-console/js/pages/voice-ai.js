@@ -757,8 +757,58 @@ const VoiceAiPage = {
             <div style="max-width: 760px;">
                 ${this._renderAiDefaults()}
                 ${this._renderHouseholdSharing()}
+                ${this._renderEntitySource()}
             </div>
         `;
+    },
+
+    /** Voice-controllable entity SOURCE (room-awareness build 20260715). Which Home Assistant
+     *  entities voice commands can control: the entities on the Dashie DASHBOARD (plug-and-play —
+     *  "what's on my screen is controllable") or the user's curated HA "exposed to Assist" list.
+     *  Stored account-level in voice.entitySource; the tablet reads it to build ha_entities.
+     *  A dropdown (mirrors the AI-model picker's select style) + a deep-link to HA's expose curator. */
+    _renderEntitySource() {
+        // Default 'dashboard' — the plug-and-play promise. The device side falls back to the exposed
+        // list / domain heuristic if the dashboard yields nothing, so this is safe even off-HA.
+        const source = String(this._defaults?.['voice.entitySource'] || 'dashboard');
+        const opt = (val, label) =>
+            `<option value="${val}" ${source === val ? 'selected' : ''}>${label}</option>`;
+        return `
+            <div class="section-header" style="margin-top: 32px;">Voice-Controllable Entities</div>
+            <div class="card">
+                <div class="card-body">
+                    <div style="font-weight:500; margin-bottom:6px;">Which entities can Dashie control by voice?</div>
+                    <div style="color: var(--text-secondary); font-size: var(--font-size-sm); line-height:1.5; margin-bottom:14px;">
+                        Voice commands can control a curated set of your Home Assistant entities. Pick where that set comes from.
+                    </div>
+                    <select id="entity-source-select" class="form-select"
+                        onchange="VoiceAiPage.setEntitySource(this.value)"
+                        style="width:100%; max-width:420px; padding:8px 10px; border-radius:8px; border:1px solid var(--border); background: var(--input-bg, var(--card-bg)); color: var(--text-primary); font-size: var(--font-size-sm);">
+                        ${opt('dashboard', 'Everything on my dashboard  (simplest)')}
+                        ${opt('assist', 'My Home Assistant voice-assistant list')}
+                    </select>
+                    <div style="margin-top:12px; color: var(--text-secondary); font-size: var(--font-size-sm); line-height:1.5;">
+                        ${source === 'dashboard'
+                            ? 'The entities on the dashboard Dashie displays. Add or remove entities by editing your dashboard.'
+                            : 'The entities you exposed to Assist in Home Assistant.'}
+                        <a href="/config/voice-assistants/expose" target="_top" rel="noopener"
+                            style="font-size:10px; font-weight:700; text-transform:uppercase; letter-spacing:0.4px; color:#fff; background: var(--accent); padding: 2px 8px; border-radius: 9px; text-decoration: none; white-space:nowrap; margin-left:6px;">
+                            Edit exposed list ↗</a>
+                    </div>
+                </div>
+            </div>
+        `;
+    },
+
+    /** Persist the voice-controllable entity source (account-level, serialized write). */
+    async setEntitySource(value) {
+        const v = value === 'assist' ? 'assist' : 'dashboard';
+        try {
+            await this.saveDefault('voice.entitySource', v);
+            App.renderPage();   // re-render so the description + link reflect the choice
+        } catch (e) {
+            console.warn('[VoiceAiPage] setEntitySource failed:', e);
+        }
     },
 
     /** Household Dashie Intelligence sharing toggle — add-on mode only. Lets un-logged-in
@@ -1043,6 +1093,7 @@ const VoiceAiPage = {
             <div class="card"><div class="card-body">
                 ${!isLive ? this._renderDialogRows(d, agentMode) : ''}
                 ${this._toggleRow('Retrieve pictures', `Allow the AI to show pictures with its responses. Uses web image search (${O.imageSearchCost}/search).`, 'ai.retrievePicturesEnabled', d['ai.retrievePicturesEnabled'])}
+                ${FeatureGate.shouldShow('promptForFeedback') ? this._toggleRow('Prompt for feedback on responses', 'Show thumbs up/down after voice responses.', 'ai.promptForFeedback', d['ai.promptForFeedback']) : ''}
                 ${FeatureGate.shouldShow('chores') ? this._toggleRow('Always use AI for chores', 'Disable the fast path — routes all chore commands through AI (uses more tokens).', 'voice.alwaysUseAI', d['voice.alwaysUseAI']) : ''}
             </div></div>`}
         `;

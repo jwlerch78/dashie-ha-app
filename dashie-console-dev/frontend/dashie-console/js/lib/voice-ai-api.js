@@ -56,11 +56,17 @@ const VoiceAiApi = {
         ['voice', 'haSttEngineId'],
         ['ai', 'webSearchEnabled'],
         ['ai', 'retrievePicturesEnabled'],
+        ['ai', 'promptForFeedback'],
         ['ai', 'conversationContextEnabled'],
         ['ai', 'conversationTimeout'],
         ['ai', 'retainTranscripts'],
         ['voice', 'alwaysUseAI'],
         ['voice', 'searchSource'],
+        // Which HA entities voice can control: 'dashboard' (entities on the Dashie dashboard —
+        // plug-and-play) or 'assist' (the user's HA "exposed to Assist" list). The tablet's
+        // ha-service reads this to build ha_entities; the device side falls back gracefully when
+        // the chosen source is empty. Room-awareness build 20260715.
+        ['voice', 'entitySource'],
         ['voice', 'sportsSource'],
         ['voice', 'localLlmUrl'],
         ['voice', 'localLlmModel'],
@@ -99,11 +105,15 @@ const VoiceAiApi = {
         'voice.ttsProvider': 'dashie_cloud',
         'ai.webSearchEnabled': true,
         'ai.retrievePicturesEnabled': false,
+        // Defaults ON, matching the native settings page (getPromptForFeedbackEnabled
+        // treats an unset value as enabled — !== false).
+        'ai.promptForFeedback': true,
         'ai.conversationContextEnabled': false,
         'ai.conversationTimeout': 30,
         'ai.retainTranscripts': false,
         'voice.alwaysUseAI': false,
         'voice.searchSource': 'dashie',
+        'voice.entitySource': 'dashboard',   // plug-and-play default; device side falls back if empty
         'voice.sportsSource': 'espn',
         'voice.localLlmUrl': '',
         'voice.localLlmModel': '',

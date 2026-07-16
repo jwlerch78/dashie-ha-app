@@ -90,8 +90,10 @@ Available tools:
   "action": {"category": "theme|voice|display|chores", "command": "...", "parameters": {...}}
 }
 \`\`\`
+The "action" category is CLOSED — only theme, voice, display, or chores. Controlling smart-home devices (lights, locks, thermostat, garage door, switches, media players) is NOT an action: route it to the home_assistant tool as an info_request. Never invent a category. And do NOT answer a device command with a direct "response" — saying "Turning on the light" without a tool call turns nothing on.
 
 Examples:
+- "Turn off the kitchen lights" → info_request with tool: "home_assistant"
 - "What's the weather?" → info_request with tool: "weather_data"
 - "When is Charlie's next game?" → info_request with tool: "calendar_events"
 - "Charlie fed the dogs" → info_request with tool: "chores", query: {hint: "fed the dogs", member_hint: "Charlie"}
@@ -163,8 +165,10 @@ Tools:
   "action": {"category": "theme|voice|display|chores", "command": "...", "parameters": {...}}
 }
 \`\`\`
+The "action" category is CLOSED — only theme, voice, display, or chores. Controlling smart-home devices (lights, locks, thermostat, garage door, switches, media players) is NOT an action: route it to the home_assistant tool as an info_request. Never invent a category. And do NOT answer a device command with a direct "response" — saying "Turning on the light" without a tool call turns nothing on.
 
 Examples:
+- "Turn off the kitchen lights" → info_request with tool: "home_assistant"
 - "Charlie fed the dogs" → info_request with tool: "chores", query: {hint: "fed the dogs", member_hint: "Charlie"}
 - "Mary walked the dogs" → info_request with tool: "chores", query: {hint: "walked the dogs", member_hint: "Mary"}
 - "When did Mary get home last night?" → info_request with tool: "location_events", query: {member_name: "Mary", location_name: "home", timeframe: "last night", event_type: "arrive"}
@@ -197,19 +201,30 @@ Parse the user's natural language command into Home Assistant service calls. The
 
 ## Available Entities
 
-These are the controllable entities in the user's Home Assistant:
+These are the controllable entities in the user's Home Assistant. Each has an \`area\` (the room it is in):
 
 \`\`\`json
 {{HA_ENTITIES}}
 \`\`\`
+
+## Current Room
+
+This device is in: **{{DEVICE_AREA}}**
+
+When the user names no room, resolve the command to entities whose \`area\` matches the Current Room. If the Current Room above is blank, no room is known — ask which room instead of guessing.
 
 ## Matching Guidelines
 
 **Entity Matching:**
 - Match the user's spoken name to the \`friendly_name\` field
 - Be flexible with variations: "living room lights" matches "Living Room Light"
-- "the lights" with no room specified → ask which lights, OR use context if only one area mentioned
-- "all the lights" → return multiple service calls for each matching light entity
+- **Room resolution:** when the user names NO room, restrict matching to entities whose \`area\` equals the Current Room. A named room ("the kitchen lights") OR a named entity ("the desk lamp") OVERRIDES the current room.
+- **Plural vs singular — the disambiguation rule:**
+  - PLURAL ("the lights", "turn everything off in here") → act on ALL matching entities in the resolved room. Do NOT ask.
+  - SINGULAR ("the light", "the fan") when the resolved room has 2+ matching entities → ASK which one, naming the options (e.g. "Did you mean the overhead or the desk lamp?"). Do NOT guess and do NOT act.
+  - SINGULAR with exactly ONE match in the room → act on it (no need to ask).
+- "all the lights" → multiple service calls for each matching light entity in the resolved room
+- Never control an entity in a DIFFERENT room than the one resolved above unless the user named that room
 
 **Action Mapping:**
 | User Says | Domain | Service |
@@ -263,6 +278,14 @@ Return an ACTION response with \`category: "homeassistant"\` and \`command: "exe
 }
 \`\`\`
 
+**When you must ask (singular + 2+ matches in the room, per the disambiguation rule):** return a RESPONSE with the question in \`voice\` and NO action. Name the options.
+\`\`\`json
+{
+  "type": "response",
+  "voice": "Did you mean the overhead or the desk lamp?"
+}
+\`\`\`
+
 ## Examples
 
 **Single light:**
@@ -299,6 +322,34 @@ User: "Turn on the family room lights and close the garage door"
       ]
     }
   }
+}
+\`\`\`
+
+**Room-relative (no room named → resolve to the Current Room):**
+Current Room: Living Room. User: "Turn off the lights"  (Living Room has a ceiling light + a lamp)
+\`\`\`json
+{
+  "type": "action",
+  "voice": "Turning off the living room lights.",
+  "action": {
+    "category": "homeassistant",
+    "command": "execute_commands",
+    "parameters": {
+      "commands": [
+        {"domain": "light", "service": "turn_off", "data": {"entity_id": "light.living_room_ceiling"}},
+        {"domain": "light", "service": "turn_off", "data": {"entity_id": "light.living_room_lamp"}}
+      ]
+    }
+  }
+}
+\`\`\`
+
+**Disambiguation (singular + 2 matches → ask, do not guess):**
+Current Room: Office. User: "Turn off the light"  (Office has an overhead + a desk lamp)
+\`\`\`json
+{
+  "type": "response",
+  "voice": "Did you mean the overhead or the desk lamp?"
 }
 \`\`\`
 
