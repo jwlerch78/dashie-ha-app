@@ -39,16 +39,22 @@ const BuyCreditsModal = {
     },
 
     _render(packs) {
-        const buttons = packs.map(p => `
-            <button data-bc-price="${this._escape(p.price_id)}"
-                style="flex:1; min-width:80px; display:flex; align-items:center; justify-content:center;
-                       padding:20px 0; font-size:20px; font-weight:700; color:#fff; cursor:pointer;
-                       background:var(--accent); border:1px solid var(--accent); border-radius:10px;
-                       transition:background 0.15s;"
-                onmouseover="this.style.background='var(--accent-hover)'"
-                onmouseout="this.style.background='var(--accent)'">
-                $${p.usd}
-            </button>`).join('');
+        // Each pack is a column: the amount button + a per-pack fee caption filled
+        // in by _loadFeeNote() from the server quote (empty when the fee is off).
+        const cells = packs.map(p => `
+            <div style="flex:1; min-width:80px; display:flex; flex-direction:column; gap:6px;">
+                <button data-bc-price="${this._escape(p.price_id)}"
+                    style="width:100%; display:flex; align-items:center; justify-content:center;
+                           padding:20px 0; font-size:20px; font-weight:700; color:#fff; cursor:pointer;
+                           background:var(--accent); border:1px solid var(--accent); border-radius:10px;
+                           transition:background 0.15s;"
+                    onmouseover="this.style.background='var(--accent-hover)'"
+                    onmouseout="this.style.background='var(--accent)'">
+                    $${p.usd}
+                </button>
+                <div data-bc-fee-for="${this._escape(p.price_id)}"
+                     style="text-align:center; color:var(--text-muted); font-size:11px; min-height:14px;"></div>
+            </div>`).join('');
 
         const root = document.createElement('div');
         root.className = 'modal-backdrop';
@@ -59,10 +65,8 @@ const BuyCreditsModal = {
                     <button class="modal-close" data-bc="cancel" aria-label="Close">&times;</button>
                 </div>
                 <div class="modal-body" data-bc-body>
-                    <div style="display:flex; gap:10px;">${buttons}</div>
+                    <div style="display:flex; gap:10px; align-items:flex-start;">${cells}</div>
                     <div style="color: var(--text-muted); font-size:11px; margin-top:10px;">1 credit = $1 USD · credits expire 1 year after purchase.</div>
-                    <!-- Filled by _loadFeeNote() ONLY when a platform fee is enabled server-side. -->
-                    <div data-bc-fee style="color: var(--text-muted); font-size:11px; margin-top:6px; display:none;"></div>
                 </div>
             </div>`;
 
@@ -80,28 +84,29 @@ const BuyCreditsModal = {
     },
 
     /** Best-effort platform-fee disclosure. The server (quote mode) is the single
-     *  source of truth for the fee, so we never compute it here. Fee OFF (the
-     *  default) → fee_terms null → the note stays hidden and the buttons keep
-     *  meaning "credits received". Fee ON → "Plus a 9% ($1.00 minimum) platform
-     *  fee at checkout ($5 → $6.00 · …)", built from the quote so it can't drift
-     *  from what Stripe charges. Stripe itemises the fee at checkout regardless. */
+     *  source of truth for the fee, so we never compute it here. Fills a caption
+     *  under each pack button — "(+$1.50 platform fee)" — from the quote's per-pack
+     *  fee. Fee OFF (the default) → every fee is 0 → captions stay empty and the
+     *  buttons keep meaning "credits received". Stripe itemises the fee regardless. */
     async _loadFeeNote() {
         if (!this._getQuote) return;
         let quote;
         try {
             quote = await this._getQuote();
-        } catch (_) { return; }   // note is optional
-        if (!this._root || !quote || !quote.fee_terms || !Array.isArray(quote.packs)) return;
+        } catch (_) { return; }   // captions are optional
+        if (!this._root || !quote || !Array.isArray(quote.packs)) return;
 
-        const lines = quote.packs
-            .filter(p => p.fee_usd > 0)
-            .sort((a, b) => a.credits_usd - b.credits_usd)
-            .map(p => `$${p.credits_usd} → $${Number(p.total_usd).toFixed(2)}`)
-            .join(' · ');
-        const el = this._root.querySelector('[data-bc-fee]');
-        if (!el) return;
-        el.textContent = `Plus a ${quote.fee_terms} platform fee at checkout` + (lines ? ` (${lines})` : '');
-        el.style.display = 'block';
+        for (const p of quote.packs) {
+            if (!(Number(p.fee_usd) > 0)) continue;
+            const el = this._root.querySelector(`[data-bc-fee-for="${p.price_id}"]`);
+            if (el) el.textContent = `(+$${this._fmtUsd(p.fee_usd)} platform fee)`;
+        }
+    },
+
+    /** $1 (not $1.00), $1.50, $2.25 — drop the decimals only for a whole dollar. */
+    _fmtUsd(n) {
+        const v = Number(n);
+        return v % 1 === 0 ? String(v) : v.toFixed(2);
     },
 
     async _pick(priceId) {

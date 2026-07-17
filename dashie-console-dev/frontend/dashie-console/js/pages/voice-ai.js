@@ -313,7 +313,9 @@ const VoiceAiPage = {
             'voice.pipelinePreset',   // cloud | hybrid | local | ha_assist (Open Brain §6)
             'ai.defaultPersonalityId', 'ai.defaultVoiceKey', 'ai.defaultWakeWord',   // account defaults (WS-G Round A)
             'voice.sttProvider', 'voice.ttsProvider',
-            'voice.searchSource', 'voice.sportsSource', 'voice.localLlmUrl', 'voice.localLlmModel',
+            'voice.searchSource', 'voice.sportsSource',
+            'voice.entitySource',   // 'dashboard' | 'assist' — MUST be a string enum, never coerced to a boolean
+            'voice.localLlmUrl', 'voice.localLlmModel',
             'voice.searxngUrl', 'voice.localTtsUrl', 'voice.localTtsVoiceId', 'voice.localSttUrl',
             'voice.localLlmKey',   // BYO-model API key (remote endpoints) — WS-I; read server-side by node-io.js
             'voice.hermesUrl',     // Hermes Agent endpoint — WS-I; key lives in the on-box key store (API Keys page)
