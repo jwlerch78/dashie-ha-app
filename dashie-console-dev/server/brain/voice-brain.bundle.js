@@ -4,7 +4,7 @@
    The voice-conversation brain core, bundled for the Node add-on (on-prem L3).
    ONE core, TWO runtimes: the cloud Deno edge fn runs the TS source directly;
    this CJS bundle is the add-on's copy of the SAME source. Never hand-edit.
-   Source git SHA: e32afbc003eea52c993dc67c052df70be38cdb6d
+   Source git SHA: 4b3afc564215b56993b0f5028bbb8061c5edd1b8
    Regenerate:  node scripts/build-node-brain.mjs && ./sync-brain-bundle.sh
    Contract:    supabase/functions/voice-conversation/README.md + build plan §13.16
    ============================================================ */
@@ -32,6 +32,7 @@ __export(orchestrator_exports, {
   looksLikeSportsAsk: () => looksLikeSportsAsk,
   runOrchestration: () => runOrchestration,
   runSports: () => runSports,
+  templateCanAnswer: () => templateCanAnswer,
   wantsGameDetail: () => wantsGameDetail
 });
 module.exports = __toCommonJS(orchestrator_exports);
@@ -74,6 +75,13 @@ Use this when you already know the answer (general knowledge, math, definitions,
 Rules:
 - voice and text should not repeat each other
 - image: Only for visual topics. Null for weather, time, math, definitions.
+- **Setting "image" REALLY DOES put a picture on the user's screen \u2014 a web image search runs and
+  the photo is displayed. You are not a text-only model here. So NEVER say you can't show, display,
+  or access pictures, and never suggest they "search online" for one. This applies to PHOTOS OF
+  REAL PEOPLE exactly as it does to places and animals: a public figure is a normal image search
+  ("Mark Carney" \u2192 set image, say "Here's a picture of Mark Carney"). If you set "image", your
+  spoken line must be a caption, never a denial \u2014 saying "I can't show pictures" while a picture
+  appears on screen is the worst possible answer.**
 - Be CONCISE and family-friendly
 
 ## 2. INFO_REQUEST (need to fetch data)
@@ -97,10 +105,16 @@ Available tools:
   "type": "action",
   "voice": "Confirmation (max 20 words)",
   "text": null,
-  "action": {"category": "theme|voice|display|chores", "command": "...", "parameters": {...}}
+  "action": {"category": "theme|chores", "command": "...", "parameters": {...}}
 }
 \`\`\`
-The "action" category is CLOSED \u2014 only theme, voice, display, or chores. Controlling smart-home devices (lights, locks, thermostat, garage door, switches, media players) is NOT an action: route it to the home_assistant tool as an info_request. Never invent a category. And do NOT answer a device command with a direct "response" \u2014 saying "Turning on the light" without a tool call turns nothing on.
+The category is CLOSED and so is the command list. These are the ONLY actions that exist:
+- theme \u2192 command "set_theme", parameters {theme: "dark"|"light"} and/or {family: "theme family, e.g. christmas"}
+- chores \u2192 command "complete_chores" or "undo_last_completion"
+
+Never invent a category or a command. Nothing else is wired to anything: an invented action does NOTHING while your "voice" tells the user it worked \u2014 which is worse than admitting you can't. If what they want isn't on that list, use a tool, or say you can't do it.
+
+Controlling smart-home devices (lights, locks, thermostat, garage door, switches, media players) is NOT an action: route it to the home_assistant tool as an info_request. And do NOT answer a device command with a direct "response" \u2014 saying "Turning on the light" without a tool call turns nothing on.
 
 Examples:
 - "Turn off the kitchen lights" \u2192 info_request with tool: "home_assistant"
@@ -137,6 +151,13 @@ Respond with ONE of these JSON formats:
 Rules:
 - voice \u2260 text (don't repeat)
 - image: Only for visual topics. Null for weather/time/math.
+- **Setting "image" REALLY DOES put a picture on the user's screen \u2014 a web image search runs and
+  the photo is displayed. You are not a text-only model here. So NEVER say you can't show, display,
+  or access pictures, and never suggest they "search online" for one. This applies to PHOTOS OF
+  REAL PEOPLE exactly as it does to places and animals: a public figure is a normal image search
+  ("Mark Carney" \u2192 set image, say "Here's a picture of Mark Carney"). If you set "image", your
+  spoken line must be a caption, never a denial \u2014 saying "I can't show pictures" while a picture
+  appears on screen is the worst possible answer.
 - display_events: For calendar queries, include event indices (idx field from calendar data) to show as visual event cards. Use for 1-10 specific events that answer the question. 1-2 events show as large cards, 3+ events show as a compact list grouped by day. Example: "When is Charlie's next game?" \u2192 display_events: [0] to show the first matching event. Example: "What are Mary's games this month?" \u2192 display_events: [0, 1, 2, 3, 4, 5] to show multiple games in list format.
 - timing: For travel time queries ONLY. Include the exact departure and arrival times you calculate. These must match what you say in voice.
 - trip: For location event queries ONLY. Include the primary event that answers the question (arrival or departure). We'll display a map showing the journey.
@@ -171,10 +192,16 @@ Tools:
   "type": "action",
   "voice": "Confirmation (max 20 words)",
   "text": null,
-  "action": {"category": "theme|voice|display|chores", "command": "...", "parameters": {...}}
+  "action": {"category": "theme|chores", "command": "...", "parameters": {...}}
 }
 \`\`\`
-The "action" category is CLOSED \u2014 only theme, voice, display, or chores. Controlling smart-home devices (lights, locks, thermostat, garage door, switches, media players) is NOT an action: route it to the home_assistant tool as an info_request. Never invent a category. And do NOT answer a device command with a direct "response" \u2014 saying "Turning on the light" without a tool call turns nothing on.
+The category is CLOSED and so is the command list. These are the ONLY actions that exist:
+- theme \u2192 command "set_theme", parameters {theme: "dark"|"light"} and/or {family: "theme family, e.g. christmas"}
+- chores \u2192 command "complete_chores" or "undo_last_completion"
+
+Never invent a category or a command. Nothing else is wired to anything: an invented action does NOTHING while your "voice" tells the user it worked \u2014 which is worse than admitting you can't. If what they want isn't on that list, use a tool, or say you can't do it.
+
+Controlling smart-home devices (lights, locks, thermostat, garage door, switches, media players) is NOT an action: route it to the home_assistant tool as an info_request. And do NOT answer a device command with a direct "response" \u2014 saying "Turning on the light" without a tool call turns nothing on.
 
 Examples:
 - "Turn off the kitchen lights" \u2192 info_request with tool: "home_assistant"
@@ -1462,6 +1489,11 @@ Sports results (live from the sports provider):
 - Use the team/country names from the data. Include the score when the game is
   final or in progress; for upcoming games give the matchup and start time. If the
   game is in progress, include the clock/period from \`detail\` (e.g. "37'", "4th").
+- **Dates are read aloud: say full day and month names ("Sunday, July 19"), never abbreviations
+  ("Sun, Jul 19") \u2014 TTS pronounces those as words. Prefer "today"/"tomorrow" when they apply.**
+- **The data has ONLY fixtures and scores \u2014 no rosters, line-ups, players, or standings. If the
+  user asked something this data cannot answer (e.g. "who's starting at striker?"), say you don't
+  have that rather than reading the fixture back at them: repeating the schedule answers nothing.**
 - **Scoring detail (when the data includes an \`events\` array): mention the key
   scoring plays in the \`text\` field, not the spoken \`voice\`. Use the \`clock\` and
   \`player\` from each event \u2014 phrasing follows the sport: soccer goals "Messi 38'",
@@ -1534,7 +1566,7 @@ var AVAILABLE_TOOLS_LIST = `- calendar_events: query: {time_range: "today|tomorr
 - family_locations: query: {member_name: "Mary"} - Current GPS location ("where is X right now?")
 - weather_data: query: {timeframe: "current|today|tonight|weekend|this_week|<weekday e.g. saturday>", location?: "city or place, ONLY if the user names one \u2014 omit for the family's home location"} - Current conditions or forecast. Use timeframe to capture what they asked ("right now" \u2192 current, "this weekend" \u2192 weekend, "will it rain today" \u2192 today)
 - home_assistant: query: {command_hint: "transcript"} - Smart home control NOW (lights, thermostat, garage, etc.). If the request has a future time or delay ("turn the porch light off in 5 minutes", "turn on the lights at 9:30"), DO NOT use this \u2014 use schedule_action so it runs later, not now.
-- sports: query: {sport: "soccer|football|basketball|baseball|hockey", league: "nfl|nba|mlb|nhl|college-football|world-cup|premier-league|...", team: "team or country name", date: "YYYY-MM-DD (optional)", type: "score|schedule", list: true (for PLURAL "games")} - Live game scores and schedules. MANDATORY for ANY question about a game \u2014 score, result, who won, kickoff time, "what time is the game", who's playing, upcoming fixtures. NEVER answer a game question from your own knowledge or a web/Google search, not even one you are sure about: this tool is the ONLY source with the user's correct LOCAL time (a web answer comes back in the wrong timezone) and the ONLY way the scorecard appears on screen. Always emit an info_request for this tool instead of replying directly. Set list:true for any MULTI-game ask \u2014 "what games are on", "the NEXT games", "upcoming/today's World Cup games" (the plural "games" is the tell); leave it off for one team's score or "the next game" (singular)
+- sports: query: {sport: "soccer|football|basketball|baseball|hockey", league: "nfl|nba|mlb|nhl|college-football|world-cup|premier-league|...", team: "team or country name", date: "YYYY-MM-DD (optional)", type: "score|schedule", list: true (for PLURAL "games")} - Live game SCORES and SCHEDULES, and nothing else. MANDATORY for the score, the result, who won, the kickoff time, "what time is the game", WHICH TEAMS are playing, and upcoming fixtures. NEVER answer THOSE from your own knowledge or a web/Google search, not even one you are sure about: this tool is the ONLY source with the user's correct LOCAL time (a web answer comes back in the wrong timezone) and the ONLY way the scorecard appears on screen. Always emit an info_request for this tool instead of replying directly. **This tool returns ONLY fixtures and scores. It has NO roster, lineup, player, stats, standings, or club-history data.** A question about WHO PLAYS or PLAYED a position ("who's starting at striker for Spain", "who's their quarterback"), a player's stats or injuries, the table/standings, or a club's history is NOT a score/schedule question \u2014 use web_search for those, even when the user names a team or a specific game. Calling this tool for a roster question hands you back the FIXTURE, and reading that out loud answers nothing (it just repeats the schedule at the user). Set list:true for any MULTI-game ask \u2014 "what games are on", "the NEXT games", "upcoming/today's World Cup games" (the plural "games" is the tell); leave it off for one team's score or "the next game" (singular)
 - get_current_time: query: {} - The CURRENT local date, time, and day of week. Call for "what time is it", "what's the date", "what day is it", AND to anchor any today/tomorrow/this-week/next reasoning. Authoritative \u2014 use it instead of your own clock, which is UTC and wrong for the user.
 - music: query: {action: "now_playing|search|play|pause|resume|stop|next|previous|volume_up|volume_down", query?: "song/artist/album text (for search or play)", uri?: "exact uri from a prior search result (for play)", speaker?: "speaker name, ONLY if the user names one"} - Music: what's playing now (action "now_playing" \u2014 "what song is this", "who sings this"), find music ("search" \u2014 returns matches to disambiguate), play it ("play" with the chosen uri, or a query), and transport \u2014 "stop the music"\u2192stop, "pause"\u2192pause, "turn it up/down"\u2192volume_up/volume_down, "next/skip"\u2192next. NEVER use "search" for a transport phrase
 - video_feeds: query: {action: "show|hide|show_all|hide_all|playback", camera?: "the camera name the user said, e.g. \\"pool\\" or \\"front door\\"", time?: "for playback ONLY \u2014 the user's own words for WHEN, e.g. \\"10 minutes ago\\", \\"at 10:30pm\\", \\"last night\\""} - Cameras: show a live feed ("show" + camera), hide it ("hide"), all of them ("show_all"/"hide_all"), or play back RECORDED footage from a past moment ("playback" + camera + time \u2014 "what happened at the front door around 3pm", "show me the pool camera 10 minutes ago"). Pass the user's own words through as "time" \u2014 the device resolves them in its own timezone. Use "show" (live) when no past time is mentioned
@@ -1683,6 +1715,7 @@ function toolsListFor(context) {
   const drop = [];
   if (context.webSearchEnabled === false) drop.push("- web_search:");
   if (context.announcement === true) drop.push("- schedule_action:");
+  if (context.calendarWriteEnabled === false) drop.push("- calendar_write:");
   if (Array.isArray(context.clientTools)) {
     for (const tool of DEVICE_ONLY_TOOLS) {
       if (!context.clientTools.includes(tool)) drop.push(`- ${tool}:`);
@@ -1949,6 +1982,61 @@ async function redactToolArgs(args) {
   return await redactValue(null, args);
 }
 
+// supabase/functions/voice-conversation/multi.ts
+var ACTION_TOOLS = /* @__PURE__ */ new Set(["home_assistant", "music", "video_feeds"]);
+function validSteps(raw) {
+  if (!Array.isArray(raw)) return [];
+  const out = [];
+  for (const s of raw) {
+    if (!s || typeof s !== "object") continue;
+    const tool = s.tool;
+    if (typeof tool !== "string" || !tool.trim()) continue;
+    out.push({ tool: tool.trim(), query: s.query });
+  }
+  return out;
+}
+function mergeSameTool(steps) {
+  const byTool = /* @__PURE__ */ new Map();
+  for (const step of steps) {
+    const seen = byTool.get(step.tool);
+    if (!seen) {
+      byTool.set(step.tool, { ...step });
+      continue;
+    }
+    const a = seen.query;
+    const b = step.query;
+    const aHint = a && typeof a.command_hint === "string" ? a.command_hint.trim() : "";
+    const bHint = b && typeof b.command_hint === "string" ? b.command_hint.trim() : "";
+    if (aHint && bHint) {
+      seen.query = { ...a, command_hint: `${aHint} and ${bHint}` };
+    } else if (!aHint && bHint) {
+      seen.query = { ...a ?? {}, ...b };
+    }
+  }
+  return [...byTool.values()];
+}
+function toInfoRequest(step, voice) {
+  return {
+    type: "info_request",
+    tool: step.tool,
+    query: step.query,
+    // Keep the model's spoken line ONLY as a processing message — a collapsed multi's `voice`
+    // narrates work we're no longer all doing, so it must never be spoken as the confirmation.
+    processing_message: typeof voice === "string" ? voice : void 0
+  };
+}
+function normalizeMultiEnvelope(parsed) {
+  if (!parsed || parsed.type !== "multi") return parsed;
+  const steps = mergeSameTool(validSteps(parsed.steps));
+  const actions = steps.filter((s) => ACTION_TOOLS.has(s.tool));
+  if (actions.length >= 2) {
+    return { type: "multi", voice: parsed.voice, steps: actions };
+  }
+  if (actions.length === 1) return toInfoRequest(actions[0], parsed.voice);
+  if (steps.length > 0) return toInfoRequest(steps[0], parsed.voice);
+  return { type: "multi", voice: parsed.voice, steps: [] };
+}
+
 // supabase/functions/voice-conversation/parse.ts
 function parseContent(content) {
   if (!content || typeof content !== "string") return null;
@@ -1977,7 +2065,7 @@ function parseContent(content) {
       }
     }
   }
-  return parsed ? normalizeParsedShape(parsed) : null;
+  return parsed ? normalizeMultiEnvelope(normalizeParsedShape(parsed)) : null;
 }
 function normalizeParsedShape(parsed) {
   if (!parsed || typeof parsed !== "object") return parsed;
@@ -1998,7 +2086,7 @@ function normalizeParsedShape(parsed) {
     "music",
     "schedule_action"
   ]);
-  const TERMINAL_TYPES = /* @__PURE__ */ new Set(["response", "action", "info_request"]);
+  const TERMINAL_TYPES = /* @__PURE__ */ new Set(["response", "action", "info_request", "multi"]);
   const tool = parsed.type && KNOWN_TOOLS.has(parsed.type) && parsed.type !== "info_request" ? parsed.type : typeof parsed.tool === "string" && KNOWN_TOOLS.has(parsed.tool) && !TERMINAL_TYPES.has(parsed.type) ? parsed.tool : null;
   if (tool) {
     return {
@@ -2447,6 +2535,21 @@ function relativeDay(startTime, tz) {
     return "";
   }
 }
+function relativeDaySpoken(startTime, tz) {
+  const rel = relativeDay(startTime, tz);
+  if (!rel || rel === "Today" || rel === "Tomorrow" || rel === "Yesterday") return rel;
+  try {
+    const d = new Date(startTime);
+    return new Intl.DateTimeFormat("en-US", {
+      ...tz ? { timeZone: tz } : {},
+      weekday: "long",
+      month: "long",
+      day: "numeric"
+    }).format(d);
+  } catch {
+    return rel;
+  }
+}
 function clockTime(startTime, tz) {
   if (!tz || !startTime) return "";
   const d = new Date(startTime);
@@ -2459,6 +2562,14 @@ function clockTime(startTime, tz) {
 }
 function scheduleWhen(g, tz) {
   const day = relativeDay(g.startTime, tz);
+  const time = clockTime(g.startTime, tz);
+  if (day && time) return `${day}, ${time}`;
+  if (day) return day;
+  const d = tidyDetail(g.detail);
+  return d && /\d/.test(d) ? d : "";
+}
+function scheduleWhenSpoken(g, tz) {
+  const day = relativeDaySpoken(g.startTime, tz);
   const time = clockTime(g.startTime, tz);
   if (day && time) return `${day}, ${time}`;
   if (day) return day;
@@ -2519,7 +2630,7 @@ function liveLine(g) {
 function scheduledLine(g, team, tz) {
   const teamName = team && (g.away || "").toLowerCase().includes(team) ? g.away : g.home;
   const opp = teamName === g.home ? g.away : g.home;
-  const when = scheduleWhen(g, tz);
+  const when = scheduleWhenSpoken(g, tz);
   return `${teamName} play ${opp}${when ? `, ${when}` : ""}.`;
 }
 function noGamesLine(query) {
@@ -3607,6 +3718,14 @@ var GAME_DETAIL_RE = /\b(summar(?:y|ize|ise)|recap|rundown|breakdown|break it do
 function wantsGameDetail(text) {
   return !!text && GAME_DETAIL_RE.test(text);
 }
+var SCORE_SCHEDULE_RE = new RegExp(
+  "(\\bscores?\\b|\\bwho\\s+won\\b|\\bwho\\s+is\\s+winning\\b|\\bwho'?s\\s+winning\\b|\\bdid\\s+(?:the\\s+)?\\w+(?:\\s+\\w+)?\\s+win\\b|\\bwin\\s+or\\s+lose\\b|\\bfinal\\b|\\bresults?\\b|\\bhow\\s+(?:did|are|is)\\s+.{0,24}?\\b(?:do|doing|going)\\b|\\bare\\s+they\\s+winning\\b|\\bwhen\\s+(?:is|are|do|does|did)\\b|\\bwhat\\s+time\\b|\\bwhat\\s+day\\b|\\bnext\\s+game\\b|\\blast\\s+game\\b|\\bplaying\\s+(?:today|tonight|tomorrow)\\b|\\bwho\\s+(?:are|is)\\s+(?:they|.{0,20}?)\\s*play(?:ing)?\\b|\\bwho\\s+do\\s+.{0,20}?\\bplay\\b|\\b(?:any|what|which)\\s+.{0,20}?\\b(?:games?|teams?)\\b|\\bgames?\\s+(?:on|today|tonight|tomorrow)\\b|\\bis\\s+there\\s+a\\s+game\\b|\\bare\\s+(?:they|the\\s+\\w+)\\s+playing\\b|\\bschedule\\b|\\bkick\\s?off\\b|\\bwho\\s+they\\s+play\\b)",
+  "i"
+);
+function templateCanAnswer(text) {
+  if (!text) return false;
+  return SCORE_SCHEDULE_RE.test(text);
+}
 var SPORTS_ASK_RE = new RegExp(
   "\\b(world cup|fifa|nfl|nba|mlb|nhl|wnba|mls|premier league|champions league|la liga|bundesliga|serie a|super bowl|world series|stanley cup|march madness|college (?:football|basketball)|score|scores|scored|who won|final score|standings|shut ?out|games?|match(?:es|up)?|kick ?off|innings?|semifinals?|quarterfinals?)\\b",
   "i"
@@ -3703,7 +3822,7 @@ async function orchestrate(deps, io, voiceCtx) {
     // `voice_credit_enforce` flag is on for this env.
     io.checkSpendable ? io.checkSpendable(supabase, userId) : Promise.resolve({ spendable: true, balance: Number.POSITIVE_INFINITY, floor: 0, low: false }),
     // T3 (§16.7 item 4): account AI config (model + tool toggles). Absent IO → all-null.
-    io.readAccountAiConfig ? io.readAccountAiConfig(supabase, userId) : Promise.resolve({ model: null, webSearchEnabled: null, retrievePicturesEnabled: null, zipCode: null }),
+    io.readAccountAiConfig ? io.readAccountAiConfig(supabase, userId) : Promise.resolve({ model: null, webSearchEnabled: null, retrievePicturesEnabled: null, zipCode: null, calendarWriteAccess: null }),
     // CR3: per-account rate-limit backstop. Absent IO → allowed. Inert until enabled.
     io.checkRateLimit ? io.checkRateLimit(supabase, userId) : Promise.resolve({ allowed: true, retryAfterSeconds: 0 })
   ]);
@@ -3726,6 +3845,7 @@ async function orchestrate(deps, io, voiceCtx) {
   const provider = providerForModel(modelId);
   const webSearchAllowed = account.webSearchEnabled !== false && paidToolsOk;
   const retrievePictures = (req.retrieve_pictures ?? (account.retrievePicturesEnabled ?? false)) && paidToolsOk;
+  const voiceCalendarWrites = account.calendarWriteAccess === "voice" || account.calendarWriteAccess === "both";
   const callerMode = req.options?.retain_mode === "caller";
   const retain = {
     serverPersist: retainEnabled && !callerMode,
@@ -3744,7 +3864,7 @@ async function orchestrate(deps, io, voiceCtx) {
     web_search: webSearchAllowed,
     retrieve_pictures: retrievePictures,
     grounding: geminiGrounds,
-    tools: offeredToolNames({ webSearchEnabled: promptWebSearch, announcement: isAnnouncement, clientTools })
+    tools: offeredToolNames({ webSearchEnabled: promptWebSearch, announcement: isAnnouncement, clientTools, calendarWriteEnabled: voiceCalendarWrites })
   };
   const context = {
     customPersonalityConfig: personality,
@@ -3756,6 +3876,8 @@ async function orchestrate(deps, io, voiceCtx) {
     announcement: isAnnouncement,
     clientTools,
     // → toolsListFor drops device-only tools this caller can't fulfill
+    calendarWriteEnabled: voiceCalendarWrites,
+    // → toolsListFor drops calendar_write when voice writes off
     // false → buildPrompt appends the image-unavailable instruction so the model can't
     // claim to show a picture the enrichment layer will drop.
     retrievePicturesEnabled: retrievePictures,
@@ -3784,7 +3906,7 @@ async function orchestrate(deps, io, voiceCtx) {
     context: `forced web_search (mutable entity: ${forced})`,
     processing_message: "Looking that up"
   }) : null;
-  const pass1 = forcedContent ? { ok: true, latency_ms: 0, raw: { content: forcedContent, usage: { input_tokens: 0, output_tokens: 0, total_tokens: 0 } } } : await io.callGateway({ provider, prompt: p1Prompt, modelId, grounding: geminiGrounds, kind: "decide" });
+  const pass1 = forcedContent ? { ok: true, latency_ms: 0, raw: { content: forcedContent, usage: { input_tokens: 0, output_tokens: 0, total_tokens: 0 } } } : await io.callGateway({ provider, prompt: p1Prompt, modelId, grounding: geminiGrounds, kind: "decide", temperature: req.options?.route_temperature });
   if (!pass1.ok || !pass1.raw) {
     return errorTurn(t0, pass1, [stageErr("pass1", pass1)]);
   }
@@ -3947,7 +4069,7 @@ async function orchestrate(deps, io, voiceCtx) {
     if ((sports?.games?.length || 0) === 0 && groundingAvailable) {
       return await secondPass(io, deps, t0, "sports", sports, [p1Stage, fetchStage], pass1, provider, modelId, context, sessionId, retain, route, true);
     }
-    if (wantsGameDetail(req.text) && (sports?.games?.length || 0) > 0) {
+    if ((sports?.games?.length || 0) > 0 && (wantsGameDetail(req.text) || !templateCanAnswer(req.text))) {
       return await secondPass(io, deps, t0, "sports", sports, [p1Stage, fetchStage], pass1, provider, modelId, context, sessionId, retain, route);
     }
     const synth = templateSports(sports, sportsQuery, { timezone: req.timezone });
@@ -4031,6 +4153,32 @@ async function orchestrate(deps, io, voiceCtx) {
     });
   }
   if (p1Parsed.type === "info_request" && p1Parsed.tool === "calendar_write") {
+    if (!voiceCalendarWrites) {
+      const declineVoice = "Making calendar changes by voice is turned off. You can turn it on in Calendar settings.";
+      const decline = { type: "response", voice: declineVoice, text: null, action: null };
+      await logPass(
+        io,
+        token,
+        REQUEST_TYPE,
+        req.endpoint_id,
+        sessionId,
+        p1Prompt,
+        pass1,
+        retainFields(retain.serverPersist, retain.userText, declineVoice, null),
+        turnMeta
+      );
+      return finalize({
+        t0,
+        parsed: decline,
+        raw: pass1.raw,
+        stages: [p1Stage],
+        usage: pass1.raw.usage,
+        latency: pass1.latency_ms,
+        retain,
+        sessionId,
+        route
+      });
+    }
     const caps2 = req.client_fulfilled_tools;
     if (!Array.isArray(caps2) || !caps2.includes("calendar_write")) {
       const declineVoice = "I can read the calendar here, but I can't make calendar changes from this device yet.";
@@ -4490,6 +4638,7 @@ function toolMeta(parsed, route, caps) {
   looksLikeSportsAsk,
   runOrchestration,
   runSports,
+  templateCanAnswer,
   wantsGameDetail
 });
-module.exports.BRAIN_SOURCE_SHA = "e32afbc003eea52c993dc67c052df70be38cdb6d";
+module.exports.BRAIN_SOURCE_SHA = "4b3afc564215b56993b0f5028bbb8061c5edd1b8";
