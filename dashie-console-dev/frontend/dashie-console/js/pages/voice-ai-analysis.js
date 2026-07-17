@@ -206,18 +206,35 @@ const VoiceAiAnalysis = {
                 if (intr.realtime) continue;
                 const list = intr.session_id && bySession.get(intr.session_id);
                 if (!list || !list.length) continue;
-                // Per-turn overlay — ONLY when the counts line up. A mismatch (a turn that never
-                // produced a transcript, e.g. a noise short-circuit) would slide every later turn
-                // onto the wrong utterance, and a confidently mislabelled transcript is worse than
-                // an absent one. Fall back to the session-level single overlay instead.
                 const turns = Array.isArray(intr.turns) ? intr.turns : null;
                 if (turns && turns.length === list.length) {
+                    // Per-turn overlay — ONLY when the counts line up. A mismatch would slide every
+                    // later turn onto the wrong utterance, and a confidently mislabelled transcript
+                    // is worse than an absent one.
                     turns.forEach((t, i) => {
                         if (t.prompt || t.response) return;
                         t.prompt = list[i].text || null;
                         t.response = list[i].voice || null;
                         t.subtext = list[i].subtext || null;
                     });
+                } else if (list.length > 1 && (!turns || !turns.length)) {
+                    // SYNTHESIZE the dialog from the HA-local transcripts.
+                    // The server's turns[] (DLG-3, analysis.ts) is derived from TEXT-BEARING
+                    // ai_interactions rows — and a caller-mode session has none BY DEFINITION
+                    // (retain_mode='caller' ⇒ the brain persists no text; §17). So the server
+                    // omits turns[] for exactly the sessions that need it most, and the console
+                    // is the ONLY place that holds both halves: the Supabase row AND the HA-local
+                    // text. Build the thread here so a local-model dialog renders in full.
+                    // (Counts can't be compared here either: one user turn logs several rows —
+                    // pass-1 + the sports template — so rows ≠ utterances. The transcripts are
+                    // the authoritative per-utterance record.)
+                    intr.turns = list.map((t) => ({
+                        ts: t.ts,
+                        prompt: t.text || null,
+                        response: t.voice || null,
+                        subtext: t.subtext || null,
+                        latency_ms: 0,   // per-turn latency lives on the Supabase rows, not the store
+                    }));
                 }
                 if (!intr.prompt && !intr.response) {
                     intr.prompt = list[0].text || null;
