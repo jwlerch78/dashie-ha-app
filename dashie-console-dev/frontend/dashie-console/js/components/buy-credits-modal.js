@@ -99,7 +99,7 @@ const BuyCreditsModal = {
         for (const p of quote.packs) {
             if (!(Number(p.fee_usd) > 0)) continue;
             const el = this._root.querySelector(`[data-bc-fee-for="${p.price_id}"]`);
-            if (el) el.textContent = `(+$${this._fmtUsd(p.fee_usd)} platform fee)`;
+            if (el) el.textContent = `(+$${this._fmtUsd(p.fee_usd)} fee)`;
         }
     },
 

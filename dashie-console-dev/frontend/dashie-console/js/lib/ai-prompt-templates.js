@@ -235,7 +235,7 @@ Parse the user's natural language command into Home Assistant service calls. The
 
 ## Available Entities
 
-These are the controllable entities in the user's Home Assistant. Each has an \`area\` (the room it is in):
+These are the controllable entities in the user's Home Assistant. Each has an \`area\` (the room it is in); some also have \`aliases\` (extra spoken names the user assigned, e.g. \`["TV"]\`):
 
 \`\`\`json
 {{HA_ENTITIES}}
@@ -250,7 +250,7 @@ When the user names no room, resolve the command to entities whose \`area\` matc
 ## Matching Guidelines
 
 **Entity Matching:**
-- Match the user's spoken name to the \`friendly_name\` field
+- Match the user's spoken name to the \`friendly_name\` field OR any entry in the entity's \`aliases\` list — an alias match is as good as a friendly_name match (e.g. an entity aliased \`["TV"]\` matches "turn on the TV")
 - Be flexible with variations: "living room lights" matches "Living Room Light"
 - **Room resolution:** when the user names NO room, restrict matching to entities whose \`area\` equals the Current Room. A named room ("the kitchen lights") OR a named entity ("the desk lamp") OVERRIDES the current room.
 - **Plural vs singular — the disambiguation rule:**
