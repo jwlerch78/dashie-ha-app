@@ -163,7 +163,39 @@ function createNodeIO({ endpoint, chatUrl: chatUrlOpt, model, key = '', provider
       }
       return { provider: 'none', query, games: [], result_count: 0, latency: 0 };
     },
-    resolvePersonality: async () => null,
+    // Personality (FB41): this was `async () => null` for the add-on's entire life — its comment
+    // even said "Still stubbed" — so EVERY on-prem ("My Local LLM") turn ran the base prompt and a
+    // household's chosen character (Santa, a princess in the kid's room, …) was silently dead on the
+    // local route while the cloud brain applied it. Same class as the gateway defects: an
+    // add-on/headless default applied to a real, personality-having tablet.
+    //
+    // Resolution is NOT reimplemented here — the device→account-default→UUID-vs-template→family-notes
+    // chain is canonical in the brain's personality.ts and now re-exported from the bundle (like
+    // runSports). node-io only supplies the credential: the ADD-ON's own account JWT (auth.getValidJwt
+    // — the same identity account-config.js reads user_settings with), NOT the per-request token,
+    // which is empty on an anon-kiosk turn. RLS scopes every read to that account; personality_templates
+    // is a public catalog (is_available=true). Fails soft to null (= base prompt) on any error or an
+    // old bundle, so it can never break a turn.
+    resolvePersonality: async (_supabase, _reqUserId, endpointId, explicitId) => {
+      try {
+        const brain = require('./voice-brain.bundle.js');
+        if (typeof brain.resolvePersonality !== 'function') return null; // old bundle → base prompt
+        const auth = require('../auth');
+        const { jwt, userId } = (await auth.getValidJwt()) || {};
+        if (!jwt || !userId) return null; // not signed into an account → base prompt (unchanged)
+        const { createClient } = require('@supabase/supabase-js');
+        const client = createClient(SUPABASE.url, SUPABASE.anonKey, {
+          global: { headers: { Authorization: `Bearer ${jwt}` } },
+          auth: { persistSession: false, autoRefreshToken: false },
+        });
+        // The account's own userId + this device's endpointId — the per-device personality
+        // (falls through to the account default when the device hasn't chosen one).
+        return await brain.resolvePersonality(client, userId, endpointId, explicitId);
+      } catch (e) {
+        log?.('[node-io] resolvePersonality failed (→ base prompt):', e?.message || e);
+        return null;
+      }
+    },
     // CR1 balance read for the BYOK tool gate. The core (billing:'byok') never rejects
     // the turn on !spendable — it just disables the Dashie-funded tools — so fail-open
     // here only risks a paid tool call that debitBalance floors later. get_credit_balance

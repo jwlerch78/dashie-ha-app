@@ -4,7 +4,7 @@
    The voice-conversation brain core, bundled for the Node add-on (on-prem L3).
    ONE core, TWO runtimes: the cloud Deno edge fn runs the TS source directly;
    this CJS bundle is the add-on's copy of the SAME source. Never hand-edit.
-   Source git SHA: 4b3afc564215b56993b0f5028bbb8061c5edd1b8
+   Source git SHA: dfda586f9cdc7bdaf5963b67e1d27c92a284e830
    Regenerate:  node scripts/build-node-brain.mjs && ./sync-brain-bundle.sh
    Contract:    supabase/functions/voice-conversation/README.md + build plan §13.16
    ============================================================ */
@@ -30,6 +30,7 @@ var __toCommonJS = (mod) => __copyProps(__defProp({}, "__esModule", { value: tru
 var orchestrator_exports = {};
 __export(orchestrator_exports, {
   looksLikeSportsAsk: () => looksLikeSportsAsk,
+  resolvePersonality: () => resolvePersonality,
   runOrchestration: () => runOrchestration,
   runSports: () => runSports,
   templateCanAnswer: () => templateCanAnswer,
@@ -2755,6 +2756,35 @@ async function synthesizeImage(query, criteria, ctx) {
   };
 }
 
+// supabase/functions/voice-conversation/personality.ts
+var UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+async function resolvePersonality(supabase, userId, endpointId, explicitId) {
+  const id = explicitId || await readDevicePersonalityId(supabase, userId, endpointId);
+  if (!id || id === "dashie") {
+    const { data: dflt } = await supabase.from("user_personality_overrides").select("family_notes").eq("user_id", userId).eq("template_key", "dashie").maybeSingle();
+    if (dflt?.family_notes) {
+      return { name: "Dashie (Default)", family_notes: dflt.family_notes };
+    }
+    return null;
+  }
+  if (UUID_RE.test(id)) {
+    const { data } = await supabase.from("user_personalities").select("*").eq("id", id).eq("user_id", userId).maybeSingle();
+    return data || null;
+  }
+  const { data: tpl } = await supabase.from("personality_templates").select("*").eq("key", id).maybeSingle();
+  if (!tpl) return null;
+  const { data: override } = await supabase.from("user_personality_overrides").select("*").eq("user_id", userId).eq("template_key", id).maybeSingle();
+  return { ...tpl, family_notes: override?.family_notes || tpl.family_notes };
+}
+async function readDevicePersonalityId(supabase, userId, endpointId) {
+  const { data: deviceRow } = await supabase.from("user_devices").select("settings").eq("auth_user_id", userId).eq("device_id", endpointId).maybeSingle();
+  const devicePid = deviceRow?.settings?.aiVoice?.personalityId;
+  if (devicePid) return devicePid;
+  const { data: acct } = await supabase.from("user_settings").select("settings").eq("auth_user_id", userId).maybeSingle();
+  const ai = acct?.settings?.ai;
+  return ai?.defaultPersonalityId || ai?.personality_id || null;
+}
+
 // supabase/functions/_shared/tools/current_time.ts
 var currentTimeTool = {
   name: "get_current_time",
@@ -4636,9 +4666,10 @@ function toolMeta(parsed, route, caps) {
 // Annotate the CommonJS export names for ESM import in node:
 0 && (module.exports = {
   looksLikeSportsAsk,
+  resolvePersonality,
   runOrchestration,
   runSports,
   templateCanAnswer,
   wantsGameDetail
 });
-module.exports.BRAIN_SOURCE_SHA = "4b3afc564215b56993b0f5028bbb8061c5edd1b8";
+module.exports.BRAIN_SOURCE_SHA = "dfda586f9cdc7bdaf5963b67e1d27c92a284e830";
