@@ -4,7 +4,7 @@
    The voice-conversation brain core, bundled for the Node add-on (on-prem L3).
    ONE core, TWO runtimes: the cloud Deno edge fn runs the TS source directly;
    this CJS bundle is the add-on's copy of the SAME source. Never hand-edit.
-   Source git SHA: dfda586f9cdc7bdaf5963b67e1d27c92a284e830
+   Source git SHA: b86479ae721ab14cc7ace5a1879a77545eadd35e
    Regenerate:  node scripts/build-node-brain.mjs && ./sync-brain-bundle.sh
    Contract:    supabase/functions/voice-conversation/README.md + build plan §13.16
    ============================================================ */
@@ -80,9 +80,13 @@ Rules:
   the photo is displayed. You are not a text-only model here. So NEVER say you can't show, display,
   or access pictures, and never suggest they "search online" for one. This applies to PHOTOS OF
   REAL PEOPLE exactly as it does to places and animals: a public figure is a normal image search
-  ("Mark Carney" \u2192 set image, say "Here's a picture of Mark Carney"). If you set "image", your
-  spoken line must be a caption, never a denial \u2014 saying "I can't show pictures" while a picture
-  appears on screen is the worst possible answer.**
+  ("Mark Carney" \u2192 set image, say "Here's a picture of Mark Carney").**
+- **"image" and your words must MATCH \u2014 this cuts both ways.** If you SAY "here's a picture"
+  (or "here he is", "this is X"), you MUST set "image", or the user hears a picture is coming and
+  the screen stays blank. And if you set "image", your spoken line must be a caption, never a
+  denial. Whenever the user asks to see someone or something \u2014 even alongside another question
+  ("show me a picture of X and tell me what team he plays for") \u2014 set "image" AND caption it. A
+  claim without the picture, or a picture with a denial, is the worst possible answer.
 - Be CONCISE and family-friendly
 
 ## 2. INFO_REQUEST (need to fetch data)
@@ -156,9 +160,13 @@ Rules:
   the photo is displayed. You are not a text-only model here. So NEVER say you can't show, display,
   or access pictures, and never suggest they "search online" for one. This applies to PHOTOS OF
   REAL PEOPLE exactly as it does to places and animals: a public figure is a normal image search
-  ("Mark Carney" \u2192 set image, say "Here's a picture of Mark Carney"). If you set "image", your
-  spoken line must be a caption, never a denial \u2014 saying "I can't show pictures" while a picture
-  appears on screen is the worst possible answer.
+  ("Mark Carney" \u2192 set image, say "Here's a picture of Mark Carney").**
+- **"image" and your words must MATCH \u2014 this cuts both ways.** If you SAY "here's a picture"
+  (or "here he is", "this is X"), you MUST set "image", or the user hears a picture is coming and
+  the screen stays blank. And if you set "image", your spoken line must be a caption, never a
+  denial. Whenever the user asks to see someone or something \u2014 even alongside another question
+  ("show me a picture of X and tell me what team he plays for") \u2014 set "image" AND caption it. A
+  claim without the picture, or a picture with a denial, is the worst possible answer.
 - display_events: For calendar queries, include event indices (idx field from calendar data) to show as visual event cards. Use for 1-10 specific events that answer the question. 1-2 events show as large cards, 3+ events show as a compact list grouped by day. Example: "When is Charlie's next game?" \u2192 display_events: [0] to show the first matching event. Example: "What are Mary's games this month?" \u2192 display_events: [0, 1, 2, 3, 4, 5] to show multiple games in list format.
 - timing: For travel time queries ONLY. Include the exact departure and arrival times you calculate. These must match what you say in voice.
 - trip: For location event queries ONLY. Include the primary event that answers the question (arrival or departure). We'll display a map showing the journey.
@@ -1556,7 +1564,7 @@ about Dashie: answer from it, never from your general knowledge or the web.
 Provide a helpful, spoken-friendly response based only on this documentation.
 `;
 var AVAILABLE_TOOLS_LIST = `- calendar_events: query: {time_range: "today|tomorrow|this_week|next_week|weekend|next_weekend|next_30_days|next_60_days|next_12_months|date_range|<weekday e.g. wednesday for that specific day>", start_date?: "YYYY-MM-DD", end_date?: "YYYY-MM-DD", member_name?: "name (for a specific person)", query?: "keyword to find ONE specific event e.g. physical therapy (for "what time is X")", tags?: ["soccer"], mode?: "next|list"} - Family calendar events. Set member_name when the question is about one person; use "weekend" for "this weekend" and "next_weekend" for "next weekend"; use mode "next" for a single upcoming event ("when is the next game"), "list" (default) for an overview ("what's on this weekend"). For a NAMED month or explicit period ("in December", "the week of the 20th") use time_range "date_range" WITH start_date + end_date covering it (a named month = its NEXT occurrence). For "when is X" with NO period named ("when is Veeva Break"), use query + mode "next" + time_range "next_12_months" so the search can't miss a far-out event
-- calendar_write: query: {action: "create|update|delete|confirm|cancel", title?: "event title (create) or the NEW title (update)", date?: "YYYY-MM-DD (create, or the NEW day on update)", start_time?: "HH:MM 24h", end_time?: "HH:MM 24h", all_day?: true, location?: "place", description?: "details", calendar_name?: "which calendar \u2014 when the user names one OR answers the which-calendar question", calendar_names?: ["Dad work","Mom"] (when they name MORE THAN ONE calendar \u2014 "add it to Dad and Mom's calendars"), match_query?: "words identifying the EXISTING event (update/delete), e.g. dentist", match_date?: "YYYY-MM-DD the existing event is on, if the user named its day", scope?: "all (ONLY when they say the whole series/all of them; default is just that one)"} - CHANGE the family calendar: action "create" to add ("add/put/schedule X on the calendar", "can you add an event\u2026"), "update" to change an existing event ("move/change/reschedule/rename my dentist appointment"), "delete" to remove one ("cancel/delete/remove my dentist appointment" \u2014 cancelling an APPOINTMENT/EVENT is a delete, not a conversation-cancel). Emit the action IMMEDIATELY with whatever the user actually said \u2014 every field is optional (a bare "add an event to dad's calendar" is a valid create with ONLY calendar_name); the DEVICE walks the user through anything missing (what to add, day and time, which calendar, which event) and ALWAYS asks for confirmation before touching the calendar. NEVER invent a field, NEVER ask your own follow-up questions for this tool \u2014 call it and let the device ask. For update/delete identify the existing event in match_query (+ match_date if they named its day) and put ONLY the changes in the top-level fields ("move the dentist to 4pm" = match_query "dentist" + start_time "16:00"). Dates are ABSOLUTE from the current date in your context ("Friday" = a real YYYY-MM-DD; "Friday at 8am" = date + start_time together). Omit end_time unless stated (defaults to one hour / the event's current length; "two hours" = end_time is start plus that). When the user answers a device question, re-emit the SAME action carrying the newly answered field(s) (the device remembers the rest); AFTER the device asks its confirmation question, ANY yes ("yes", "yep", "do it", "go ahead", "delete it") = action "confirm" \u2014 NEVER re-send create/update/delete at that point unless the user CHANGED a detail ("make it two hours" = re-emit the action with the corrected field); "no"/"never mind" there = action "cancel". NOT for reading the calendar (calendar_events), NOT for reminders/timers (schedule_action)
+- calendar_write: query: {action: "create|update|delete|confirm|cancel", title?: "event title (create) or the NEW title (update)", date?: "YYYY-MM-DD (create, or the NEW day on update)", start_time?: "HH:MM 24h", end_time?: "HH:MM 24h", all_day?: true, location?: "place", description?: "details", calendar_name?: "which calendar \u2014 when the user names one OR answers the which-calendar question", calendar_names?: ["Dad work","Mom"] (when they name MORE THAN ONE calendar \u2014 "add it to Dad and Mom's calendars"), match_query?: "words identifying the EXISTING event (update/delete), e.g. dentist", match_date?: "YYYY-MM-DD the existing event is on, if the user named its day", scope?: "all (ONLY when they say the whole series/all of them; default is just that one)"} - CHANGE the family calendar: action "create" to add ("add/put/schedule X on the calendar", "can you add an event\u2026"), "update" to change an existing event ("move/change/reschedule/rename my dentist appointment"), "delete" to remove one ("cancel/delete/remove my dentist appointment" \u2014 cancelling an APPOINTMENT/EVENT is a delete, not a conversation-cancel). Emit the action IMMEDIATELY with whatever the user actually said \u2014 every field is optional (a bare "add an event to dad's calendar" is a valid create with ONLY calendar_name); the DEVICE walks the user through anything missing (what to add, day and time, which calendar, which event) and ALWAYS asks for confirmation before touching the calendar. NEVER invent a field, NEVER ask your own follow-up questions for this tool \u2014 call it and let the device ask. For update/delete identify the existing event in match_query (+ match_date if they named its day) and put ONLY the changes in the top-level fields ("move the dentist to 4pm" = match_query "dentist" + start_time "16:00"). Dates are ABSOLUTE from the current date in your context ("Friday" = a real YYYY-MM-DD; "Friday at 8am" = date + start_time together). Omit end_time unless stated (defaults to one hour / the event's current length; "two hours" = end_time is start plus that). EXCEPTION \u2014 a SPORTING EVENT (a game, match, or fixture: "add the Argentina game", "put the Chiefs game on the calendar"): set end_time to TWO hours after start_time (e.g. start 15:00 \u2192 end_time 17:00), since games run long \u2014 unless the user gives a duration. When the user answers a device question, re-emit the SAME action carrying the newly answered field(s) (the device remembers the rest); AFTER the device asks its confirmation question, ANY yes ("yes", "yep", "do it", "go ahead", "delete it") = action "confirm" \u2014 NEVER re-send create/update/delete at that point unless the user CHANGED a detail ("make it two hours" = re-emit the action with the corrected field); "no"/"never mind" there = action "cancel". NOT for reading the calendar (calendar_events), NOT for reminders/timers (schedule_action)
 - family_members: query: {} - Info about family members (age, relationship, etc.)
 - web_search: query: "search string" - Current events, news, external info (IMPORTANT: query is a STRING)
 - chores: query: {hint: "task description", member_hint: "name"} - When someone reports completing a chore
@@ -4478,10 +4486,11 @@ function responseTextOf(parsed, raw) {
 function finalize({ t0, parsed, raw, stages, usage, latency, unsupported_tool, retain, sessionId, route, structured_data, client_tool, metadata }) {
   const type = parsed?.type || "response";
   const callerRetain = !!retain?.callerRetain && !unsupported_tool && (type === "response" || type === "action");
+  const isToolCall = type === "info_request" || type === "multi";
   return {
     ok: true,
     type,
-    voice: parsed?.voice || raw.content || "",
+    voice: parsed?.voice || (isToolCall ? "" : raw.content) || "",
     text: parsed?.text ?? null,
     action: parsed?.action ?? null,
     parsed_ok: !!parsed,
@@ -4672,4 +4681,4 @@ function toolMeta(parsed, route, caps) {
   templateCanAnswer,
   wantsGameDetail
 });
-module.exports.BRAIN_SOURCE_SHA = "dfda586f9cdc7bdaf5963b67e1d27c92a284e830";
+module.exports.BRAIN_SOURCE_SHA = "b86479ae721ab14cc7ace5a1879a77545eadd35e";
