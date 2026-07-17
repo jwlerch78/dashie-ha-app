@@ -4,7 +4,7 @@
    The voice-conversation brain core, bundled for the Node add-on (on-prem L3).
    ONE core, TWO runtimes: the cloud Deno edge fn runs the TS source directly;
    this CJS bundle is the add-on's copy of the SAME source. Never hand-edit.
-   Source git SHA: b86479ae721ab14cc7ace5a1879a77545eadd35e
+   Source git SHA: 322dbd58579449a51349062b6a4eef05f661e98e
    Regenerate:  node scripts/build-node-brain.mjs && ./sync-brain-bundle.sh
    Contract:    supabase/functions/voice-conversation/README.md + build plan §13.16
    ============================================================ */
@@ -1579,6 +1579,7 @@ var AVAILABLE_TOOLS_LIST = `- calendar_events: query: {time_range: "today|tomorr
 - get_current_time: query: {} - The CURRENT local date, time, and day of week. Call for "what time is it", "what's the date", "what day is it", AND to anchor any today/tomorrow/this-week/next reasoning. Authoritative \u2014 use it instead of your own clock, which is UTC and wrong for the user.
 - music: query: {action: "now_playing|search|play|pause|resume|stop|next|previous|volume_up|volume_down", query?: "song/artist/album text (for search or play)", uri?: "exact uri from a prior search result (for play)", speaker?: "speaker name, ONLY if the user names one"} - Music: what's playing now (action "now_playing" \u2014 "what song is this", "who sings this"), find music ("search" \u2014 returns matches to disambiguate), play it ("play" with the chosen uri, or a query), and transport \u2014 "stop the music"\u2192stop, "pause"\u2192pause, "turn it up/down"\u2192volume_up/volume_down, "next/skip"\u2192next. NEVER use "search" for a transport phrase
 - video_feeds: query: {action: "show|hide|show_all|hide_all|playback", camera?: "the camera name the user said, e.g. \\"pool\\" or \\"front door\\"", time?: "for playback ONLY \u2014 the user's own words for WHEN, e.g. \\"10 minutes ago\\", \\"at 10:30pm\\", \\"last night\\""} - Cameras: show a live feed ("show" + camera), hide it ("hide"), all of them ("show_all"/"hide_all"), or play back RECORDED footage from a past moment ("playback" + camera + time \u2014 "what happened at the front door around 3pm", "show me the pool camera 10 minutes ago"). Pass the user's own words through as "time" \u2014 the device resolves them in its own timezone. Use "show" (live) when no past time is mentioned
+- open_app: query: {app: "the app name the user said, e.g. \\"Netflix\\", \\"YouTube TV\\", \\"Prime Video\\", \\"Spotify\\""} - Open/launch a whole app on this screen: "open Netflix", "put on YouTube TV", "launch Spotify", "go to Prime Video". Pass the app name the user said through as "app"; the device matches it against installed apps. Use ONLY for opening an app \u2014 NOT for playing a specific song (use music) or showing cameras (use video_feeds)
 - dashie_help: query: {question: "the user's question"} - Detailed help on Dashie ITSELF: settings and where to find them, how-to steps, troubleshooting ("how do I add a calendar", "where do I change the theme", "why is my screen black"). Do NOT use for who/what-are-you or general "about Dashie" questions \u2014 answer those directly from your identity context. Never web_search Dashie product questions`;
 function fillTemplate(template, values) {
   return template.replace(/\{\{(\w+)\}\}/g, (_match, key) => {
@@ -1719,7 +1720,7 @@ function languageNameFor(code) {
     // deno-lint-ignore no-explicit-any
   }[code] || code;
 }
-var DEVICE_ONLY_TOOLS = ["music", "video_feeds"];
+var DEVICE_ONLY_TOOLS = ["music", "video_feeds", "open_app"];
 function toolsListFor(context) {
   const drop = [];
   if (context.webSearchEnabled === false) drop.push("- web_search:");
@@ -4681,4 +4682,4 @@ function toolMeta(parsed, route, caps) {
   templateCanAnswer,
   wantsGameDetail
 });
-module.exports.BRAIN_SOURCE_SHA = "b86479ae721ab14cc7ace5a1879a77545eadd35e";
+module.exports.BRAIN_SOURCE_SHA = "322dbd58579449a51349062b6a4eef05f661e98e";
