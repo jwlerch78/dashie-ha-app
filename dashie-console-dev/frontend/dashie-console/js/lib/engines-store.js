@@ -112,26 +112,15 @@ const EnginesStore = {
      *  native runtime knows. Returns [dottedKey, value] pairs.
      *  NOTE: a TTS engine does NOT write voice.localTtsVoiceId — the voice is owned by
      *  the Voice & AI card. The caller re-seeds it after selection (the old voice may
-     *  not exist on the newly-chosen box). */
+     *  not exist on the newly-chosen box).
+     *
+     *  The mapping itself now lives in js/data/settings/engine-resolution.js and is
+     *  GENERATED into engine-resolution.js (loaded before this file) and into Kotlin's
+     *  EngineResolver.kt — the native picker performs the same resolution, so a second
+     *  hand-written copy here would be exactly the drift surface JS_KOTLIN_CONTRACTS
+     *  forbids. Contract #29. */
     resolveToSettings(engine) {
-        if (!engine) return [];
-        if (engine.kind === 'tts') {
-            return [
-                ['voice.ttsProvider', 'local_url'],
-                ['voice.localTtsUrl', engine.url],
-            ];
-        }
-        if (engine.kind === 'stt') {
-            return [
-                ['voice.sttProvider', 'local_stt_url'],
-                ['voice.localSttUrl', engine.url],
-            ];
-        }
-        return [
-            ['ai.model', 'local'],
-            ['voice.localLlmUrl', engine.url],
-            ['voice.localLlmModel', engine.model || ''],
-        ];
+        return window.resolveEngineToSettings ? window.resolveEngineToSettings(engine) : [];
     },
 
     /** Which saved engine (if any) the current flat settings correspond to — the inverse
@@ -141,13 +130,16 @@ const EnginesStore = {
      *  account is on cloud/HA/Android, or the URL matches no saved engine. */
     matchSelected(kind, defaults) {
         const d = defaults || {};
-        const provider = kind === 'llm' ? String(d['ai.model'] || '') : String(d[kind === 'tts' ? 'voice.ttsProvider' : 'voice.sttProvider'] || '');
-        const wanted = kind === 'tts' ? 'local_url' : kind === 'stt' ? 'local_stt_url' : 'local';
-        if (provider !== wanted) return null;
-        const url = String(d[kind === 'tts' ? 'voice.localTtsUrl' : kind === 'stt' ? 'voice.localSttUrl' : 'voice.localLlmUrl'] || '').replace(/\/+$/, '');
+        // Keys come from the generated map (contract #29) rather than a second hand-written
+        // copy of the same three kinds — Kotlin's selectedEngineName() is the mirror of THIS
+        // function, so the two must not be able to disagree about which key holds the url.
+        const spec = (window.ENGINE_RESOLUTION || {})[kind];
+        if (!spec) return null;
+        if (String(d[spec.providerKey] || '') !== spec.providerValue) return null;
+        const url = String(d[spec.urlKey] || '').replace(/\/+$/, '');
         const of = this.cached(kind);
-        if (kind !== 'llm') return of.find(e => e.url === url) || null;
-        const model = String(d['voice.localLlmModel'] || '');
+        if (!spec.modelKey) return of.find(e => e.url === url) || null;
+        const model = String(d[spec.modelKey] || '');
         return of.find(e => e.url === url && (e.model || '') === model)
             || of.find(e => e.url === url)   // url matches, model drifted → still "this box"
             || null;
