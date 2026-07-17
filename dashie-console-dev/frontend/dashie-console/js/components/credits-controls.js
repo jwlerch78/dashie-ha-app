@@ -77,7 +77,24 @@ const CreditsControls = {
         BuyCreditsModal.open({
             packs: this.creditPacks(),
             getCheckoutUrl: (priceId) => this.buyCredits(priceId),
+            getQuote: () => this.quoteCredits(),
         });
+    },
+
+    /** Ask create-credit-checkout to price packs and/or raw top-up amounts (quote
+     *  mode) so the modals can disclose the platform fee. Returns
+     *  { fee_terms, packs:[...], amounts:[...] } or null. The server owns the fee
+     *  formula; nothing here mirrors it. */
+    async quoteCredits({ amounts } = {}) {
+        try {
+            const payload = { quote: true, price_ids: this.creditPacks().map(p => p.price_id) };
+            if (Array.isArray(amounts)) payload.amounts = amounts;
+            const res = await DashieAuth.edgeFunctionRequest('create-credit-checkout', payload);
+            return (res && (Array.isArray(res.packs) || Array.isArray(res.amounts))) ? res : null;
+        } catch (e) {
+            console.warn('[CreditsControls] credit quote failed', e);
+            return null;
+        }
     },
 
     /** Single checkout choke point. Builds env-correct return URLs, calls
@@ -132,16 +149,30 @@ const CreditsControls = {
 
     /** mode 'enable' → consent modal (also flips enabled:true on confirm).
      *  mode 'edit'   → plain rule editor for an already-on rule. */
-    openAutorefillModal(mode = 'edit') {
+    async openAutorefillModal(mode = 'edit') {
         if (typeof AutorefillModal === 'undefined') return;
         const ar = this._autorefill || {};
         const enabling = mode === 'enable';
+
+        // Only the consent (enable) surface states the charge, so only it needs the
+        // fee. Quote the selectable top-up amounts; a failure just falls back to the
+        // bare top-up copy (the modal treats a null map as fee-off).
+        let feeByAmount = null;
+        if (enabling) {
+            const q = await this.quoteCredits({ amounts: [5, 10, 25] });
+            if (q && Array.isArray(q.amounts)) {
+                feeByAmount = {};
+                for (const a of q.amounts) feeByAmount[Number(a.amount_usd)] = a;
+            }
+        }
+
         AutorefillModal.open({
             mode,
             threshold: Number(ar.threshold_usd ?? 1),
             topup: Number(ar.topup_usd ?? 10),
             dailyCap: Number(ar.daily_cap ?? 1),
             card: ar.has_card ? { brand: ar.card_brand, last4: ar.card_last4 } : null,
+            feeByAmount,
             onSave: (threshold, topup) => this._saveAutorefill(
                 enabling
                     ? { enabled: true, threshold_usd: threshold, topup_usd: topup }

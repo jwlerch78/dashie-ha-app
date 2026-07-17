@@ -92,10 +92,13 @@ const VoiceAiCards = {
             const firstInGroup = groupChanged || i === 0;
             return header + this._row(x, x.id === o.selectedId, o.stageKey, o.getConfig, firstInGroup, 'select');
         }).join('');
+        // Optional footer inside the expanded card (e.g. the entity card's
+        // "Edit exposed list ↗" deep-link) — only ever shown while expanded.
+        const footer = o.footerHtml || '';
         return `
             <div style="margin-bottom: 10px;">
                 <div class="card" style="box-shadow: 0 0 0 2px var(--accent), 0 6px 18px rgba(0,0,0,0.10); border-color: var(--accent);"><div class="card-body" style="padding: 0;">
-                    ${head + rows}
+                    ${head + rows + footer}
                 </div></div>
             </div>`;
     },

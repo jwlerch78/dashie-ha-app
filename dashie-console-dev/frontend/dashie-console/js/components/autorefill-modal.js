@@ -31,10 +31,16 @@ const AutorefillModal = {
     _root: null,
     _onKeyDown: null,
     _onSave: null,
+    _feeByAmount: null,
 
-    open({ mode = 'edit', threshold, topup, dailyCap = 1, card = null, onSave }) {
+    // feeByAmount: optional { [usd]: { fee_usd, total_usd } } from the server's
+    // quote mode, so the consent sentence states the amount ACTUALLY charged
+    // (topup + platform fee). Absent / fee-off → consent shows the bare top-up,
+    // identical to the pre-fee copy.
+    open({ mode = 'edit', threshold, topup, dailyCap = 1, card = null, onSave, feeByAmount = null }) {
         this._close();
         this._onSave = onSave;
+        this._feeByAmount = feeByAmount;
         this._render(mode, threshold, topup, dailyCap, card);
     },
 
@@ -51,12 +57,19 @@ const AutorefillModal = {
 
     _consentBlock(threshold, topup, dailyCap, card) {
         const per = dailyCap === 1 ? 'one refill per day' : `${dailyCap} refills per day`;
+        // When a platform fee applies, the card is charged topup + fee. State the
+        // TOTAL — the mandate they're agreeing to must equal what actually hits the
+        // card. Fee off / unknown → the bare top-up, as before.
+        const fee = this._feeByAmount && this._feeByAmount[Number(topup)];
+        const chargeLine = (fee && fee.fee_usd > 0)
+            ? `<strong>$${Number(fee.total_usd).toFixed(2)}</strong> ($${Number(topup)} credits + $${Number(fee.fee_usd).toFixed(2)} platform fee)`
+            : `<strong>$${Number(topup)}</strong>`;
         return `
             <div style="border:1px solid var(--border,#e5e7eb); border-left:3px solid var(--accent,#ffaa00);
                         border-radius:6px; padding:12px 14px; margin-bottom:18px; font-size:13px; line-height:1.6;">
                 <div style="margin-bottom:8px;">
                     Dashie will charge <strong>${this._escape(this._describeCard(card))}</strong>
-                    <strong>$${Number(topup)}</strong> automatically whenever your credit balance
+                    ${chargeLine} automatically whenever your credit balance
                     falls below <strong>$${Number(threshold).toFixed(2)}</strong>.
                 </div>
                 <ul style="margin:0; padding-left:18px; color: var(--text-muted);">

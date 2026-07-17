@@ -16,6 +16,7 @@
        BuyCreditsModal.open({
            packs: [{usd, price_id}, ...],
            getCheckoutUrl: async (priceId) => '<stripe url>',  // CreditsControls.buyCredits
+           getQuote: async () => ({ fee_terms, packs:[{price_id,credits_usd,fee_usd,total_usd}] }),  // optional
        });
    ============================================================ */
 
@@ -25,13 +26,16 @@ const BuyCreditsModal = {
     _pollTimer: null,
     _pollDeadline: 0,
     _getCheckoutUrl: null,
+    _getQuote: null,
     _packs: null,
 
-    open({ packs, getCheckoutUrl }) {
+    open({ packs, getCheckoutUrl, getQuote }) {
         this._closeImmediate();   // collapse any prior instance
         this._getCheckoutUrl = getCheckoutUrl;
+        this._getQuote = getQuote || null;
         this._packs = packs || [];
         this._render(packs || []);
+        this._loadFeeNote();
     },
 
     _render(packs) {
@@ -57,6 +61,8 @@ const BuyCreditsModal = {
                 <div class="modal-body" data-bc-body>
                     <div style="display:flex; gap:10px;">${buttons}</div>
                     <div style="color: var(--text-muted); font-size:11px; margin-top:10px;">1 credit = $1 USD · credits expire 1 year after purchase.</div>
+                    <!-- Filled by _loadFeeNote() ONLY when a platform fee is enabled server-side. -->
+                    <div data-bc-fee style="color: var(--text-muted); font-size:11px; margin-top:6px; display:none;"></div>
                 </div>
             </div>`;
 
@@ -71,6 +77,31 @@ const BuyCreditsModal = {
 
         document.body.appendChild(root);
         this._root = root;
+    },
+
+    /** Best-effort platform-fee disclosure. The server (quote mode) is the single
+     *  source of truth for the fee, so we never compute it here. Fee OFF (the
+     *  default) → fee_terms null → the note stays hidden and the buttons keep
+     *  meaning "credits received". Fee ON → "Plus a 9% ($1.00 minimum) platform
+     *  fee at checkout ($5 → $6.00 · …)", built from the quote so it can't drift
+     *  from what Stripe charges. Stripe itemises the fee at checkout regardless. */
+    async _loadFeeNote() {
+        if (!this._getQuote) return;
+        let quote;
+        try {
+            quote = await this._getQuote();
+        } catch (_) { return; }   // note is optional
+        if (!this._root || !quote || !quote.fee_terms || !Array.isArray(quote.packs)) return;
+
+        const lines = quote.packs
+            .filter(p => p.fee_usd > 0)
+            .sort((a, b) => a.credits_usd - b.credits_usd)
+            .map(p => `$${p.credits_usd} → $${Number(p.total_usd).toFixed(2)}`)
+            .join(' · ');
+        const el = this._root.querySelector('[data-bc-fee]');
+        if (!el) return;
+        el.textContent = `Plus a ${quote.fee_terms} platform fee at checkout` + (lines ? ` (${lines})` : '');
+        el.style.display = 'block';
     },
 
     async _pick(priceId) {
