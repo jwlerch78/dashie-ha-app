@@ -177,7 +177,14 @@ const VoiceAiAnalysis = {
     },
 
     /** In add-on mode, overlay HA-local transcript text (kiosk turns keep words
-     *  on the HA box, not Supabase) onto interactions by session_id. */
+     *  on the HA box, not Supabase) onto interactions by session_id.
+     *
+     *  A DIALOG shares ONE session_id across every turn, so this must key a session to a LIST.
+     *  It used to do `bySession.set(t.session_id, t)` — last-write-wins — which collapsed an
+     *  N-turn conversation to a single exchange and then only ever populated the SESSION-level
+     *  prompt/response, never `intr.turns[i]`. So a multi-turn dialog could never render its
+     *  conversation from HA-local text even though every turn was on disk (John, 2026-07-16:
+     *  138 stored transcripts, 17 sessions with >1 turn, all showing 1). */
     async _mergeLocalTranscripts(interactions) {
         if (typeof DashieAuth === 'undefined' || !DashieAuth.isAddonMode || !interactions.length) return;
         if (interactions.every(i => i.prompt || i.response)) return;
@@ -186,12 +193,37 @@ const VoiceAiAnalysis = {
                 .then(r => r.ok ? r.json() : null);
             const rows = data?.transcripts || [];
             if (!rows.length) return;
+            // session_id → every turn of that dialog. The store returns newest-first; reverse to
+            // chronological so index i lines up with turn i.
             const bySession = new Map();
-            for (const t of rows) if (t.session_id) bySession.set(t.session_id, t);
+            for (const t of rows) {
+                if (!t.session_id) continue;
+                const list = bySession.get(t.session_id);
+                if (list) list.push(t); else bySession.set(t.session_id, [t]);
+            }
+            for (const list of bySession.values()) list.reverse();
             for (const intr of interactions) {
-                if (intr.realtime || intr.prompt || intr.response) continue;
-                const t = intr.session_id && bySession.get(intr.session_id);
-                if (t) { intr.prompt = t.text || null; intr.response = t.voice || null; intr.subtext = t.subtext || null; }
+                if (intr.realtime) continue;
+                const list = intr.session_id && bySession.get(intr.session_id);
+                if (!list || !list.length) continue;
+                // Per-turn overlay — ONLY when the counts line up. A mismatch (a turn that never
+                // produced a transcript, e.g. a noise short-circuit) would slide every later turn
+                // onto the wrong utterance, and a confidently mislabelled transcript is worse than
+                // an absent one. Fall back to the session-level single overlay instead.
+                const turns = Array.isArray(intr.turns) ? intr.turns : null;
+                if (turns && turns.length === list.length) {
+                    turns.forEach((t, i) => {
+                        if (t.prompt || t.response) return;
+                        t.prompt = list[i].text || null;
+                        t.response = list[i].voice || null;
+                        t.subtext = list[i].subtext || null;
+                    });
+                }
+                if (!intr.prompt && !intr.response) {
+                    intr.prompt = list[0].text || null;
+                    intr.response = list[0].voice || null;
+                    intr.subtext = list[0].subtext || null;
+                }
             }
         } catch (e) { /* best-effort */ }
     },
