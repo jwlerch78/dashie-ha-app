@@ -154,6 +154,12 @@ async function getAccountVoiceConfig() {
             // console became the single source of truth — kiosk-voice-mirror Option A).
             controlMethod: str(settings?.voice?.controlMethod),
             searchSource: str(settings?.voice?.searchSource),
+            // Which HA entities voice can control (dashboard | assist). Rides the pipeline block so
+            // the integration forwards it wholesale; the applier writes VoicePreferences.entitySource,
+            // which DashieNative.getVoiceEntitySource() exposes to the kiosk's buildHaVoiceContext so
+            // a shared-account kiosk honors the account's pick instead of always using the exposed
+            // list (webapp/kiosk divergence, 20260717). Blank → kiosk default 'assist' (exposed).
+            entitySource: str(settings?.voice?.entitySource),
             pipelinePreset: str(settings?.voice?.pipelinePreset),
             // Own-box STT/TTS endpoints. MUST ride along with sttProvider/ttsProvider:
             // the applier hard-applies the providers, so serving `local_stt_url` /
