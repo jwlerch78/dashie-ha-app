@@ -4,7 +4,7 @@
    The voice-conversation brain core, bundled for the Node add-on (on-prem L3).
    ONE core, TWO runtimes: the cloud Deno edge fn runs the TS source directly;
    this CJS bundle is the add-on's copy of the SAME source. Never hand-edit.
-   Source git SHA: 322dbd58579449a51349062b6a4eef05f661e98e
+   Source git SHA: 34e56496189f91a7070da218e6f87da0bb3b1725
    Regenerate:  node scripts/build-node-brain.mjs && ./sync-brain-bundle.sh
    Contract:    supabase/functions/voice-conversation/README.md + build plan §13.16
    ============================================================ */
@@ -3974,7 +3974,7 @@ async function orchestrate(deps, io, voiceCtx) {
     return finalize({ t0, parsed: clarify, raw: pass1.raw, stages: [p1Stage], usage: pass1.raw.usage, latency: pass1.latency_ms, retain, sessionId, route });
   }
   if (!p1Parsed || p1Parsed.type === "response" || p1Parsed.type === "action") {
-    const sportsCard = providedSports && p1Parsed?.type === "response" ? templateSports(providedSports, providedSports.query || {}).structured_data : void 0;
+    const sportsCard = providedSports && p1Parsed?.type === "response" ? templateSports(providedSports, providedSports.query || {}, { timezone: req.timezone }).structured_data : void 0;
     const imageHint = !sportsCard && retrievePictures && p1Parsed?.type === "response" ? p1Parsed.image : void 0;
     const imageCard = imageHint?.searchTerms ? await resolveImageHint(p1Parsed, token, sessionId, io.toolConn) : void 0;
     const card2 = sportsCard ?? imageCard;
@@ -4682,4 +4682,4 @@ function toolMeta(parsed, route, caps) {
   templateCanAnswer,
   wantsGameDetail
 });
-module.exports.BRAIN_SOURCE_SHA = "322dbd58579449a51349062b6a4eef05f661e98e";
+module.exports.BRAIN_SOURCE_SHA = "34e56496189f91a7070da218e6f87da0bb3b1725";
