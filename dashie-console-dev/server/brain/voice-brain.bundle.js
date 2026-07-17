@@ -4,7 +4,7 @@
    The voice-conversation brain core, bundled for the Node add-on (on-prem L3).
    ONE core, TWO runtimes: the cloud Deno edge fn runs the TS source directly;
    this CJS bundle is the add-on's copy of the SAME source. Never hand-edit.
-   Source git SHA: 34e56496189f91a7070da218e6f87da0bb3b1725
+   Source git SHA: eacde41b99061d24a83d8e678d15361d26d7edb1
    Regenerate:  node scripts/build-node-brain.mjs && ./sync-brain-bundle.sh
    Contract:    supabase/functions/voice-conversation/README.md + build plan §13.16
    ============================================================ */
@@ -245,7 +245,7 @@ Parse the user's natural language command into Home Assistant service calls. The
 
 ## Available Entities
 
-These are the controllable entities in the user's Home Assistant. Each has an \`area\` (the room it is in):
+These are the controllable entities in the user's Home Assistant. Each has an \`area\` (the room it is in); some also have \`aliases\` (extra spoken names the user assigned, e.g. \`["TV"]\`):
 
 \`\`\`json
 {{HA_ENTITIES}}
@@ -260,7 +260,7 @@ When the user names no room, resolve the command to entities whose \`area\` matc
 ## Matching Guidelines
 
 **Entity Matching:**
-- Match the user's spoken name to the \`friendly_name\` field
+- Match the user's spoken name to the \`friendly_name\` field OR any entry in the entity's \`aliases\` list \u2014 an alias match is as good as a friendly_name match (e.g. an entity aliased \`["TV"]\` matches "turn on the TV")
 - Be flexible with variations: "living room lights" matches "Living Room Light"
 - **Room resolution:** when the user names NO room, restrict matching to entities whose \`area\` equals the Current Room. A named room ("the kitchen lights") OR a named entity ("the desk lamp") OVERRIDES the current room.
 - **Plural vs singular \u2014 the disambiguation rule:**
@@ -4682,4 +4682,4 @@ function toolMeta(parsed, route, caps) {
   templateCanAnswer,
   wantsGameDetail
 });
-module.exports.BRAIN_SOURCE_SHA = "34e56496189f91a7070da218e6f87da0bb3b1725";
+module.exports.BRAIN_SOURCE_SHA = "eacde41b99061d24a83d8e678d15361d26d7edb1";
