@@ -27,6 +27,7 @@ const CalendarPage = {
     _showHidden: false,             // when true, hidden calendars render ghosted inline
     _collapsedAccountKeys: null,    // Set of `${provider}-${account_type}` for collapsed groups
     _editingPrefixedId: null,       // prefixed_id of the calendar whose edit panel is open
+    _settings: null,                // full user_settings tree — backs the Calendar Options section
     _loading: false,
     _error: null,
     _saving: false,
@@ -114,7 +115,10 @@ const CalendarPage = {
             'calendar_assignment_types',
             'calendar_tags',
             'calendar_metadata',
-            'calendar_accounts'
+            'calendar_accounts',
+            // Calendar Options (startWeekOn / writeAccess) live in user_settings,
+            // so a dashboard-side change broadcasts as 'account_settings'.
+            'account_settings'
         ];
         kinds.forEach(k => window.SettingsSync.register(k, refetch));
         console.log('[CalendarPage] Registered ' + kinds.length + ' SettingsSync consumers');
@@ -134,7 +138,7 @@ const CalendarPage = {
         this._loading = true;
         this._error = null;
         try {
-            const [accountsRes, caldavRes, calendarsRes, membersRes] = await Promise.all([
+            const [accountsRes, caldavRes, calendarsRes, membersRes, settingsRes] = await Promise.all([
                 DashieAuth.authRequest({ operation: 'list_accounts' }),
                 // CalDAV (Apple iCloud) accounts live in a separate table from
                 // user_auth_tokens, so jwt-auth.list_accounts misses them. Pull
@@ -151,6 +155,13 @@ const CalendarPage = {
                 DashieAuth.dbRequest('list_family_members', {}).catch(e => {
                     console.warn('[CalendarPage] family fetch failed:', e.message);
                     return { members: [] };
+                }),
+                // Backs the Calendar Options section. Non-fatal: on failure the
+                // section stays hidden (render(null) → '') rather than showing
+                // pickers that would lie about the stored value.
+                DashieAuth.loadUserSettings().catch(e => {
+                    console.warn('[CalendarPage] user settings fetch failed:', e.message);
+                    return null;
                 }),
             ]);
 
@@ -172,6 +183,7 @@ const CalendarPage = {
             this._accounts = [...(accountsRes.accounts || []), ...caldavAccounts];
             this._calendars = calendarsRes.calendars || [];
             this._members = membersRes.members || membersRes.data || [];
+            this._settings = settingsRes || null;
             this._activeIds = new Set(
                 this._calendars.filter(c => c.is_active).map(c => c.prefixed_id)
             );
@@ -291,6 +303,7 @@ const CalendarPage = {
         return `
             <div class="section-header" style="margin-top: 0;">Accounts</div>
             ${sections}
+            ${CalendarOptions.render(this._settings)}
             ${savingNote}
         `;
     },

@@ -87,10 +87,16 @@ Available tools:
   "type": "action",
   "voice": "Confirmation (max 20 words)",
   "text": null,
-  "action": {"category": "theme|voice|display|chores", "command": "...", "parameters": {...}}
+  "action": {"category": "theme|chores", "command": "...", "parameters": {...}}
 }
 \`\`\`
-The "action" category is CLOSED — only theme, voice, display, or chores. Controlling smart-home devices (lights, locks, thermostat, garage door, switches, media players) is NOT an action: route it to the home_assistant tool as an info_request. Never invent a category. And do NOT answer a device command with a direct "response" — saying "Turning on the light" without a tool call turns nothing on.
+The category is CLOSED and so is the command list. These are the ONLY actions that exist:
+- theme → command "set_theme", parameters {theme: "dark"|"light"} and/or {family: "theme family, e.g. christmas"}
+- chores → command "complete_chores" or "undo_last_completion"
+
+Never invent a category or a command. Nothing else is wired to anything: an invented action does NOTHING while your "voice" tells the user it worked — which is worse than admitting you can't. If what they want isn't on that list, use a tool, or say you can't do it.
+
+Controlling smart-home devices (lights, locks, thermostat, garage door, switches, media players) is NOT an action: route it to the home_assistant tool as an info_request. And do NOT answer a device command with a direct "response" — saying "Turning on the light" without a tool call turns nothing on.
 
 Examples:
 - "Turn off the kitchen lights" → info_request with tool: "home_assistant"
@@ -162,10 +168,16 @@ Tools:
   "type": "action",
   "voice": "Confirmation (max 20 words)",
   "text": null,
-  "action": {"category": "theme|voice|display|chores", "command": "...", "parameters": {...}}
+  "action": {"category": "theme|chores", "command": "...", "parameters": {...}}
 }
 \`\`\`
-The "action" category is CLOSED — only theme, voice, display, or chores. Controlling smart-home devices (lights, locks, thermostat, garage door, switches, media players) is NOT an action: route it to the home_assistant tool as an info_request. Never invent a category. And do NOT answer a device command with a direct "response" — saying "Turning on the light" without a tool call turns nothing on.
+The category is CLOSED and so is the command list. These are the ONLY actions that exist:
+- theme → command "set_theme", parameters {theme: "dark"|"light"} and/or {family: "theme family, e.g. christmas"}
+- chores → command "complete_chores" or "undo_last_completion"
+
+Never invent a category or a command. Nothing else is wired to anything: an invented action does NOTHING while your "voice" tells the user it worked — which is worse than admitting you can't. If what they want isn't on that list, use a tool, or say you can't do it.
+
+Controlling smart-home devices (lights, locks, thermostat, garage door, switches, media players) is NOT an action: route it to the home_assistant tool as an info_request. And do NOT answer a device command with a direct "response" — saying "Turning on the light" without a tool call turns nothing on.
 
 Examples:
 - "Turn off the kitchen lights" → info_request with tool: "home_assistant"

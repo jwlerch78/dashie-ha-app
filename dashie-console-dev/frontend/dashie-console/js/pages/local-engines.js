@@ -119,7 +119,11 @@ const LocalEnginesPage = {
     },
 
     /** Engine type is a dropdown in the editor (one "Add engine" button, not three) —
-     *  switching it resets the probe, since the new kind hits a different path. */
+     *  switching it resets the probe, since the new kind hits a different path.
+     *  Editable on an EXISTING engine too (John, 2026-07-16): mis-typing the kind on a saved
+     *  box shouldn't force a delete-and-re-add. Safe — a selection is matched by URL, not by
+     *  engine id (EnginesStore.matchSelected), so a re-kinded engine simply stops matching its
+     *  old stage's card instead of corrupting the stored provider keys. */
     setKind(kind) {
         if (!this._editing || !EnginesStore.kind(kind)) return;
         this._editing.kind = kind;
@@ -441,7 +445,7 @@ const LocalEnginesPage = {
                 <div style="display: grid; gap: 12px;">
                     <label style="display: grid; gap: 4px; font-size: 12px; color: var(--text-muted);">
                         Type
-                        <select onchange="LocalEnginesPage.setKind(this.value)" style="${this._inputStyle()}"${d.id ? ' disabled' : ''}>
+                        <select onchange="LocalEnginesPage.setKind(this.value)" style="${this._inputStyle()}">
                             ${EnginesStore.KINDS.map(k =>
                                 `<option value="${k.id}" ${k.id === d.kind ? 'selected' : ''}>${this._escape(k.label)}</option>`).join('')}
                         </select>
