@@ -4717,6 +4717,7 @@ async function orchestrate(deps, io, voiceCtx) {
       steps: dispatch.steps
     });
   }
+  console.warn(`[orchestrator] DROP: pass-1 routed to unsupported tool '${p1Parsed.tool}' \u2014 falling back to caller's native path`);
   await logPass(io, token, REQUEST_TYPE, req.endpoint_id, sessionId, p1Prompt, pass1);
   return finalize({ t0, parsed: p1Parsed, raw: pass1.raw, stages: [p1Stage], usage: pass1.raw.usage, latency: pass1.latency_ms, unsupported_tool: p1Parsed.tool, sessionId, route });
 }
