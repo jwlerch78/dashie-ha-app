@@ -4,7 +4,7 @@
    The voice-conversation brain core, bundled for the Node add-on (on-prem L3).
    ONE core, TWO runtimes: the cloud Deno edge fn runs the TS source directly;
    this CJS bundle is the add-on's copy of the SAME source. Never hand-edit.
-   Source git SHA: 46e9a2446a4ec2c20508b114d234d19e72befc11
+   Source git SHA: 63af27d68753c46010ec35b7716b72cf79a7ab21
    Regenerate:  node scripts/build-node-brain.mjs && ./sync-brain-bundle.sh
    Contract:    supabase/functions/voice-conversation/README.md + build plan §13.16
    ============================================================ */
@@ -110,7 +110,7 @@ Available tools:
   "type": "action",
   "voice": "Confirmation (max 20 words)",
   "text": null,
-  "action": {"category": "theme|chores", "command": "...", "parameters": {...}}
+  "action": {"category": "theme|chores|personality", "command": "...", "parameters": {...}}
 }
 \`\`\`
 The category is CLOSED and so is the command list. These are the ONLY actions that exist:
@@ -197,7 +197,7 @@ Tools:
   "type": "action",
   "voice": "Confirmation (max 20 words)",
   "text": null,
-  "action": {"category": "theme|chores", "command": "...", "parameters": {...}}
+  "action": {"category": "theme|chores|personality", "command": "...", "parameters": {...}}
 }
 \`\`\`
 The category is CLOSED and so is the command list. These are the ONLY actions that exist:
@@ -4983,4 +4983,4 @@ function toolMeta(parsed, route, caps) {
   templateCanAnswer,
   wantsGameDetail
 });
-module.exports.BRAIN_SOURCE_SHA = "46e9a2446a4ec2c20508b114d234d19e72befc11";
+module.exports.BRAIN_SOURCE_SHA = "63af27d68753c46010ec35b7716b72cf79a7ab21";
