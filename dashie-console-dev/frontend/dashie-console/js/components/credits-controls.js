@@ -23,6 +23,7 @@ const CreditsControls = {
     _autorefillError: null,     // last set_autorefill error
     _busy: false,               // a buy / auto-replenish action is in flight
     _inflightAutorefill: null,  // dedupe concurrent get_autorefill
+    _feeByAmount: null,         // {usd: {fee_usd,total_usd}} from the server quote — never computed here
 
     // ── data ──────────────────────────────────────────────────
 
@@ -58,6 +59,10 @@ const CreditsControls = {
             try {
                 const res = await DashieAuth.dbRequest('get_autorefill', {});
                 if (res) this._autorefill = res;
+                // The summary line states what gets CHARGED, which includes the platform
+                // fee — so warm the per-amount fee from the server quote. Best-effort:
+                // without it the line falls back to the bare top-up.
+                if (res?.enabled) this._warmAutorefillFee(Number(res.topup_usd));
                 return res;
             } catch (e) {
                 console.warn('[CreditsControls] get_autorefill failed', e);
@@ -79,6 +84,18 @@ const CreditsControls = {
             getCheckoutUrl: (priceId) => this.buyCredits(priceId),
             getQuote: () => this.quoteCredits(),
         });
+    },
+
+    /** Cache the platform fee for the auto-replenish top-up so the summary line can state
+     *  the real charge. One-shot per amount; re-renders when it lands (the line renders
+     *  synchronously, so it shows the bare top-up until then). */
+    async _warmAutorefillFee(amount) {
+        if (!isFinite(amount) || amount <= 0) return;
+        if (this._feeByAmount && this._feeByAmount[amount] !== undefined) return;
+        const q = await this.quoteCredits({ amounts: [amount] });
+        const row = q && Array.isArray(q.amounts) ? q.amounts.find(a => Number(a.amount_usd) === amount) : null;
+        this._feeByAmount = { ...(this._feeByAmount || {}), [amount]: row || null };
+        if (row && typeof App !== 'undefined' && App.renderPage) App.renderPage();
     },
 
     /** Ask create-credit-checkout to price packs and/or raw top-up amounts (quote
@@ -225,7 +242,15 @@ const CreditsControls = {
             const cap = Number(ar.daily_cap ?? 1);
             const per = cap === 1 ? 'max 1/day' : `max ${cap}/day`;
             const instrument = this._describeCard(ar);
-            inline = `<span style="color: var(--text-muted); font-size:12px;">When below $${threshold.toFixed(2)}, add $${topup} to ${this._escape(instrument)} · ${per}<a href="#" onclick="event.preventDefault(); CreditsControls.openAutorefillModal('edit')" style="color: var(--accent); margin-left:6px;">Edit</a></span>`;
+            // State what actually gets CHARGED, including the platform fee. "add $5 to your
+            // Link wallet" was wrong twice over: it omitted the fee (the card is billed
+            // $5.95), and it described the direction backwards — the wallet is charged, not
+            // credited. Falls back to the bare top-up until the fee quote lands.
+            const fee = this._feeByAmount && this._feeByAmount[topup];
+            const chargeTxt = (fee && Number(fee.fee_usd) > 0)
+                ? `charge ${this._escape(instrument)} $${Number(fee.total_usd).toFixed(2)} for $${topup} in credits`
+                : `charge ${this._escape(instrument)} $${topup}`;
+            inline = `<span style="color: var(--text-muted); font-size:12px;">When below $${threshold.toFixed(2)}, ${chargeTxt} · ${per}<a href="#" onclick="event.preventDefault(); CreditsControls.openAutorefillModal('edit')" style="color: var(--accent); margin-left:6px;">Edit</a></span>`;
         }
 
         return `
