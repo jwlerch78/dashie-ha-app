@@ -4,7 +4,7 @@
    The voice-conversation brain core, bundled for the Node add-on (on-prem L3).
    ONE core, TWO runtimes: the cloud Deno edge fn runs the TS source directly;
    this CJS bundle is the add-on's copy of the SAME source. Never hand-edit.
-   Source git SHA: eacde41b99061d24a83d8e678d15361d26d7edb1
+   Source git SHA: fab847f7e7f95bff7dfa7d9257bce47d29933c5f
    Regenerate:  node scripts/build-node-brain.mjs && ./sync-brain-bundle.sh
    Contract:    supabase/functions/voice-conversation/README.md + build plan §13.16
    ============================================================ */
@@ -68,14 +68,14 @@ Use this when you already know the answer (general knowledge, math, definitions,
 {
   "type": "response",
   "voice": "Brief spoken answer (max 20 words)",
-  "text": "Extra details NOT in voice (max 100 words) or null",
+  "text": "Optional on-screen detail NOT already in voice (max 60 words), or null \u2014 prefer null when voice fully answers",
   "image": {"searchTerms": "keywords", "criteria": "visual desc", "fallback": "generic"} or null
 }
 \`\`\`
 
 Rules:
 - voice and text should not repeat each other
-- image: Only for visual topics. Null for weather, time, math, definitions.
+- image: **DEFAULT TO SETTING IT.** If the answer has a concrete subject someone could photograph \u2014 a person, place, animal, team, band/artist/album, movie or show, product, food, vehicle, landmark, or event \u2014 set "image". This is a family dashboard with a screen: a picture makes the answer better, and most answers have a natural subject. Don't overthink whether the topic is "visual" \u2014 a song has an artist and album art, a fact about otters has an otter. Use null ONLY when there is genuinely nothing to show: weather, time/date, math, yes/no answers, calendar logistics, and smart-home confirmations.
 - **Setting "image" REALLY DOES put a picture on the user's screen \u2014 a web image search runs and
   the photo is displayed. You are not a text-only model here. So NEVER say you can't show, display,
   or access pictures, and never suggest they "search online" for one. This applies to PHOTOS OF
@@ -87,7 +87,7 @@ Rules:
   denial. Whenever the user asks to see someone or something \u2014 even alongside another question
   ("show me a picture of X and tell me what team he plays for") \u2014 set "image" AND caption it. A
   claim without the picture, or a picture with a denial, is the worst possible answer.
-- Be CONCISE and family-friendly
+- Be CONCISE and family-friendly. The word limits above ("voice" max 20 words, "text" max 60 words) are HARD CAPS \u2014 never exceed them, and a persona/character style is NO excuse to run long. Leave "text" null whenever "voice" already answers.
 
 ## 2. INFO_REQUEST (need to fetch data)
 Use this when you need family-specific data (calendar, weather, locations, chores, etc.)
@@ -142,7 +142,7 @@ Respond with ONE of these JSON formats:
 {
   "type": "response",
   "voice": "Brief spoken answer (max 20 words)",
-  "text": "Extra details NOT in voice (max 100 words) or null",
+  "text": "Optional on-screen detail NOT already in voice (max 60 words), or null \u2014 prefer null when voice fully answers",
   "action": null,
   "image": {"searchTerms": "keywords", "criteria": "visual desc", "fallback": "generic"} or null,
   "display_events": [0] or null,
@@ -155,7 +155,7 @@ Respond with ONE of these JSON formats:
 
 Rules:
 - voice \u2260 text (don't repeat)
-- image: Only for visual topics. Null for weather/time/math.
+- image: **DEFAULT TO SETTING IT.** If the answer has a concrete subject someone could photograph \u2014 a person, place, animal, team, band/artist/album, movie or show, product, food, vehicle, landmark, or event \u2014 set "image". This is a family dashboard with a screen: a picture makes the answer better, and most answers have a natural subject. Don't overthink whether the topic is "visual" \u2014 a song has an artist and album art, a fact about otters has an otter. Use null ONLY when there is genuinely nothing to show: weather (use show_weather_overlay instead), time/date, math, yes/no answers, calendar logistics, and smart-home confirmations.
 - **Setting "image" REALLY DOES put a picture on the user's screen \u2014 a web image search runs and
   the photo is displayed. You are not a text-only model here. So NEVER say you can't show, display,
   or access pictures, and never suggest they "search online" for one. This applies to PHOTOS OF
@@ -172,7 +172,7 @@ Rules:
 - trip: For location event queries ONLY. Include the primary event that answers the question (arrival or departure). We'll display a map showing the journey.
 - member_location: For "where is X right now?" queries ONLY. Set to true to display a map card with the member's current location, avatar, distance from home, and travel time. We'll use the location data already provided to render the card.
 - show_weather_overlay: For weather queries where user would benefit from seeing the forecast visually. Set to true to display the weather overlay modal with current conditions, hourly forecast, 10-day forecast, and animated radar. Use when user asks about weather forecast, weekend weather, or multi-day planning.
-- Be CONCISE and family-friendly
+- Be CONCISE and family-friendly. The word limits above ("voice" max 20 words, "text" max 60 words) are HARD CAPS \u2014 never exceed them, and a persona/character style is NO excuse to run long. Leave "text" null whenever "voice" already answers.
 
 ## 2. INFO_REQUEST (need more data)
 \`\`\`json
@@ -225,6 +225,37 @@ Examples:
 - "How far away is Mom?" \u2192 info_request with tool: "family_locations", query: {member_name: "Mom"}
 
 CRITICAL: Respond ONLY with raw JSON. Do NOT wrap in markdown code fences (no \`\`\`json blocks). Just the JSON object directly.
+`;
+var RESPONSE_FORMAT_MULTI = `## 4. MULTI (one turn, several DIFFERENT tools)
+Use this ONLY when a single request asks for two or more things that need DIFFERENT tools.
+\`\`\`json
+{
+  "type": "multi",
+  "voice": "One confirmation covering everything (max 20 words)",
+  "steps": [
+    {"tool": "home_assistant", "query": {"command_hint": "turn on the fireplace"}},
+    {"tool": "music", "query": {"action": "play", "query": "classical music"}}
+  ]
+}
+\`\`\`
+
+Rules \u2014 read carefully, this type is easy to over-use:
+- ONE step per TOOL, never one step per device or per phrase. Everything handled by the SAME
+  tool goes in ONE step: "turn on the fan, open the blinds, and lock the door" is all
+  smart-home = a SINGLE home_assistant step (that tool does several devices at once), NOT three.
+- If everything the user asked for needs only ONE tool, DO NOT use multi \u2014 emit the ordinary
+  single info_request. This is the common case. Multi is the exception.
+- Steps must be device/home ACTIONS ("do" requests). If any part of the request is a QUESTION
+  that needs an answer spoken back ("...and what's the weather?"), do NOT use multi \u2014 handle the
+  single most important part as a normal info_request.
+- "voice" confirms the whole turn once, e.g. "Lighting the fireplace and starting some classical."
+- Each step uses that tool's normal query format, exactly as listed above.
+
+Examples:
+- "Turn on the fireplace and play some classical music" \u2192 multi: home_assistant + music
+- "Open the blinds and lock the back door" \u2192 NOT multi (one tool) \u2192 info_request home_assistant
+- "Play the Beatles" \u2192 NOT multi \u2192 info_request music
+- "Turn on the fan" \u2192 NOT multi \u2192 info_request home_assistant
 `;
 var INQUIRY_HOME_ASSISTANT = `# Inquiry Context: Home Assistant Command Parsing
 
@@ -282,12 +313,20 @@ When the user names no room, resolve the command to entities whose \`area\` matc
 | "unlock" | lock | unlock |
 | "set to X degrees" | climate | set_temperature |
 | "set brightness to X%" | light | turn_on (with brightness) |
+| "dim" / "lower" / "turn down" (no level) | light | turn_on, brightness_pct 30 |
+| "brighten" / "turn up" (no level) | light | turn_on, brightness_pct 100 |
 | "activate" / "run" | scene, script | turn_on |
 
 **Climate/Thermostat:**
 - "set thermostat to 72" \u2192 climate.set_temperature with temperature: 72
 - "turn up the heat" \u2192 climate.set_temperature, increase by ~2 degrees from current
 - "turn on the AC" \u2192 climate.set_hvac_mode with hvac_mode: "cool"
+
+**Lighting brightness \u2014 a level-less command is NOT ambiguous; pick a sensible default, do NOT ask for a percentage** (same as "turn down the volume" \u2014 you just lower it):
+- "dim the lights" / "turn the lights down" / "lower the lights" \u2192 turn_on with \`brightness_pct: 30\`
+- "brighten the lights" / "turn the lights up" \u2192 turn_on with \`brightness_pct: 100\`
+- "dim to X%" / "set brightness to X%" \u2192 turn_on with \`brightness_pct: X\`
+- Only ask a clarifying question when the DEVICE is ambiguous (singular + 2+ matches in the room, per the disambiguation rule) \u2014 never merely because a brightness level wasn't stated.
 
 ## Response Format
 
@@ -481,17 +520,25 @@ This appears to be a request that requires information from the web.
 - **No commentary or sign-off** \u2014 skip "Hope that helps!", opinions, and filler.
 - **Add at most one sentence of detail** only if it materially helps; otherwise stop.
 - **If the results don't answer it**, say so briefly rather than guessing.
+- **Show a picture whenever there's a subject to see.** Most search answers center on something photographable \u2014 a person, team, artist or album, movie, animal, place, landmark, product, or event. Set the "image" field for those. Being brief in words does NOT mean skipping the picture; a short spoken answer plus an image is the ideal search response.
 
 ## Example Questions and Responses
 
 **"Who won the game last night?"**
 - Voice: "The Eagles beat the Cowboys, 24 to 17."
+- Image: searchTerms "Philadelphia Eagles" \u2014 the winning team is showable.
 
 **"How tall is the Eiffel Tower?"**
 - Voice: "About 330 meters \u2014 just over a thousand feet."
+- Image: searchTerms "Eiffel Tower" \u2014 a landmark always gets a picture.
 
 **"Fun fact about otters?"**
 - Voice: "Otters hold hands while they sleep so they don't drift apart."
+- Image: searchTerms "sea otters holding hands" \u2014 animals always get a picture.
+
+**"What's the number one song on the charts?"**
+- Voice: "'Golden' by HUNTR/X is topping the Hot 100 this week."
+- Image: searchTerms "HUNTR/X Golden album cover" \u2014 a song means artist/album art, so still set an image.
 
 ## Search Results
 
@@ -1569,7 +1616,7 @@ var AVAILABLE_TOOLS_LIST = `- calendar_events: query: {time_range: "today|tomorr
 - web_search: query: "search string" - Current events, news, external info (IMPORTANT: query is a STRING)
 - chores: query: {hint: "task description", member_hint: "name"} - When someone reports completing a chore
 - rewards: query: {} - Rewards catalog and redemption status
-- schedule_action: query: {time: "HH:MM" (24h local) OR delay_minutes: number, recurrence: "once"|"daily", kind: "command"|"prompt", prompt: "instruction Dashie runs then, as a user request", label: "short confirmation e.g. 'tell you a joke'"} - Use WHENEVER the request has a future time or delay attached, even for things you could answer now: "tell me a joke in 5 minutes", "in 2 hours check the pool", "turn the porch light off at 9:30", "at 6am read me the weather". The delay/time means DEFER \u2014 do NOT answer/act now, schedule it. Set kind="command" when the deferred thing is a smart-home CONTROL action (turn on/off, lock, open \u2014 Dashie issues it directly at that time); kind="prompt" for anything Dashie must think about or answer then (jokes, "tell me if the garage is open", weather). delay_minutes for "in N minutes/hours"; time for a clock time. recurrence defaults to "once" \u2014 a bare clock time ("at 6am read me the weather", "turn the porch light off at 9:30") is a ONE-SHOT; only use "daily" when the user EXPLICITLY asks for a repeat ("every night at 9pm", "each morning", "every day at 6am"). Never turn a one-off into a standing daily alarm. ("daily" requires time, never delay_minutes.) NOT for "remind me <text>" reminders or sensor thresholds.
+- schedule_action: query: {time: "HH:MM" (24h local) OR delay_minutes: number, recurrence: "once"|"daily", kind: "notify"|"command"|"prompt", prompt: "see kind", label: "short confirmation e.g. 'check the oven'"} - Use WHENEVER the request has a future time or delay attached, even for things you could answer now: "remind me to check the oven in 3 minutes", "tell me a joke in 5 minutes", "turn the porch light off at 9:30", "at 6am read me the weather". The delay/time means DEFER \u2014 do NOT answer/act now, schedule it. kind picks what happens at fire time: "notify" = a plain reminder/announcement \u2014 Dashie just SPEAKS the text, no AI involved ("remind me to X", "tell me to X at 9") \u2014 prompt is the announcement itself, e.g. "check the oven" (strip the "remind me to" wrapper); "command" = a smart-home CONTROL action (turn on/off, lock, open \u2014 Dashie issues it directly at that time); "prompt" = something Dashie must THINK about, check, or look up at fire time ("tell me IF the garage is open", "read me the weather", "tell me a joke") \u2014 prompt is the instruction as a user request. prompt is REQUIRED for every kind \u2014 never emit the call without it (for kind="command" it's the control action itself, e.g. "turn on the string lights"). delay_minutes for "in N minutes/hours" \u2014 fractional for sub-minute delays ("in thirty seconds" = 0.5); time for a clock time. recurrence defaults to "once" \u2014 a bare clock time ("at 6am read me the weather", "turn the porch light off at 9:30") is a ONE-SHOT; only use "daily" when the user EXPLICITLY asks for a repeat ("every night at 9pm", "each morning", "every day at 6am"). Never turn a one-off into a standing daily alarm. ("daily" requires time, never delay_minutes.) NOT for sensor thresholds.
 - location_events: query: {member_name: "Mary", location_name: "home", timeframe: "today|yesterday|last_night", event_type: "arrive|depart"} - Arrival/departure history
 - travel_time: query: {event_title: "game", member_name: "Jack"} - When to leave for an event
 - family_locations: query: {member_name: "Mary"} - Current GPS location ("where is X right now?")
@@ -1663,6 +1710,13 @@ function buildPersonalityPrompt(personality) {
   }
   suffix = addFamilyNotes(suffix, personality.family_notes);
   suffix += "\n\nVARY YOUR RESPONSES - don't start every response the same way. Mix up your openings.";
+  suffix += `
+
+CRITICAL \u2014 brevity OVERRIDES the character's urge to elaborate:
+- LEAD WITH THE ANSWER. No wind-up, no restating the question, no "Ah, you're asking about..." preamble before the facts.
+- Spoken "voice": ONE sentence, ~25 words max. Give the answer plus at most a couple words of character flavor, then STOP.
+- No closing flourish, no reflection on what it reminds you of, no tangents or rhetorical questions back to the user.
+- Character lives in a word or two of word CHOICE, never in extra sentences. A wordy answer is a worse answer, even in character.`;
   return { responsePrefix: prefix.trim(), responseSuffix: suffix };
 }
 function addFamilyNotes(suffix, familyNotes) {
@@ -1721,6 +1775,18 @@ function languageNameFor(code) {
   }[code] || code;
 }
 var DEVICE_ONLY_TOOLS = ["music", "video_feeds", "open_app"];
+var MULTI_ANCHOR_ONE_OF = "Respond with ONE of these JSON formats:";
+var MULTI_ANCHOR_ONE_OF_PATCHED = "Respond with ONE of these JSON formats (use MULTI only for several DIFFERENT tools in one request):";
+var MULTI_ANCHOR_CRITICAL = "CRITICAL: Respond ONLY with raw JSON.";
+function injectMultiBlock(prompt) {
+  if (!prompt.includes(MULTI_ANCHOR_ONE_OF) || !prompt.includes(MULTI_ANCHOR_CRITICAL)) {
+    console.warn("\u26A0\uFE0F multi block: anchors not found in initial prompt \u2014 emitting without multi");
+    return prompt;
+  }
+  return prompt.replace(MULTI_ANCHOR_ONE_OF, MULTI_ANCHOR_ONE_OF_PATCHED).replace(MULTI_ANCHOR_CRITICAL, `
+${RESPONSE_FORMAT_MULTI}
+${MULTI_ANCHOR_CRITICAL}`);
+}
 function toolsListFor(context) {
   const drop = [];
   if (context.webSearchEnabled === false) drop.push("- web_search:");
@@ -1895,6 +1961,9 @@ function buildPrompt({ userRequest, inquiryType, retrievedData, context = {} }) 
     prompt += "\n\n" + fillTemplate(RESPONSE_FORMAT_FULL, baseValues);
   } else {
     prompt += "\n\n" + fillTemplate(RESPONSE_FORMAT_INITIAL, baseValues);
+    if (context.multiEnabled) {
+      prompt = injectMultiBlock(prompt);
+    }
   }
   if (context.retrievePicturesEnabled === false) {
     prompt += `
@@ -3752,6 +3821,94 @@ function templateWeather(data, query = {}) {
   return { voice, text: null, card: null };
 }
 
+// supabase/functions/voice-conversation/multi-dispatch.ts
+var ZERO_USAGE = { input_tokens: 0, output_tokens: 0, total_tokens: 0 };
+function addUsage(a, u) {
+  const b = u ?? {};
+  return {
+    input_tokens: a.input_tokens + (b.input_tokens ?? 0),
+    output_tokens: a.output_tokens + (b.output_tokens ?? 0),
+    total_tokens: a.total_tokens + (b.total_tokens ?? 0),
+    reasoning_tokens: (a.reasoning_tokens ?? 0) + (b.reasoning_tokens ?? 0)
+  };
+}
+function recoverHaAction(parsed) {
+  const p = parsed;
+  const query = p.query ?? {};
+  const params = p.parameters ?? p.action?.parameters ?? {};
+  const raw = Array.isArray(query.commands) ? query.commands : Array.isArray(params.commands) ? params.commands : Array.isArray(p.commands) ? p.commands : null;
+  if (!raw) return null;
+  const commands = raw.filter((c) => !!c && typeof c === "object" && typeof c.domain === "string" && typeof c.service === "string");
+  if (commands.length === 0) return null;
+  const voice = typeof parsed.voice === "string" && parsed.voice ? parsed.voice : "Done.";
+  return {
+    type: "action",
+    voice,
+    text: null,
+    action: { category: "homeassistant", command: "execute_commands", parameters: { commands } }
+  };
+}
+async function resolveHaStep(step, deps) {
+  const commandHint = step.query?.command_hint;
+  const hint = typeof commandHint === "string" && commandHint.trim() ? commandHint : deps.userText;
+  const haContext = { ...deps.context, chatHistory: "" };
+  const prompt = buildPrompt({
+    userRequest: hint,
+    inquiryType: "home-assistant",
+    retrievedData: { entities: deps.entities ?? [], command_hint: hint },
+    context: haContext
+  });
+  const pass2 = await deps.callGateway({ provider: deps.provider, prompt, modelId: deps.modelId, kind: "decide" });
+  if (!pass2.ok || !pass2.raw) return { error: pass2.error || "ha pass-2 failed" };
+  let parsed = parseContent(pass2.raw.content);
+  if (parsed && parsed.type === "info_request") {
+    const recovered = recoverHaAction(parsed);
+    if (recovered) parsed = recovered;
+  }
+  const action = parsed?.action ?? null;
+  const usage = addUsage({ ...ZERO_USAGE }, pass2.raw.usage);
+  const stage = {
+    name: "pass2_multi_ha",
+    latency_ms: pass2.latency_ms,
+    model: pass2.raw.model,
+    provider: pass2.raw.provider,
+    usage,
+    type: parsed?.type
+  };
+  return { action, stage, usage, latencyMs: pass2.latency_ms };
+}
+async function dispatchMultiTurn(steps, deps) {
+  const out = [];
+  const stages = [];
+  let usage = { ...ZERO_USAGE };
+  let latencyMs = 0;
+  for (const step of steps) {
+    if (step.tool === "home_assistant") {
+      if (!deps.entities || deps.entities.length === 0) {
+        out.push({ tool: "home_assistant", unsupported_tool: "home_assistant" });
+        continue;
+      }
+      const res = await resolveHaStep(step, deps);
+      if ("error" in res) {
+        out.push({ tool: "home_assistant", unsupported_tool: "home_assistant" });
+        continue;
+      }
+      stages.push(res.stage);
+      usage = addUsage(usage, res.usage);
+      latencyMs += res.latencyMs;
+      if (res.action) out.push({ tool: "home_assistant", action: res.action });
+      else out.push({ tool: "home_assistant", unsupported_tool: "home_assistant" });
+      continue;
+    }
+    if (step.tool === "music" || step.tool === "video_feeds") {
+      out.push({ tool: step.tool, client_tool: { tool: step.tool, query: step.query } });
+      continue;
+    }
+    out.push({ tool: step.tool, unsupported_tool: step.tool });
+  }
+  return { steps: out, stages, usage, latencyMs };
+}
+
 // supabase/functions/voice-conversation/orchestrator.ts
 var GAME_DETAIL_RE = /\b(summar(?:y|ize|ise)|recap|rundown|breakdown|break it down|highlights?|walk me through|go deeper|analy(?:sis|ze|se)|how did .{0,24}?(?:play|do|look)|what happened|tell me more|tell me about|more about|(?:any |more )?details?|who scored|who (?:got|had) (?:the |a )?goals?|top scorers?|hat[- ]?trick)\b/i;
 function wantsGameDetail(text) {
@@ -3899,10 +4056,12 @@ async function orchestrate(deps, io, voiceCtx) {
   const promptWebSearch = webSearchAllowed && !geminiGrounds;
   const isAnnouncement = req.announcement === true;
   const clientTools = req.client_fulfilled_tools;
+  const multiEnabled = Array.isArray(clientTools) && clientTools.includes("multi");
   const caps = {
     web_search: webSearchAllowed,
     retrieve_pictures: retrievePictures,
     grounding: geminiGrounds,
+    multi: multiEnabled,
     tools: offeredToolNames({ webSearchEnabled: promptWebSearch, announcement: isAnnouncement, clientTools, calendarWriteEnabled: voiceCalendarWrites })
   };
   const context = {
@@ -3915,6 +4074,8 @@ async function orchestrate(deps, io, voiceCtx) {
     announcement: isAnnouncement,
     clientTools,
     // → toolsListFor drops device-only tools this caller can't fulfill
+    multiEnabled,
+    // → buildPrompt appends the capability-gated multi-emission block when true
     calendarWriteEnabled: voiceCalendarWrites,
     // → toolsListFor drops calendar_write when voice writes off
     // false → buildPrompt appends the image-unavailable instruction so the model can't
@@ -3945,7 +4106,7 @@ async function orchestrate(deps, io, voiceCtx) {
     context: `forced web_search (mutable entity: ${forced})`,
     processing_message: "Looking that up"
   }) : null;
-  const pass1 = forcedContent ? { ok: true, latency_ms: 0, raw: { content: forcedContent, usage: { input_tokens: 0, output_tokens: 0, total_tokens: 0 } } } : await io.callGateway({ provider, prompt: p1Prompt, modelId, grounding: geminiGrounds, kind: "decide", temperature: req.options?.route_temperature });
+  const pass1 = forcedContent ? { ok: true, latency_ms: 0, raw: { content: forcedContent, usage: { input_tokens: 0, output_tokens: 0, total_tokens: 0 } } } : await io.callGateway({ provider, prompt: p1Prompt, modelId, grounding: geminiGrounds, kind: "decide", temperature: req.options?.route_temperature, thinkingBudget: req.options?.thinking_budget ?? 0 });
   if (!pass1.ok || !pass1.raw) {
     return errorTurn(t0, pass1, [stageErr("pass1", pass1)]);
   }
@@ -4408,29 +4569,54 @@ async function orchestrate(deps, io, voiceCtx) {
     };
     return await secondPass(io, deps, t0, "dashie-help", helpData, [p1Stage, fetchStage], pass1, provider, modelId, context, sessionId, retain, route);
   }
+  if (p1Parsed.type === "multi") {
+    const stepsIn = p1Parsed.steps ?? [];
+    if (stepsIn.length < 2) {
+      await logPass(io, token, REQUEST_TYPE, req.endpoint_id, sessionId, p1Prompt, pass1);
+      const emptyMulti = { type: "response", voice: "", text: null, action: null };
+      return finalize({ t0, parsed: emptyMulti, raw: pass1.raw, stages: [p1Stage], usage: pass1.raw.usage, latency: pass1.latency_ms, unsupported_tool: "multi", sessionId, route: "multi" });
+    }
+    const dispatch = await dispatchMultiTurn(stepsIn, {
+      callGateway: io.callGateway,
+      provider,
+      modelId,
+      context,
+      userText: req.text,
+      entities: req.provided_context?.ha_entities
+    });
+    await logPass(
+      io,
+      token,
+      REQUEST_TYPE,
+      req.endpoint_id,
+      sessionId,
+      p1Prompt,
+      pass1,
+      retainFields(retain.serverPersist, retain.userText, typeof p1Parsed.voice === "string" ? p1Parsed.voice : "", null),
+      turnMeta
+    );
+    const multiParsed = { type: "multi", voice: p1Parsed.voice, text: null, action: null };
+    return finalize({
+      t0,
+      parsed: multiParsed,
+      raw: pass1.raw,
+      stages: [p1Stage, ...dispatch.stages],
+      usage: sumUsage([pass1.raw.usage, dispatch.usage]),
+      latency: pass1.latency_ms + dispatch.latencyMs,
+      retain,
+      sessionId,
+      route: "multi",
+      steps: dispatch.steps
+    });
+  }
   await logPass(io, token, REQUEST_TYPE, req.endpoint_id, sessionId, p1Prompt, pass1);
   return finalize({ t0, parsed: p1Parsed, raw: pass1.raw, stages: [p1Stage], usage: pass1.raw.usage, latency: pass1.latency_ms, unsupported_tool: p1Parsed.tool, sessionId, route });
-}
-function recoverHaAction(parsed) {
-  const p = parsed;
-  const query = p.query ?? {};
-  const params = p.parameters ?? p.action?.parameters ?? {};
-  const raw = Array.isArray(query.commands) ? query.commands : Array.isArray(params.commands) ? params.commands : Array.isArray(p.commands) ? p.commands : null;
-  if (!raw) return null;
-  const commands = raw.filter((c) => !!c && typeof c === "object" && typeof c.domain === "string" && typeof c.service === "string");
-  if (commands.length === 0) return null;
-  const voice = typeof parsed.voice === "string" && parsed.voice ? parsed.voice : "Done.";
-  return {
-    type: "action",
-    voice,
-    text: null,
-    action: { category: "homeassistant", command: "execute_commands", parameters: { commands } }
-  };
 }
 function routeOf(parsed) {
   if (!parsed) return "direct";
   if (parsed.type === "response") return "direct";
   if (parsed.type === "action") return "action";
+  if (parsed.type === "multi") return "multi";
   if (parsed.type === "info_request") return parsed.tool || "unknown";
   return "direct";
 }
@@ -4484,7 +4670,7 @@ async function resolveImageHint(parsed, token, sessionId, conn) {
 function responseTextOf(parsed, raw) {
   return parsed?.voice || raw.content || "";
 }
-function finalize({ t0, parsed, raw, stages, usage, latency, unsupported_tool, retain, sessionId, route, structured_data, client_tool, metadata }) {
+function finalize({ t0, parsed, raw, stages, usage, latency, unsupported_tool, retain, sessionId, route, structured_data, client_tool, metadata, steps }) {
   const type = parsed?.type || "response";
   const callerRetain = !!retain?.callerRetain && !unsupported_tool && (type === "response" || type === "action");
   const isToolCall = type === "info_request" || type === "multi";
@@ -4504,6 +4690,7 @@ function finalize({ t0, parsed, raw, stages, usage, latency, unsupported_tool, r
     unsupported_tool: unsupported_tool || void 0,
     client_tool: client_tool || void 0,
     route,
+    steps: steps && steps.length ? steps : void 0,
     stages,
     // Echo the session id (== ai_interactions.session_id) so callers can join the
     // HA-local transcript to the Supabase usage rows in the console (§17).
@@ -4615,12 +4802,13 @@ function stageErr(name, r) {
   return { name, latency_ms: r.latency_ms, error: r.error };
 }
 function sumUsage(usages) {
-  const total = { input_tokens: 0, output_tokens: 0, total_tokens: 0 };
+  const total = { input_tokens: 0, output_tokens: 0, total_tokens: 0, reasoning_tokens: 0 };
   for (const u of usages) {
     if (!u) continue;
     total.input_tokens += u.input_tokens || 0;
     total.output_tokens += u.output_tokens || 0;
     total.total_tokens += u.total_tokens || 0;
+    total.reasoning_tokens = (total.reasoning_tokens || 0) + (u.reasoning_tokens || 0);
   }
   return total;
 }
@@ -4628,7 +4816,8 @@ function normalizeUsage(u) {
   return {
     input_tokens: u?.input_tokens || 0,
     output_tokens: u?.output_tokens || 0,
-    total_tokens: u?.total_tokens || (u?.input_tokens || 0) + (u?.output_tokens || 0)
+    total_tokens: u?.total_tokens || (u?.input_tokens || 0) + (u?.output_tokens || 0),
+    reasoning_tokens: u?.reasoning_tokens || 0
   };
 }
 function formatHistory(history) {
@@ -4682,4 +4871,4 @@ function toolMeta(parsed, route, caps) {
   templateCanAnswer,
   wantsGameDetail
 });
-module.exports.BRAIN_SOURCE_SHA = "eacde41b99061d24a83d8e678d15361d26d7edb1";
+module.exports.BRAIN_SOURCE_SHA = "fab847f7e7f95bff7dfa7d9257bce47d29933c5f";
