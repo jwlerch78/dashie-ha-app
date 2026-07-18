@@ -4,7 +4,7 @@
    The voice-conversation brain core, bundled for the Node add-on (on-prem L3).
    ONE core, TWO runtimes: the cloud Deno edge fn runs the TS source directly;
    this CJS bundle is the add-on's copy of the SAME source. Never hand-edit.
-   Source git SHA: fab847f7e7f95bff7dfa7d9257bce47d29933c5f
+   Source git SHA: edfd77c7541091a69ec4e35c84a01050b9bccc5d
    Regenerate:  node scripts/build-node-brain.mjs && ./sync-brain-bundle.sh
    Contract:    supabase/functions/voice-conversation/README.md + build plan §13.16
    ============================================================ */
@@ -519,6 +519,7 @@ This appears to be a request that requires information from the web.
 - **Spoken-friendly** \u2014 conversational plain sentences; no lists, headings, or bullets.
 - **No commentary or sign-off** \u2014 skip "Hope that helps!", opinions, and filler.
 - **Add at most one sentence of detail** only if it materially helps; otherwise stop.
+- **Don't restate the timeframe or date back to the user.** They asked it, so they know it. Say "'Golden' by HUNTR/X is number one" \u2014 NOT "For the chart week ending July 12th, 2026, the number one song was\u2026". Only give a date when the date IS the answer (e.g. "when does it come out?").
 - **If the results don't answer it**, say so briefly rather than guessing.
 - **Show a picture whenever there's a subject to see.** Most search answers center on something photographable \u2014 a person, team, artist or album, movie, animal, place, landmark, product, or event. Set the "image" field for those. Being brief in words does NOT mean skipping the picture; a short spoken answer plus an image is the ideal search response.
 
@@ -1969,6 +1970,8 @@ function buildPrompt({ userRequest, inquiryType, retrievedData, context = {} }) 
     prompt += `
 
 IMAGE DISPLAY IS UNAVAILABLE: always set "image": null, and never say you are showing or displaying a picture. If asked for a picture, say you can't show pictures right now.`;
+  } else if (inquiryType && inquiryType !== "web-search") {
+    prompt += '\n\nFor this answer, always set "image": null and do not say you are showing or displaying a picture \u2014 image display is not available for this response type.';
   }
   if (personalityConfig && personalityConfig.responseSuffix) {
     prompt += personalityConfig.responseSuffix;
@@ -4652,7 +4655,9 @@ async function secondPass(io, deps, t0, inquiryType, retrievedData, priorStages,
   );
   const p2Stage = passStage("pass2", pass2, parsed?.type);
   const usage = sumUsage([pass1.raw?.usage, pass2.raw.usage]);
-  return finalize({ t0, parsed, raw: pass2.raw, stages: [...priorStages, p2Stage], usage, latency: pass1.latency_ms + pass2.latency_ms, retain, sessionId, route });
+  const imageHint = parsed?.image;
+  const imageCard = inquiryType === "web-search" && context?.retrievePicturesEnabled !== false && parsed?.type === "response" && imageHint?.searchTerms ? await resolveImageHint(parsed, deps.token, sessionId, io.toolConn) : void 0;
+  return finalize({ t0, parsed, raw: pass2.raw, stages: [...priorStages, p2Stage], usage, latency: pass1.latency_ms + pass2.latency_ms, retain, sessionId, route, structured_data: imageCard ?? void 0 });
 }
 async function resolveImageHint(parsed, token, sessionId, conn) {
   const hint = parsed?.image;
@@ -4871,4 +4876,4 @@ function toolMeta(parsed, route, caps) {
   templateCanAnswer,
   wantsGameDetail
 });
-module.exports.BRAIN_SOURCE_SHA = "fab847f7e7f95bff7dfa7d9257bce47d29933c5f";
+module.exports.BRAIN_SOURCE_SHA = "edfd77c7541091a69ec4e35c84a01050b9bccc5d";
