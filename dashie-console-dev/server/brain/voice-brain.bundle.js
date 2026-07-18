@@ -4,7 +4,7 @@
    The voice-conversation brain core, bundled for the Node add-on (on-prem L3).
    ONE core, TWO runtimes: the cloud Deno edge fn runs the TS source directly;
    this CJS bundle is the add-on's copy of the SAME source. Never hand-edit.
-   Source git SHA: 306ec0aba79079ae6f9e8db67e14245d40d4ac42
+   Source git SHA: 6d81e68277fd27d10af58fa268556ae43e0cf199
    Regenerate:  node scripts/build-node-brain.mjs && ./sync-brain-bundle.sh
    Contract:    supabase/functions/voice-conversation/README.md + build plan §13.16
    ============================================================ */
@@ -1650,7 +1650,7 @@ Respond with \`"type": "action"\`:
 \`\`\`json
 {
   "type": "action",
-  "voice": null,
+  "voice": "Switching to Princess now.",
   "text": null,
   "action": {
     "category": "personality",
@@ -1663,9 +1663,11 @@ Respond with \`"type": "action"\`:
 - \`key\` MUST be the exact \`key\` from the catalog above \u2014 not the spoken words.
 - Match generously on intent: "be a wizard", "talk like Dumbledore", "do the wizard voice" all
   mean \`wizard\`. Requests to go back to normal/default/"just be Dashie" mean \`dashie\`.
-- **Leave \`voice\` null.** Do NOT write a confirmation line \u2014 the new personality greets the user
-  itself, in its own voice, immediately after the switch. Anything you write here would be spoken
-  in the OLD voice and then talked over.
+- **\`voice\` MUST be a short real sentence \u2014 NEVER null and never empty.** Keep it to a brief
+  handoff like "Switching to Princess now." (max 8 words). It is spoken in the OUTGOING voice,
+  and the new personality greets the family straight after, so do not welcome them yourself and
+  do not describe the new character. A null or empty \`voice\` makes the system read this JSON
+  aloud instead.
 - If NOTHING in the catalog plausibly matches what they asked for, do not switch. Use
   \`"type": "response"\` instead and say which ones you do have (per branch A).
 
@@ -4786,10 +4788,11 @@ function finalize({ t0, parsed, raw, stages, usage, latency, unsupported_tool, r
   const type = parsed?.type || "response";
   const callerRetain = !!retain?.callerRetain && !unsupported_tool && (type === "response" || type === "action");
   const isToolCall = type === "info_request" || type === "multi";
+  const salvage = parsed ? "" : raw.content;
   return {
     ok: true,
     type,
-    voice: parsed?.voice || (isToolCall ? "" : raw.content) || "",
+    voice: parsed?.voice || (isToolCall ? "" : salvage) || "",
     text: parsed?.text ?? null,
     action: parsed?.action ?? null,
     parsed_ok: !!parsed,
@@ -4983,4 +4986,4 @@ function toolMeta(parsed, route, caps) {
   templateCanAnswer,
   wantsGameDetail
 });
-module.exports.BRAIN_SOURCE_SHA = "306ec0aba79079ae6f9e8db67e14245d40d4ac42";
+module.exports.BRAIN_SOURCE_SHA = "6d81e68277fd27d10af58fa268556ae43e0cf199";
