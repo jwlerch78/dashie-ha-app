@@ -4,7 +4,7 @@
    The voice-conversation brain core, bundled for the Node add-on (on-prem L3).
    ONE core, TWO runtimes: the cloud Deno edge fn runs the TS source directly;
    this CJS bundle is the add-on's copy of the SAME source. Never hand-edit.
-   Source git SHA: 63af27d68753c46010ec35b7716b72cf79a7ab21
+   Source git SHA: 8ec13a1dcf3aa3cf0ed75369deddd3554bd2ca8f
    Regenerate:  node scripts/build-node-brain.mjs && ./sync-brain-bundle.sh
    Contract:    supabase/functions/voice-conversation/README.md + build plan §13.16
    ============================================================ */
@@ -2905,7 +2905,7 @@ async function synthesizeImage(query, criteria, ctx) {
 // supabase/functions/voice-conversation/personality.ts
 var UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 async function listAvailablePersonalities(supabase) {
-  const { data, error } = await supabase.from("personality_templates").select("key, name, description, is_seasonal, seasonal_start, seasonal_end").eq("is_available", true).order("sort_order", { ascending: true });
+  const { data, error } = await supabase.from("personality_templates").select("key, name, description, is_seasonal, seasonal_start, seasonal_end, voice_mode, voice, greeting_fallback").eq("is_available", true).order("sort_order", { ascending: true });
   if (error || !Array.isArray(data)) return [];
   const today = (/* @__PURE__ */ new Date()).toISOString().slice(0, 10);
   return data.filter((r) => {
@@ -4675,7 +4675,17 @@ async function orchestrate(deps, io, voiceCtx) {
       found: false,
       note: "Could not read the personality list. Say you had trouble checking just now and to try again in a moment. Do NOT name personalities from memory and do NOT switch."
     };
-    return await secondPass(io, deps, t0, "personalities", catalogData, [p1Stage, fetchStage], pass1, provider, modelId, context, sessionId, retain, route);
+    const pTurn = await secondPass(io, deps, t0, "personalities", catalogData, [p1Stage, fetchStage], pass1, provider, modelId, context, sessionId, retain, route);
+    const params = pTurn.action?.command === "set_personality" ? pTurn.action.parameters : null;
+    if (params && typeof params.key === "string") {
+      const row = choices.find((c) => c.key === params.key);
+      if (row) {
+        if (row.voice_mode != null) params.voice_mode = row.voice_mode;
+        if (row.voice != null) params.voice_key = row.voice;
+        if (row.greeting_fallback != null) params.greeting_fallback = row.greeting_fallback;
+      }
+    }
+    return pTurn;
   }
   if (p1Parsed.type === "multi") {
     const stepsIn = p1Parsed.steps ?? [];
@@ -4983,4 +4993,4 @@ function toolMeta(parsed, route, caps) {
   templateCanAnswer,
   wantsGameDetail
 });
-module.exports.BRAIN_SOURCE_SHA = "63af27d68753c46010ec35b7716b72cf79a7ab21";
+module.exports.BRAIN_SOURCE_SHA = "8ec13a1dcf3aa3cf0ed75369deddd3554bd2ca8f";
