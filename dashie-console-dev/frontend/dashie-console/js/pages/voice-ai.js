@@ -199,10 +199,6 @@ const VoiceAiPage = {
                 // Live margined rate card for the TTS/Search cost strings —
                 // internally best-effort, falls back to the hardcoded estimates.
                 window.VoiceAiOptions?.applyLiveRates?.(),
-                // Detection-gated picker: which local STT/TTS engines does HA have?
-                // Add-on mode only (decision §11.4). Best-effort — empty on failure.
-                // The top-bar refresh forces a fresh scan (bypasses the server cache).
-                this._fetchEngines(forceEngines),
                 // BYO-key booleans (add-on API Keys page) — gate the Cloud/Hybrid
                 // presets on credits OR a key. Best-effort — null on failure.
                 this._fetchKeyStatus(),
@@ -235,6 +231,21 @@ const VoiceAiPage = {
             // fields render as dropdowns without the user pressing Test. Not awaited —
             // a LAN box that's off must not delay the page; it re-renders if it answers.
             this._autoProbeLocalUrls();
+            // Local-engine DETECTION (GET /api/voice/engines) is a slow LAN scan — the #1 cause of
+            // the "stuck on Loading" first open. NEVER block first paint on it: the picker degrades
+            // gracefully to URL-based rows when _engines is null, then re-renders when detection
+            // lands. Background it here (a forced top-bar refresh awaits it below so "refresh"
+            // reflects a completed rescan).
+            const enginesDone = this._fetchEngines(forceEngines)
+                .then(() => {
+                    // The Piper voice seed needs the DETECTED voice list (_defaultPiperVoice reads
+                    // _engines) — it ran as a no-op above before detection landed, so re-run it now.
+                    // Idempotent: only seeds when ha_engine is active and no voice is stored yet.
+                    this._seedPiperVoiceIfMissing();
+                    if (App._currentPage === 'voice-ai') App.renderPage();
+                })
+                .catch(() => {});
+            if (forceEngines) await enginesDone;
         } catch (e) {
             console.error('[VoiceAiPage] fetch failed:', e);
             this._error = e.message || String(e);
@@ -1101,7 +1112,7 @@ const VoiceAiPage = {
             <div class="card"><div class="card-body">
                 ${!isLive ? this._renderDialogRows(d, agentMode) : ''}
                 ${this._toggleRow('Retrieve pictures', `Allow the AI to show pictures with its responses. Uses web image search (${O.imageSearchCost}/search).`, 'ai.retrievePicturesEnabled', d['ai.retrievePicturesEnabled'])}
-                ${FeatureGate.shouldShow('promptForFeedback') ? this._toggleRow('Prompt for feedback on responses', 'Show thumbs up/down after voice responses.', 'ai.promptForFeedback', d['ai.promptForFeedback']) : ''}
+                ${false /* 'Prompt for feedback' HIDDEN 2026-07-17 — not yet implemented on the tablet (no thumbs up/down ships the feedback). Restore: FeatureGate.shouldShow('promptForFeedback') */ ? this._toggleRow('Prompt for feedback on responses', 'Show thumbs up/down after voice responses.', 'ai.promptForFeedback', d['ai.promptForFeedback']) : ''}
                 ${FeatureGate.shouldShow('chores') ? this._toggleRow('Always use AI for chores', 'Disable the fast path — routes all chore commands through AI (uses more tokens).', 'voice.alwaysUseAI', d['voice.alwaysUseAI']) : ''}
             </div></div>`}
         `;
