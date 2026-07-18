@@ -178,14 +178,17 @@ const ScheduledActionsPage = {
         const chevron = expanded ? '▾' : '▸';
         const recurring = this._isRecurring(action);
         const isAiTurn = this._isAiTurn(action);
-        // AI turns carry the command in `prompt` (notify_text is empty for them).
-        const titleText = isAiTurn ? action.prompt : action.notify_text;
+        const isHaCommand = this._isHaCommand(action);
+        // Device actions (AI turns AND scheduled HA commands) carry the command in
+        // `prompt` (notify_text is empty for them) — before this, ha_command rows
+        // rendered as "(NO TEXT)" bell reminders.
+        const titleText = this._isDeviceAction(action) ? action.prompt : action.notify_text;
         const title = titleText
             ? this._escape(titleText.toUpperCase())
             : '<span style="color:var(--text-muted); font-style:italic;">(NO TEXT)</span>';
         const deviceName = this._deviceName(action);
         const deviceSuffix = deviceName
-            ? ` · <span title="Fires on this device">📱 ${this._escape(deviceName)}</span>`
+            ? ` · <span title="Fires on this device"><img src="assets/icons/icon-tv.svg" alt="" style="width:12px;height:12px;vertical-align:-1px;opacity:0.7;"> ${this._escape(deviceName)}</span>`
             : '';
         const recurBadge = recurring
             ? `<img src="assets/icons/icon-reload.svg" alt="Recurring" title="Recurring" style="width:14px;height:14px;margin-left:8px;vertical-align:middle;opacity:0.7;">`
@@ -195,7 +198,9 @@ const ScheduledActionsPage = {
         const header = `
             <div style="display:flex; align-items:center; gap:10px; padding:12px 14px; background:var(--bg-card,#fff);">
                 <span onclick="ScheduledActionsPage.toggleExpand('${id}')" style="cursor:pointer; font-size:20px; color:var(--text-muted); width:16px; text-align:center; flex-shrink:0;">${chevron}</span>
-                <span style="width:22px;text-align:center;flex-shrink:0;font-size:18px;opacity:0.85;" title="${isAiTurn ? 'AI action' : 'Reminder'}">${isAiTurn ? '🤖' : '🔔'}</span>
+                <img src="assets/icons/${isHaCommand ? 'icon-home' : isAiTurn ? 'icon-ai-chat' : 'icon-bell'}.svg"
+                     alt="" title="${isHaCommand ? 'Home Assistant command' : isAiTurn ? 'AI action' : 'Reminder'}"
+                     style="width:20px;height:20px;flex-shrink:0;opacity:0.8;">
                 <div onclick="ScheduledActionsPage.toggleExpand('${id}')" style="flex:1; min-width:0; cursor:pointer;">
                     <div class="list-item-title">${title}${recurBadge}</div>
                     <div class="list-item-subtitle">${this._typeLabel(action)} · ${this._fmtWhen(action.fire_at)}${deviceSuffix}</div>
@@ -221,10 +226,10 @@ const ScheduledActionsPage = {
         // AI turns (schedule_action) are created + owned on the device and aren't
         // console-editable yet — show a read-only summary of the command, schedule,
         // and firing device instead of the reminder-text form.
-        if (this._isAiTurn(action)) {
+        if (this._isDeviceAction(action)) {
             const rows = [
                 ['Command', this._escape(action.prompt || '—')],
-                ['Type', 'Action (runs on the device at the set time)'],
+                ['Type', this._isHaCommand(action) ? 'Home Assistant command (runs on the device at the set time)' : 'Action (runs on the device at the set time)'],
                 ['Repeats', action.recurrence === 'daily' ? 'Every day' : 'Once'],
                 ['Fires at', this._fmtWhen(action.fire_at)],
                 ['Device', this._escape(this._deviceName(action) || 'this device')],
@@ -384,9 +389,20 @@ const ScheduledActionsPage = {
         return action.action_type === 'ai_turn';
     },
 
-    // Human label for the action kind: AI turns are "Action"; classic ones keep
-    // their vernacular (Reminder/Alarm).
+    _isHaCommand(action) {
+        return action.action_type === 'ha_command';
+    },
+
+    // Device-owned actions (schedule_action tool) carry their text in `prompt`,
+    // not notify_text — both AI turns and scheduled HA commands.
+    _isDeviceAction(action) {
+        return this._isAiTurn(action) || this._isHaCommand(action);
+    },
+
+    // Human label for the action kind: AI turns are "Action", scheduled HA commands
+    // "HA Action"; classic ones keep their vernacular (Reminder/Alarm).
     _typeLabel(action) {
+        if (this._isHaCommand(action)) return 'HA Action';
         return this._isAiTurn(action) ? 'Action' : this._capitalize(action.vernacular || 'reminder');
     },
 
