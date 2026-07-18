@@ -4,7 +4,7 @@
    The voice-conversation brain core, bundled for the Node add-on (on-prem L3).
    ONE core, TWO runtimes: the cloud Deno edge fn runs the TS source directly;
    this CJS bundle is the add-on's copy of the SAME source. Never hand-edit.
-   Source git SHA: 6d81e68277fd27d10af58fa268556ae43e0cf199
+   Source git SHA: 8fbc76eb6f418eba422a4e355e10198cecc917a0
    Regenerate:  node scripts/build-node-brain.mjs && ./sync-brain-bundle.sh
    Contract:    supabase/functions/voice-conversation/README.md + build plan §13.16
    ============================================================ */
@@ -524,6 +524,10 @@ This appears to be a request that requires information from the web.
 - **Spoken-friendly** \u2014 conversational plain sentences; no lists, headings, or bullets.
 - **No commentary or sign-off** \u2014 skip "Hope that helps!", opinions, and filler.
 - **Add at most one sentence of detail** only if it materially helps; otherwise stop.
+- **Always convert times into the USER'S timezone** (given in the date/time context above). Search
+  results are written for wherever the source is based, so a UK page says "10 PM BST" and a wire
+  report says "19:00 UTC". Do the conversion and say the local time \u2014 never read a foreign
+  timezone back to the user, and don't append the abbreviation unless they asked for another zone.
 - **Don't restate the timeframe or date back to the user.** They asked it, so they know it. Say "'Golden' by HUNTR/X is number one" \u2014 NOT "For the chart week ending July 12th, 2026, the number one song was\u2026". Only give a date when the date IS the answer (e.g. "when does it come out?").
 - **If the results don't answer it**, say so briefly rather than guessing.
 - **Show a picture whenever there's a subject to see.** Most search answers center on something photographable \u2014 a person, team, artist or album, movie, animal, place, landmark, product, or event. Set the "image" field for those. Being brief in words does NOT mean skipping the picture; a short spoken answer plus an image is the ideal search response.
@@ -4986,4 +4990,4 @@ function toolMeta(parsed, route, caps) {
   templateCanAnswer,
   wantsGameDetail
 });
-module.exports.BRAIN_SOURCE_SHA = "6d81e68277fd27d10af58fa268556ae43e0cf199";
+module.exports.BRAIN_SOURCE_SHA = "8fbc76eb6f418eba422a4e355e10198cecc917a0";
