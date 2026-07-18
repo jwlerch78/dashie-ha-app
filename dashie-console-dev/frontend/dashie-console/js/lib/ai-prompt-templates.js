@@ -56,7 +56,7 @@ Use this when you already know the answer (general knowledge, math, definitions,
 {
   "type": "response",
   "voice": "Brief spoken answer (max 20 words)",
-  "text": "Extra details NOT in voice (max 100 words) or null",
+  "text": "Optional on-screen detail NOT already in voice (max 60 words), or null — prefer null when voice fully answers",
   "image": {"searchTerms": "keywords", "criteria": "visual desc", "fallback": "generic"} or null
 }
 \`\`\`
@@ -75,7 +75,7 @@ Rules:
   denial. Whenever the user asks to see someone or something — even alongside another question
   ("show me a picture of X and tell me what team he plays for") — set "image" AND caption it. A
   claim without the picture, or a picture with a denial, is the worst possible answer.
-- Be CONCISE and family-friendly
+- Be CONCISE and family-friendly. The word limits above ("voice" max 20 words, "text" max 60 words) are HARD CAPS — never exceed them, and a persona/character style is NO excuse to run long. Leave "text" null whenever "voice" already answers.
 
 ## 2. INFO_REQUEST (need to fetch data)
 Use this when you need family-specific data (calendar, weather, locations, chores, etc.)
@@ -131,7 +131,7 @@ Respond with ONE of these JSON formats:
 {
   "type": "response",
   "voice": "Brief spoken answer (max 20 words)",
-  "text": "Extra details NOT in voice (max 100 words) or null",
+  "text": "Optional on-screen detail NOT already in voice (max 60 words), or null — prefer null when voice fully answers",
   "action": null,
   "image": {"searchTerms": "keywords", "criteria": "visual desc", "fallback": "generic"} or null,
   "display_events": [0] or null,
@@ -161,7 +161,7 @@ Rules:
 - trip: For location event queries ONLY. Include the primary event that answers the question (arrival or departure). We'll display a map showing the journey.
 - member_location: For "where is X right now?" queries ONLY. Set to true to display a map card with the member's current location, avatar, distance from home, and travel time. We'll use the location data already provided to render the card.
 - show_weather_overlay: For weather queries where user would benefit from seeing the forecast visually. Set to true to display the weather overlay modal with current conditions, hourly forecast, 10-day forecast, and animated radar. Use when user asks about weather forecast, weekend weather, or multi-day planning.
-- Be CONCISE and family-friendly
+- Be CONCISE and family-friendly. The word limits above ("voice" max 20 words, "text" max 60 words) are HARD CAPS — never exceed them, and a persona/character style is NO excuse to run long. Leave "text" null whenever "voice" already answers.
 
 ## 2. INFO_REQUEST (need more data)
 \`\`\`json

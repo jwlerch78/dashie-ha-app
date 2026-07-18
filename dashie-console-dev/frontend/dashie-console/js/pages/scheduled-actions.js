@@ -19,6 +19,7 @@ const ScheduledActionsPage = {
     _collapsed: null,          // { active: false, completed: true }
     _savingId: null,
     _deletingId: null,
+    _clearing: false,          // "Clear all completed" in flight
     _loading: false,
     _error: null,
     _realtimeChannel: null,
@@ -139,8 +140,10 @@ const ScheduledActionsPage = {
                 </div>
             `;
         }
-        const active = all.filter(a => a.status === 'scheduled');
-        const completed = all.filter(a => a.status === 'fired');
+        const byFireAt = (dir) => (a, b) => dir * ((new Date(a.fire_at).getTime() || 0) - (new Date(b.fire_at).getTime() || 0));
+        // Active: soonest-to-fire first (next up on top). Completed: most-recently-fired first.
+        const active = all.filter(a => a.status === 'scheduled').sort(byFireAt(1));
+        const completed = all.filter(a => a.status === 'fired').sort(byFireAt(-1));
         return this._renderSection('active', 'Active', active, true)
              + this._renderSection('completed', 'Completed', completed, false);
     },
@@ -148,12 +151,19 @@ const ScheduledActionsPage = {
     _renderSection(key, label, items, editable) {
         const collapsed = this._collapsed[key];
         const chevron = collapsed ? '▸' : '▾';
+        // Completed rows are history — a one-click "Clear all" beside the header removes them
+        // all (each already has its own ✕). stopPropagation so it doesn't toggle the section.
+        const clearBtn = (key === 'completed' && items.length && !this._clearing)
+            ? `<button class="btn btn-ghost btn-sm" style="margin-left:auto;"
+                       onclick="event.stopPropagation(); ScheduledActionsPage.clearCompleted()">Clear all</button>`
+            : (key === 'completed' && this._clearing ? `<span style="margin-left:auto; font-size:var(--font-size-sm); color:var(--text-muted); text-transform:none;">Clearing…</span>` : '');
         const header = `
             <div onclick="ScheduledActionsPage.toggleSection('${key}')"
                  style="display:flex; align-items:center; gap:8px; cursor:pointer; padding:10px 4px; margin-top:8px;
                         font-size:var(--font-size-sm); font-weight:600; text-transform:uppercase; letter-spacing:0.04em; color:var(--text-secondary);">
                 <span style="width:14px; text-align:center;">${chevron}</span>
                 <span>${label} (${items.length})</span>
+                ${clearBtn}
             </div>`;
         if (collapsed) return header;
         if (items.length === 0) {
@@ -327,6 +337,38 @@ const ScheduledActionsPage = {
         } finally {
             this._deletingId = null;
             App.renderPage();
+        }
+    },
+
+    /** Remove all completed (fired) actions from the list. Each is cancelled the same way the
+     *  per-row ✕ does; best-effort per item, then one refetch. */
+    async clearCompleted() {
+        if (this._clearing) return;
+        const completed = (this._actions || []).filter(a => a.status === 'fired');
+        if (!completed.length) return;
+        const ok = await ConfirmModal.confirm({
+            title: 'Clear completed actions',
+            message: `Remove all ${completed.length} completed action${completed.length === 1 ? '' : 's'} from the list?\n\nThis only clears the history — active actions are untouched.`,
+            confirmLabel: 'Clear all',
+            danger: true,
+        });
+        if (!ok) return;
+        this._clearing = true;
+        App.renderPage();
+        try {
+            for (const a of completed) {
+                try {
+                    await DashieAuth.dbRequest('cancel_scheduled_action', { id: a.id });
+                    this._actions = this._actions.filter(x => x.id !== a.id);
+                } catch (e) {
+                    console.warn('[ScheduledActionsPage] clear failed for', a.id, e);
+                }
+            }
+        } finally {
+            this._clearing = false;
+            App.renderPage();
+            // Reconcile with the server (and pick up anything the realtime channel missed).
+            this._fetch();
         }
     },
 

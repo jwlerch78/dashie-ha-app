@@ -97,6 +97,11 @@
     
       // Response variation reminder
       suffix += '\n\nVARY YOUR RESPONSES - don\'t start every response the same way. Mix up your openings.';
+    
+      // Brevity reminder (highest-recency position, so it isn't overshadowed by the
+      // character framing above). Attacks the specific padding pattern personas fall
+      // into: a wind-up before the answer, and a reflective flourish after it.
+      suffix += '\n\nCRITICAL — brevity OVERRIDES the character\'s urge to elaborate:\n- LEAD WITH THE ANSWER. No wind-up, no restating the question, no "Ah, you\'re asking about..." preamble before the facts.\n- Spoken "voice": ONE sentence, ~25 words max. Give the answer plus at most a couple words of character flavor, then STOP.\n- No closing flourish, no reflection on what it reminds you of, no tangents or rhetorical questions back to the user.\n- Character lives in a word or two of word CHOICE, never in extra sentences. A wordy answer is a worse answer, even in character.';
       return { responsePrefix: prefix.trim(), responseSuffix: suffix };
     }
     

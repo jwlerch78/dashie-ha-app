@@ -122,14 +122,33 @@ const DevicesPage = {
             // devices so the count matches what the user actually sees.
             const active = this._devices.filter(d => !this._isArchived(d) && !this._isDismissed(d)).length;
             // Manual refresh now lives in the shared title-bar icon (refresh()).
-            return `${active} active`;
+            // The Overview/Details view switcher sits right after the count (the subtitle renders
+            // as HTML in the top bar), not out in the right-hand actions column.
+            return `${active} active${this._viewSwitcherHtml()}`;
         }
         const device = this._findDevice(this._detailDeviceId);
         return device ? this._typeLabel(device) : '';
     },
 
-    /** Top-bar action buttons — Preview Dashie + the Overview/Details view
-     *  switcher + (in Details) Screenshot / Camera sub-toggles. */
+    /** The Overview/Details view switcher — a segmented control. Lives next to the "N active"
+     *  subtitle (rendered as HTML there), not in the right-hand actions column. Overview = what's
+     *  playing on each dashboard; Details = full device diagnostics. Context default (add-on →
+     *  Details, web → Overview); persisted per-browser via setTechView. Uses a <span> wrapper so
+     *  it's valid inline inside the subtitle span. */
+    _viewSwitcherHtml() {
+        const on = this._techView;
+        return `<span style="display:inline-flex; margin-left:12px; vertical-align:middle; border:1px solid var(--border,#e5e7eb); border-radius:6px; overflow:hidden;">
+                <button class="btn ${!on ? 'btn-primary' : 'btn-secondary'} btn-sm" style="border:none; border-radius:0;"
+                        onclick="DevicesPage.setTechView(false)"
+                        title="What's playing on each dashboard — theme, sleep schedule, AI personality, photos">Overview</button>
+                <button class="btn ${on ? 'btn-primary' : 'btn-secondary'} btn-sm" style="border:none; border-radius:0;"
+                        onclick="DevicesPage.setTechView(true)"
+                        title="Full device details — battery, RAM, wifi, screenshots, cameras, locks">Details</button>
+            </span>`;
+    },
+
+    /** Top-bar action buttons — Preview Dashie + (in Details) Screenshot / Camera sub-toggles.
+     *  The Overview/Details switcher moved next to the "N active" subtitle (_viewSwitcherHtml). */
     topBarActions() {
         // Only show on the list view, not the detail view.
         if (this._detailDeviceId) return '';
@@ -143,9 +162,8 @@ const DevicesPage = {
                        title="Open the Dashie dashboard in a new browser tab">
                    Preview Dashie in Browser ↗
                </button>`;
-        // Screenshot / Camera sub-toggles are only useful in tech mode (simple
-        // mode doesn't render those panels at all). Hide them when tech is OFF
-        // to keep the header tidy.
+        // Screenshot / Camera sub-toggles are only useful in Details view (Overview
+        // doesn't render those panels at all). Hide them in Overview to keep the header tidy.
         const subToggles = on ? `
             <button class="btn ${this._showScreenshots ? 'btn-primary' : 'btn-secondary'}"
                     onclick="DevicesPage.toggleShowScreenshots()"
@@ -157,26 +175,8 @@ const DevicesPage = {
                     title="Show or hide the camera feed panel on each device card">
                 ${this._showCameras ? '✓ ' : ''}Cameras
             </button>` : '';
-        // View switcher (Overview vs Details) — two equal perspectives rather than a
-        // "technical details" checkbox. Overview = what's playing on each dashboard;
-        // Details = full device diagnostics + screenshots/cameras. Same context default
-        // (add-on → Details, web → Overview); persisted per-browser via setTechView.
-        const seg = `
-            <div style="display:inline-flex; border:1px solid var(--border,#e5e7eb); border-radius:6px; overflow:hidden; vertical-align:middle;">
-                <button class="btn ${!on ? 'btn-primary' : 'btn-secondary'}" style="border:none; border-radius:0;"
-                        onclick="DevicesPage.setTechView(false)"
-                        title="What's playing on each dashboard — theme, sleep schedule, AI personality, photos">
-                    Overview
-                </button>
-                <button class="btn ${on ? 'btn-primary' : 'btn-secondary'}" style="border:none; border-radius:0;"
-                        onclick="DevicesPage.setTechView(true)"
-                        title="Full device details — battery, RAM, wifi, screenshots, cameras, locks">
-                    Details
-                </button>
-            </div>`;
         return `
             ${previewBtn}
-            ${seg}
             ${subToggles}
         `;
     },
