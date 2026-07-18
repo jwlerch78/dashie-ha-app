@@ -5,3 +5,7 @@ data/
 .DS_Store
 npm-debug.log*
 *.log
+
+# local AI-assistant workspace files (not part of the add-on)
+CLAUDE.md
+.claude/
