@@ -172,14 +172,15 @@ const VoiceAiOptions = {
                 { key: 'voice.localLlmModel', label: 'Model', placeholder: 'qwen3:8b', required: true },
                 { key: 'voice.localLlmKey', label: 'API key (optional)', type: 'password', placeholder: 'for remote endpoints' },
             ],
-        }, {
-            // Hermes Agent gets a first-class row (John, 2026-07-12) — the flagship
-            // BYO-agent path (WS-I), not a generic endpoint. ai.model='hermes' is the
-            // route signal (account-config.js treats it like 'local' → on-prem brain).
-            // Its API key lives on the API Keys page (on-box key store), NOT here.
-            // installGuide (badge) + note are state-driven by _hermesRowExtras from the
-            // add-on detection block — Install ↗ when absent, Open add-on ↗ when installed
-            // but stopped, then inline setup notes once it's running (WS-I.3).
+        }];
+        /* ── Hermes Agent row — SOFT-REMOVED 2026-07-17 ──────────────────────────────
+         * Hermes is no longer offered as an AI ENGINE (we may revisit it for its MEMORY, not
+         * as a brain). Hiding the picker row is the only user-facing change; the plumbing is
+         * left DORMANT and intact: the ai.model='hermes' sentinels in voice-ai.js, the
+         * voice.hermesUrl setting, _hermesRowExtras / _HERMES_ADDON_URL / _HERMES_DOCS_URL below,
+         * and the account-config brain routing all remain. To RESTORE, push this object back
+         * into `out` above.
+        {
             id: 'hermes',
             label: 'Hermes Agent (self-hosted)',
             group: 'Local',
@@ -190,7 +191,8 @@ const VoiceAiOptions = {
             configFields: [
                 { key: 'voice.hermesUrl', label: 'Hermes endpoint URL', placeholder: 'http://homeassistant.local:8642', required: true },
             ],
-        }];
+        },
+        ──────────────────────────────────────────────────────────────────────────── */
         // Saved own-AI engines replace the generic "My own AI" inline-URL row.
         const withEngines = this.withSavedEngines('llm', out, 'local');
         out.length = 0;

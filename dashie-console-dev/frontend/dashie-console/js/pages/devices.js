@@ -128,8 +128,8 @@ const DevicesPage = {
         return device ? this._typeLabel(device) : '';
     },
 
-    /** Top-bar action buttons — Preview Dashie + Show technical details
-     *  + (when tech mode is on) Screenshot / Camera sub-toggles. */
+    /** Top-bar action buttons — Preview Dashie + the Overview/Details view
+     *  switcher + (in Details) Screenshot / Camera sub-toggles. */
     topBarActions() {
         // Only show on the list view, not the detail view.
         if (this._detailDeviceId) return '';
@@ -157,12 +157,26 @@ const DevicesPage = {
                     title="Show or hide the camera feed panel on each device card">
                 ${this._showCameras ? '✓ ' : ''}Cameras
             </button>` : '';
+        // View switcher (Overview vs Details) — two equal perspectives rather than a
+        // "technical details" checkbox. Overview = what's playing on each dashboard;
+        // Details = full device diagnostics + screenshots/cameras. Same context default
+        // (add-on → Details, web → Overview); persisted per-browser via setTechView.
+        const seg = `
+            <div style="display:inline-flex; border:1px solid var(--border,#e5e7eb); border-radius:6px; overflow:hidden; vertical-align:middle;">
+                <button class="btn ${!on ? 'btn-primary' : 'btn-secondary'}" style="border:none; border-radius:0;"
+                        onclick="DevicesPage.setTechView(false)"
+                        title="What's playing on each dashboard — theme, sleep schedule, AI personality, photos">
+                    Overview
+                </button>
+                <button class="btn ${on ? 'btn-primary' : 'btn-secondary'}" style="border:none; border-radius:0;"
+                        onclick="DevicesPage.setTechView(true)"
+                        title="Full device details — battery, RAM, wifi, screenshots, cameras, locks">
+                    Details
+                </button>
+            </div>`;
         return `
             ${previewBtn}
-            <button class="btn ${on ? 'btn-primary' : 'btn-secondary'}" onclick="DevicesPage.toggleTechView()"
-                    title="Show battery, RAM, screenshot, camera, and full control set">
-                ${on ? '✓ ' : ''}Show technical details
-            </button>
+            ${seg}
             ${subToggles}
         `;
     },

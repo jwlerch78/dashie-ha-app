@@ -248,8 +248,6 @@ const CreditsControls = {
     renderBalanceCard(balanceObj) {
         const bal = balanceObj || (window.CreditsService?.balance?.()) || {};
         const balance = Number(bal.balance || 0);
-        const granted = bal.lifetime_granted
-            ? `<div style="font-size: 11px; color: var(--text-muted); margin-top: 2px;">$${Number(bal.lifetime_granted).toFixed(2)} granted total</div>` : '';
         // height:100% + centered so when the grid stretches this card to match a
         // taller neighbor (e.g. the stacked Today/This month column), the content
         // sits vertically centered rather than top-aligned.
@@ -259,7 +257,6 @@ const CreditsControls = {
                     <div>
                         <div style="font-size: 11px; font-weight: 600; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px;">Balance</div>
                         <div style="font-size: 22px; font-weight: 700; color: var(--text-primary); margin-top: 4px;">$${balance.toFixed(2)}</div>
-                        ${granted}
                     </div>
                     ${this._buyButton()}
                 </div>

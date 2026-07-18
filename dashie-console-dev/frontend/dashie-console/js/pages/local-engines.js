@@ -99,6 +99,16 @@ const LocalEnginesPage = {
 
     dismissScan() { this._scan = null; App.renderPage(); },
 
+    /** Manual /24 entry + rescan button. Shown when auto-derive failed (no_subnet) AND in the
+     *  "no engines found" case (the box may be on a different subnet than HA/the tablet). */
+    _manualSubnetField() {
+        return `<div style="display: flex; gap: 8px; margin-top: 10px; align-items: center;">
+                    <input type="text" id="scan-subnet" placeholder="192.168.1" autocomplete="off"
+                        style="${this._inputStyle()} max-width: 200px;">
+                    <button class="btn btn-secondary btn-sm" onclick="LocalEnginesPage.scanManual()">Scan this network</button>
+                </div>`;
+    },
+
     /** Add a discovered engine → prefill the editor (name from the engine + host, kind + URL
      *  already known). The user confirms/renames and saves — we never write silently. */
     addFound(idx) {
@@ -315,13 +325,7 @@ const LocalEnginesPage = {
         const s = this._scan;
         if (!s) return '';
         if (s.error) {
-            const manual = s.needSubnet
-                ? `<div style="display: flex; gap: 8px; margin-top: 10px; align-items: center;">
-                       <input type="text" id="scan-subnet" placeholder="192.168.1" autocomplete="off"
-                           style="${this._inputStyle()} max-width: 200px;">
-                       <button class="btn btn-secondary btn-sm" onclick="LocalEnginesPage.scanManual()">Scan this network</button>
-                   </div>`
-                : '';
+            const manual = s.needSubnet ? this._manualSubnetField() : '';
             return `<div class="card" style="margin-bottom: 16px; border-left: 3px solid var(--status-error, #c00);"><div class="card-body">
                 <div style="font-size: 13px;">${this._escape(s.error)}</div>${manual}
                 <button class="btn btn-secondary btn-sm" style="margin-top: 10px;" onclick="LocalEnginesPage.dismissScan()">Dismiss</button>
@@ -329,9 +333,12 @@ const LocalEnginesPage = {
         }
         const saved = new Set((this._engines || []).map(e => String(e.url || '').replace(/\/+$/, '')));
         const rows = (s.engines || []).map((f, i) => this._renderFoundRow(f, i, saved)).join('');
+        // No engines on the scanned /24 — the box may be on a DIFFERENT subnet than HA/the tablet,
+        // so offer a manual rescan here too (not just when auto-derive failed), alongside "add by URL".
         const body = s.engines?.length
             ? rows
-            : `<div style="color: var(--text-muted); font-size: 13px;">No engines found on <code>${this._escape(s.subnet)}.0/24</code>. If your box is elsewhere, add it manually.</div>`;
+            : `<div style="color: var(--text-muted); font-size: 13px;">No engines found on <code>${this._escape(s.subnet)}.0/24</code>. If your box is on a different network, scan it below — or add it by URL with “+ Add”.</div>
+               ${this._manualSubnetField()}`;
         // How we picked the network — reassures the user we scanned the right one, and is the
         // honest disclosure that we read HA/tablet IPs to find it.
         const src = s.source === 'manual' ? `network <code>${this._escape(s.subnet)}.0/24</code> (entered)`

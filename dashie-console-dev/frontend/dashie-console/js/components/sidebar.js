@@ -31,7 +31,6 @@ const Sidebar = {
             this._gatedNavItem('calendar', 'Calendar', 'icon-calendar', activePage),
             this._gatedNavItem('chores', 'Chores', 'icon-tasks', activePage),
             this._gatedNavItem('rewards', 'Rewards', 'icon-star', activePage),
-            this._gatedNavItem('scheduled-actions', 'Scheduled Actions', 'icon-clock', activePage),
             this._gatedNavItem('locations', 'Locations', 'icon-location-pin', activePage),
             this._gatedNavItem('photos', 'Photos', 'icon-photos', activePage),
         ].join('');
@@ -50,10 +49,10 @@ const Sidebar = {
             </div>
 
             <div class="sidebar-section">
-                <div class="sidebar-section-label">Settings</div>
                 ${this._navItem('devices', 'Dashboards', 'icon-tv', activePage)}
                 ${this._gatedNavItem('voice-ai', 'Voice & AI', 'icon-ai-chat', activePage)}
                 ${this._gatedNavItem('video-feeds', 'Video Feeds', 'icon-video-camera', activePage)}
+                ${this._gatedNavItem('scheduled-actions', 'Scheduled Actions', 'icon-clock', activePage)}
                 ${this._navItem('preferences', 'Preferences', 'icon-sliders', activePage)}
             </div>
 

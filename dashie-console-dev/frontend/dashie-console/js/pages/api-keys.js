@@ -28,26 +28,22 @@ const ApiKeysPage = {
      *  option, individual vendor keys are the "I already have one" path.  */
     PROVIDERS: [
         {
-            id: 'openrouter', name: 'OpenRouter', group: 'universal', recommended: true,
+            id: 'openrouter', name: 'OpenRouter', group: 'universal',
             // One key → every model in the picker. OpenRouter proxies the whole catalog over an
             // OpenAI-compatible endpoint, so it also covers Claude and Nova, which direct-key
             // BYOK can't serve yet (they'd need the deferred Anthropic/SigV4 adapters).
-            help: 'API key from openrouter.ai. <strong>One key covers every model Dashie offers</strong> — Claude, GPT, Gemini and Nova — so you don’t need a separate account with each provider. Dashie prefers a direct provider key below when you have one.',
             fields: [{ id: 'key', label: 'API key', placeholder: 'sk-or-v1-…', secret: true }],
         },
         {
             id: 'gemini', name: 'Google Gemini', group: 'direct',
-            help: 'API key from Google AI Studio (aistudio.google.com). Used for Gemini models.',
             fields: [{ id: 'key', label: 'API key', placeholder: 'AIza…', secret: true }],
         },
         {
             id: 'claude', name: 'Anthropic Claude', group: 'direct',
-            help: 'API key from console.anthropic.com. Used for Claude models.',
             fields: [{ id: 'key', label: 'API key', placeholder: 'sk-ant-…', secret: true }],
         },
         {
             id: 'openai', name: 'OpenAI', group: 'direct',
-            help: 'API key from platform.openai.com. Used for GPT models.',
             fields: [{ id: 'key', label: 'API key', placeholder: 'sk-…', secret: true }],
         },
         {
@@ -56,33 +52,22 @@ const ApiKeysPage = {
             // OpenRouter instead. Kept in the array only so an ALREADY-STORED bedrock key
             // still renders (with a warning) and can be removed. See _visibleProviders().
             id: 'bedrock', name: 'Amazon Bedrock', group: 'direct',
-            help: 'AWS IAM credentials with Bedrock access. All three fields are required.',
             fields: [
                 { id: 'accessKeyId', label: 'Access key ID', placeholder: 'AKIA…', secret: true },
                 { id: 'secretAccessKey', label: 'Secret access key', placeholder: '', secret: true },
                 { id: 'region', label: 'Region', placeholder: 'us-east-1', secret: false },
             ],
         },
-        {
-            id: 'hermes', name: 'Hermes', group: 'selfhosted',
-            help: 'API key for your self-hosted Hermes agent. Set its endpoint URL under Voice & AI → AI Model → “Hermes Agent”.',
-            fields: [{ id: 'key', label: 'API key', placeholder: '', secret: true }],
-        },
     ],
 
-    /** Page sections, in render order. */
+    /** Page sections, in render order. Direct provider keys lead (preferred — no markup);
+     *  OpenRouter is the single-key catch-all (and the only path to Amazon Nova). */
     GROUPS: [
-        { id: 'universal', title: 'One key for every model',
-          blurb: 'The simplest way to bring your own AI — a single OpenRouter key unlocks the entire model list.' },
-        { id: 'direct', title: 'Or use a provider key directly',
-          blurb: 'Already have a key with one of these? Dashie will prefer it over OpenRouter for that provider’s models (no middleman markup).' },
-        { id: 'selfhosted', title: 'Self-hosted',
-          blurb: '' },
+        { id: 'direct', title: 'Provider keys',
+          blurb: 'Add a key for the models you use — Dashie runs its brain directly on it, no markup.' },
+        { id: 'universal', title: 'One key for everything',
+          blurb: 'A single OpenRouter key unlocks every model, including Amazon Nova. Direct keys above skip OpenRouter’s markup.' },
     ],
-
-    /** Voice/search BYO keys are deferred (local Whisper/Piper already covers
-     *  “own voice”) — listed so users know they're on the radar. */
-    COMING_SOON: ['Deepgram (STT)', 'ElevenLabs (TTS)', 'Tavily (web search)'],
 
     topBarTitle() { return 'API Keys'; },
     topBarSubtitle() { return ''; },
@@ -147,11 +132,6 @@ const ApiKeysPage = {
                         ${g.blurb ? `<div style="margin: -4px 0 12px; color: var(--text-muted); font-size: 13px; line-height: 1.5;">${g.blurb}</div>` : ''}
                         ${cards.map(p => this._renderProviderCard(p)).join('')}`;
                 }).join('')}
-                <div class="section-header" style="margin-top: 28px;">Coming later</div>
-                <div class="card"><div class="card-body" style="color: var(--text-muted); font-size: 13px; line-height: 1.6;">
-                    ${this.COMING_SOON.join(' · ')} — bring-your-own voice/search keys are planned.
-                    Local voice (Whisper/Piper) already runs key-free under Voice &amp; AI.
-                </div></div>
             </div>`;
     },
 
@@ -192,16 +172,13 @@ const ApiKeysPage = {
                 <div style="display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 6px;">
                     <div style="font-weight: 600; display: flex; align-items: center; gap: 8px;">
                         ${this._escape(p.name)}
-                        ${p.recommended ? `<span style="font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.4px; color: #fff; background: var(--accent); border-radius: 9px; padding: 2px 8px;">Simplest</span>` : ''}
                         ${p.orphaned ? `<span style="font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.4px; color: var(--status-warn, #b45309); background: rgba(180,83,9,0.10); border-radius: 9px; padding: 2px 8px;">Not used</span>` : ''}
                     </div>
                     ${p.orphaned ? '' : pill}
                 </div>
-                <div style="color: var(--text-secondary); font-size: 13px; line-height: 1.5; margin-bottom: 12px;">
-                    ${p.orphaned
-                        ? `Dashie can’t run its brain on this key yet, so it currently does <strong>nothing</strong> — your turns still use Dashie credits. Use an <strong>OpenRouter</strong> key above to run these models on your own account, and remove this one.`
-                        : p.help}
-                </div>
+                ${p.orphaned ? `<div style="color: var(--text-secondary); font-size: 13px; line-height: 1.5; margin-bottom: 12px;">
+                    Dashie can’t run its brain on this key yet, so it currently does <strong>nothing</strong> — your turns still use Dashie credits. Use an <strong>OpenRouter</strong> key to run these models on your own account, and remove this one.
+                </div>` : ''}
                 <div style="display: flex; gap: 12px; flex-wrap: wrap; align-items: flex-end;">
                     ${inputs}
                     <div style="display: flex; gap: 8px;">
