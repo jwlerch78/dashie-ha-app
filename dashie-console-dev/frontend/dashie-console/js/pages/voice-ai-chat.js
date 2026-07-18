@@ -28,6 +28,11 @@ const VoiceAiChat = {
     /** localStorage / ConsoleState keys for "remember last selection". */
     _STATE_KEY: 'voiceAiChat',
 
+    /** TTS ("play voice out loud"): the list_voices catalog (lazy — [{key, id, provider}])
+     *  and the current playback element so a new turn (or toggle-off) can stop the last one. */
+    _voices: null,
+    _audio: null,
+
     open() {
         const remembered = (typeof ConsoleState !== 'undefined' && ConsoleState._state?.[this._STATE_KEY]) || {};
         const defaults = VoiceAiPage._defaults || {};
@@ -56,11 +61,14 @@ const VoiceAiChat = {
             busy: false,
             history: [],   // [{ role: 'user'|'ai', ...payload }]
             lastError: null,
+            // "Play voice out loud" — off until the user opts in (credit-cost modal).
+            speak: remembered.speak === true,
         };
         App.renderPage();
     },
 
     close() {
+        this._stopAudio();
         this._open = null;
         App.renderPage();
     },
@@ -93,6 +101,7 @@ const VoiceAiChat = {
         ConsoleState._state[this._STATE_KEY] = {
             personalityId: this._open.personalityId || null,
             modelId: this._open.modelId || null,
+            speak: this._open.speak === true,
         };
         ConsoleState._save?.({ [this._STATE_KEY]: ConsoleState._state[this._STATE_KEY] });
     },
@@ -157,6 +166,8 @@ const VoiceAiChat = {
         this._open.history = this._open.history.filter(h => h.id !== pendingId);
         if (result?.ok) {
             this._open.history.unshift({ id: pendingId, role: 'ai', ...result });
+            // Speak it if the user turned voice on (they consented to the credit cost).
+            if (this._open.speak && result.voice) this._speak(result.voice);
         } else {
             this._open.history.unshift({ id: pendingId, role: 'ai-error', error: result?.error || 'Unknown error', latency_ms: result?.latency_ms, stages: result?.stages });
             this._open.lastError = result?.error || null;
@@ -176,6 +187,94 @@ const VoiceAiChat = {
         if (!ok) return;
         this._open.history = [];
         App.renderPage();
+    },
+
+    // ── Play voice out loud (TTS) ─────────────────────────────
+
+    /** Header toggle. Turning ON asks for confirmation (TTS is billed per response);
+     *  turning OFF just stops any playback. Persisted per-browser via _remember. */
+    async toggleSpeak() {
+        if (!this._open) return;
+        if (!this._open.speak) {
+            const ok = await ConfirmModal.confirm({
+                title: 'Play voice out loud?',
+                message: 'Each reply will be spoken in the selected personality’s voice using Dashie Cloud text-to-speech — which uses your credits (billed per character, same as the tablet). Turn it off any time.',
+                confirmLabel: 'Turn on voice',
+                cancelLabel: 'Cancel',
+            });
+            if (!ok) return;
+            this._open.speak = true;
+        } else {
+            this._stopAudio();
+            this._open.speak = false;
+        }
+        this._remember();
+        App.renderPage();
+    },
+
+    /** Replay a past AI turn's voice (only offered while speak is on — the user already
+     *  consented to the credit cost). */
+    replay(id) {
+        const h = this._open?.history.find(x => String(x.id) === String(id));
+        if (h?.voice) this._speak(h.voice);
+    },
+
+    _stopAudio() {
+        if (this._audio) {
+            try { this._audio.pause(); } catch { /* ignore */ }
+            this._audio = null;
+        }
+    },
+
+    /** Resolve which Dashie Cloud TTS endpoint + voice to use for the current personality —
+     *  mirrors the brain's resolveVoice priority (fixed personality voice → account
+     *  defaultVoiceKey → personality's preferred voice), then maps the voice KEY to its
+     *  provider + provider_voice_id via the list_voices catalog. voice_id '' → the edge
+     *  function's own default voice. */
+    async _resolveTtsTarget() {
+        if (this._voices === null) {
+            try { this._voices = await VoiceAiApi.listVoices(); } catch { this._voices = []; }
+        }
+        const voices = this._voices || [];
+        const pid = this._open.personalityId;
+        const p = (VoiceAiPage._custom || []).find(x => x.id === pid)
+            || (VoiceAiPage._templates || []).find(t => (t.key || t.id) === pid);
+        const acctDefault = VoiceAiPage._defaults?.['ai.defaultVoiceKey'] || '';
+        const key = (p?.voice_mode === 'fixed' && p.voice) ? p.voice : (acctDefault || p?.voice || '');
+        const row = voices.find(v => v.key === key) || null;
+        const provider = row?.provider || 'elevenlabs';
+        const fn = provider === 'inworld' ? 'inworld-tts' : 'elevenlabs-tts';
+        return { url: `${DashieAuth.config.url}/functions/v1/${fn}`, voiceId: row?.id || '' };
+    },
+
+    /** Synthesize `text` via Dashie Cloud TTS and play it in the browser. Best-effort:
+     *  a failure warns to the console and leaves the chat unchanged (never blocks). */
+    async _speak(text) {
+        if (!text || !this._open) return;
+        this._stopAudio();
+        try {
+            const { url, voiceId } = await this._resolveTtsTarget();
+            const resp = await fetch(url, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'apikey': DashieAuth.anonKey,
+                    'Authorization': `Bearer ${DashieAuth.jwt || DashieAuth.anonKey}`,
+                },
+                body: JSON.stringify(voiceId ? { text, voice_id: voiceId } : { text }),
+            });
+            if (!resp.ok) { console.warn('[VoiceAiChat] TTS failed:', resp.status); return; }
+            const buf = await resp.arrayBuffer();
+            const blob = new Blob([buf], { type: resp.headers.get('Content-Type') || 'audio/mpeg' });
+            const audioUrl = URL.createObjectURL(blob);
+            this._audio = new Audio(audioUrl);
+            this._audio.onended = () => URL.revokeObjectURL(audioUrl);
+            await this._audio.play();
+            // TTS decremented the balance — refresh the sidebar credits widget.
+            window.CreditsService?.fetch?.({ force: true });
+        } catch (e) {
+            console.warn('[VoiceAiChat] speak failed:', e?.message || e);
+        }
     },
 
     /** Format a millisecond duration as seconds at hundredths — e.g. 3777 → "3.78 s". */
@@ -251,6 +350,11 @@ const VoiceAiChat = {
                         Model
                         ${modelHtml}
                     </label>
+                    <button class="btn ${m.speak ? 'btn-primary' : 'btn-secondary'} btn-sm"
+                        onclick="VoiceAiChat.toggleSpeak()"
+                        title="Speak each reply in the personality's voice (Dashie Cloud TTS — uses credits)">
+                        ${m.speak ? '🔊 Voice on' : '🔈 Play voice out loud'}
+                    </button>
                 </div>
 
                 <div style="display: flex; gap: 8px; align-items: flex-end; margin-bottom: 24px;">
@@ -423,6 +527,7 @@ const VoiceAiChat = {
             <div style="margin-bottom: 24px; padding: 18px 22px; background: #0f0f10; border-radius: 10px; color: #fff;">
                 ${this._renderUserPill(user)}
                 <div style="font-size: 28px; line-height: 1.3; font-weight: 700; color: #fff; white-space: pre-wrap; margin-bottom: ${h.text ? '14px' : '0'};">${esc(h.voice || '')}</div>
+                ${this._open?.speak && h.voice ? `<button class="btn btn-sm" onclick="VoiceAiChat.replay('${h.id}')" title="Replay in the personality's voice (uses credits)" style="margin-bottom: 12px; background: rgba(255,255,255,0.08); border: 1px solid rgba(255,255,255,0.15); color: #fff;">🔊 Replay</button>` : ''}
                 ${h.text ? `<div style="font-size: 14px; line-height: 1.5; color: rgba(255, 255, 255, 0.72); white-space: pre-wrap;">${esc(h.text)}</div>` : ''}
                 ${action}
                 ${parsedWarning}

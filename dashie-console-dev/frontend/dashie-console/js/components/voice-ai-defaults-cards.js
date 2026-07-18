@@ -27,10 +27,13 @@ const VoiceAiDefaultsCards = {
         return String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
     },
 
-    // Borderless <select> styled as bold row text — reads like the collapsed
-    // pipeline rows ("Claude Sonnet 4.6") but is still a native dropdown.
-    // The row's own ▾ provides the affordance the hidden native arrow loses.
-    SELECT_STYLE: 'flex: 1; border: none; background: transparent; font-weight: 600; font-size: 13px; color: var(--text-primary); cursor: pointer; padding: 0; -webkit-appearance: none; -moz-appearance: none; appearance: none;',
+    // Borderless <select> styled as bold row text — reads like the collapsed pipeline rows
+    // ("Claude Sonnet 4.6") but is a real native dropdown. Keep the NATIVE arrow (no
+    // appearance:none): it's part of the select, so clicking the arrow opens the dropdown —
+    // a hidden native arrow + a sibling ▾ span left the arrow un-clickable (the whole reason
+    // for this row's earlier dead-zone). The native arrow also sits before the Voice row's
+    // ▶ preview button, so no overlap.
+    SELECT_STYLE: 'flex: 1; min-width: 0; border: none; background: transparent; font-weight: 600; font-size: 13px; color: var(--text-primary); cursor: pointer; padding: 0;',
 
     /**
      * Compact control row — caps label (aligned with the collapsed pipeline
@@ -44,11 +47,12 @@ const VoiceAiDefaultsCards = {
         const icon = o.icon
             ? `<img src="assets/icons/${this._esc(o.icon)}.svg" alt="" style="width: 15px; height: 15px; opacity: 0.55; flex-shrink: 0;">`
             : '';
+        // No fake ▾ span — the select carries its own (clickable) native arrow now. `o.caret`
+        // is accepted for back-compat but no longer renders anything.
         return `
             <div class="card" style="margin-bottom: 10px;"><div class="card-body" style="display: flex; align-items: center; gap: 10px; padding: 10px 14px;">
                 <span style="font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; color: var(--text-muted); min-width: 170px; display: inline-flex; align-items: center; gap: 7px;">${icon}${this._esc(o.label)} ${o.saving ? '<span style="font-weight: 400; text-transform: none;">· saving…</span>' : ''}</span>
                 ${o.controlHtml}
-                ${o.caret === false ? '' : '<span style="color: var(--text-muted); font-size: 13px;">▾</span>'}
             </div></div>`;
     },
 
