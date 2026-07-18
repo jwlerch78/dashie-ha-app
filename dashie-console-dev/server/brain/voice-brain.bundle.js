@@ -4,7 +4,7 @@
    The voice-conversation brain core, bundled for the Node add-on (on-prem L3).
    ONE core, TWO runtimes: the cloud Deno edge fn runs the TS source directly;
    this CJS bundle is the add-on's copy of the SAME source. Never hand-edit.
-   Source git SHA: 8fbc76eb6f418eba422a4e355e10198cecc917a0
+   Source git SHA: 46e9a2446a4ec2c20508b114d234d19e72befc11
    Regenerate:  node scripts/build-node-brain.mjs && ./sync-brain-bundle.sh
    Contract:    supabase/functions/voice-conversation/README.md + build plan §13.16
    ============================================================ */
@@ -181,7 +181,7 @@ Rules:
 \`\`\`json
 {
   "type": "info_request",
-  "tool": "calendar_events|family_members|web_search|chores|location_events|travel_time|family_locations|weather_data",
+  "tool": "one of the tool names listed under Tools: below",
   "query": {/* tool-specific params */},
   "context": "why needed",
   "processing_message": "what you'll do with the data"
@@ -189,15 +189,7 @@ Rules:
 \`\`\`
 
 Tools:
-- calendar_events: query: {time_range: "today|tomorrow|this_week|next_week|weekend|next_30_days|next_60_days"}
-- family_members: query: {} (no params needed) - For questions about who someone is, their age, relationship, etc.
-- web_search: query: "your search query string" (IMPORTANT: query should be a STRING, not an object)
-- chores: query: {hint: "task description", member_hint: "name"} - Use when someone reports completing a task
-- location_events: query: {member_name: "Mary", location_name: "home", timeframe: "yesterday", event_type: "arrive"} - For arrival/departure HISTORY (past events). **Use the exact location name from the user's query** (e.g., "auntie's", "grandma's house", "school"). **Timeframe options:** "today", "tonight", "yesterday", "last night", "last_24h", "last_week". Use "tonight" or "last night" when user says those words - they handle early morning hours intelligently.
-- travel_time: query: {event_title: "game", member_name: "Jack"} - For "when should we leave?" questions
-- family_locations: query: {member_name: "Mary"} - **Use this for "where is X right now?" questions.** Returns CURRENT GPS location with travel time from home and today's calendar events for context. Use for: "where is Mary?", "where's Dad right now?", "how far is Mom?", "when will Mary get home?"
-- personalities: query: {} (no params needed) - For questions about Dashie's PERSONALITIES/characters, and for requests to CHANGE personality. Use for: "what personalities do you have?", "who can you be?", "switch to the princess personality", "be a pirate", "talk like a wizard", "go back to being normal". Do NOT answer these from memory \u2014 the list lives in the database and changes.
-- weather_data: query: {show_overlay: true} - For weather questions. Returns current conditions, hourly forecast, and 10-day forecast. Set show_overlay: true to display the visual weather overlay with radar.
+{{AVAILABLE_TOOLS_LIST}}
 
 ## 3. ACTION (change dashboard or complete chores)
 \`\`\`json
@@ -4990,4 +4982,4 @@ function toolMeta(parsed, route, caps) {
   templateCanAnswer,
   wantsGameDetail
 });
-module.exports.BRAIN_SOURCE_SHA = "8fbc76eb6f418eba422a4e355e10198cecc917a0";
+module.exports.BRAIN_SOURCE_SHA = "46e9a2446a4ec2c20508b114d234d19e72befc11";
