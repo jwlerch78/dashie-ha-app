@@ -4,7 +4,7 @@
    The voice-conversation brain core, bundled for the Node add-on (on-prem L3).
    ONE core, TWO runtimes: the cloud Deno edge fn runs the TS source directly;
    this CJS bundle is the add-on's copy of the SAME source. Never hand-edit.
-   Source git SHA: edfd77c7541091a69ec4e35c84a01050b9bccc5d
+   Source git SHA: 30198802f343912a8425775f6b0403f2be6b4e3e
    Regenerate:  node scripts/build-node-brain.mjs && ./sync-brain-bundle.sh
    Contract:    supabase/functions/voice-conversation/README.md + build plan §13.16
    ============================================================ */
@@ -116,6 +116,7 @@ Available tools:
 The category is CLOSED and so is the command list. These are the ONLY actions that exist:
 - theme \u2192 command "set_theme", parameters {theme: "dark"|"light"} and/or {family: "theme family, e.g. christmas"}
 - chores \u2192 command "complete_chores" or "undo_last_completion"
+- personality \u2192 command "set_personality", parameters {key: "template key", name: "display name"}. ONLY ever emitted from the personalities tool's second pass, where the valid keys are supplied \u2014 never guess a key from memory.
 
 Never invent a category or a command. Nothing else is wired to anything: an invented action does NOTHING while your "voice" tells the user it worked \u2014 which is worse than admitting you can't. If what they want isn't on that list, use a tool, or say you can't do it.
 
@@ -128,6 +129,8 @@ Examples:
 - "Charlie fed the dogs" \u2192 info_request with tool: "chores", query: {hint: "fed the dogs", member_hint: "Charlie"}
 - "Where is Mary?" \u2192 info_request with tool: "family_locations", query: {member_name: "Mary"}
 - "When did Mary get home?" \u2192 info_request with tool: "location_events", query: {member_name: "Mary", location_name: "home", event_type: "arrive"}
+- "What personalities do you have?" \u2192 info_request with tool: "personalities", query: {}
+- "Switch to the princess personality" \u2192 info_request with tool: "personalities", query: {}
 - "What year was the Constitution signed?" \u2192 Direct response (you know this)
 - "What's 25 times 12?" \u2192 Direct response (you can calculate)
 
@@ -193,6 +196,7 @@ Tools:
 - location_events: query: {member_name: "Mary", location_name: "home", timeframe: "yesterday", event_type: "arrive"} - For arrival/departure HISTORY (past events). **Use the exact location name from the user's query** (e.g., "auntie's", "grandma's house", "school"). **Timeframe options:** "today", "tonight", "yesterday", "last night", "last_24h", "last_week". Use "tonight" or "last night" when user says those words - they handle early morning hours intelligently.
 - travel_time: query: {event_title: "game", member_name: "Jack"} - For "when should we leave?" questions
 - family_locations: query: {member_name: "Mary"} - **Use this for "where is X right now?" questions.** Returns CURRENT GPS location with travel time from home and today's calendar events for context. Use for: "where is Mary?", "where's Dad right now?", "how far is Mom?", "when will Mary get home?"
+- personalities: query: {} (no params needed) - For questions about Dashie's PERSONALITIES/characters, and for requests to CHANGE personality. Use for: "what personalities do you have?", "who can you be?", "switch to the princess personality", "be a pirate", "talk like a wizard", "go back to being normal". Do NOT answer these from memory \u2014 the list lives in the database and changes.
 - weather_data: query: {show_overlay: true} - For weather questions. Returns current conditions, hourly forecast, and 10-day forecast. Set show_overlay: true to display the visual weather overlay with radar.
 
 ## 3. ACTION (change dashboard or complete chores)
@@ -207,6 +211,7 @@ Tools:
 The category is CLOSED and so is the command list. These are the ONLY actions that exist:
 - theme \u2192 command "set_theme", parameters {theme: "dark"|"light"} and/or {family: "theme family, e.g. christmas"}
 - chores \u2192 command "complete_chores" or "undo_last_completion"
+- personality \u2192 command "set_personality", parameters {key: "template key", name: "display name"}. ONLY ever emitted from the personalities tool's second pass, where the valid keys are supplied \u2014 never guess a key from memory.
 
 Never invent a category or a command. Nothing else is wired to anything: an invented action does NOTHING while your "voice" tells the user it worked \u2014 which is worse than admitting you can't. If what they want isn't on that list, use a tool, or say you can't do it.
 
@@ -1611,6 +1616,64 @@ about Dashie: answer from it, never from your general knowledge or the web.
 
 Provide a helpful, spoken-friendly response based only on this documentation.
 `;
+var INQUIRY_PERSONALITIES = `# Inquiry Context: Personalities
+
+The user asked about Dashie's personalities \u2014 either what's available, or to switch to one.
+
+## Available Personalities
+
+\`\`\`json
+{{PERSONALITY_CATALOG}}
+\`\`\`
+
+This list is the ONLY source of truth. Never invent a personality that isn't in it, and never
+promise one you can't see here.
+
+## Decide which of the two things they want
+
+### A. They're ASKING what personalities exist
+("what personalities do you have", "who can you be", "what are my options")
+
+Respond with \`"type": "response"\`:
+- **voice**: name just TWO OR THREE as examples, conversationally, and mention there are more.
+  Keep it to one sentence \u2014 do NOT read the whole list aloud, it's tedious to listen to.
+  e.g. "I can be a pirate, a wizard, or a princess \u2014 and a few more besides."
+- **text**: list ALL of them, one per line, as \`Name \u2014 short description\`. This is the screen,
+  so completeness belongs here rather than in the spoken line.
+- **image**: null.
+
+### B. They're asking to SWITCH
+("switch to the princess personality", "be a pirate", "talk like a cowboy", "go back to normal")
+
+Respond with \`"type": "action"\`:
+
+\`\`\`json
+{
+  "type": "action",
+  "voice": null,
+  "text": null,
+  "action": {
+    "category": "personality",
+    "command": "set_personality",
+    "parameters": {"key": "princess", "name": "Princess"}
+  }
+}
+\`\`\`
+
+- \`key\` MUST be the exact \`key\` from the catalog above \u2014 not the spoken words.
+- Match generously on intent: "be a wizard", "talk like Dumbledore", "do the wizard voice" all
+  mean \`wizard\`. Requests to go back to normal/default/"just be Dashie" mean \`dashie\`.
+- **Leave \`voice\` null.** Do NOT write a confirmation line \u2014 the new personality greets the user
+  itself, in its own voice, immediately after the switch. Anything you write here would be spoken
+  in the OLD voice and then talked over.
+- If NOTHING in the catalog plausibly matches what they asked for, do not switch. Use
+  \`"type": "response"\` instead and say which ones you do have (per branch A).
+
+## Ambiguity
+
+If it's genuinely unclear whether they're asking or switching, prefer branch A (just tell them
+the options). Listing is harmless; switching the household's assistant by mistake is not.
+`;
 var AVAILABLE_TOOLS_LIST = `- calendar_events: query: {time_range: "today|tomorrow|this_week|next_week|weekend|next_weekend|next_30_days|next_60_days|next_12_months|date_range|<weekday e.g. wednesday for that specific day>", start_date?: "YYYY-MM-DD", end_date?: "YYYY-MM-DD", member_name?: "name (for a specific person)", query?: "keyword to find ONE specific event e.g. physical therapy (for "what time is X")", tags?: ["soccer"], mode?: "next|list"} - Family calendar events. Set member_name when the question is about one person; use "weekend" for "this weekend" and "next_weekend" for "next weekend"; use mode "next" for a single upcoming event ("when is the next game"), "list" (default) for an overview ("what's on this weekend"). For a NAMED month or explicit period ("in December", "the week of the 20th") use time_range "date_range" WITH start_date + end_date covering it (a named month = its NEXT occurrence). For "when is X" with NO period named ("when is Veeva Break"), use query + mode "next" + time_range "next_12_months" so the search can't miss a far-out event
 - calendar_write: query: {action: "create|update|delete|confirm|cancel", title?: "event title (create) or the NEW title (update)", date?: "YYYY-MM-DD (create, or the NEW day on update)", start_time?: "HH:MM 24h", end_time?: "HH:MM 24h", all_day?: true, location?: "place", description?: "details", calendar_name?: "which calendar \u2014 when the user names one OR answers the which-calendar question", calendar_names?: ["Dad work","Mom"] (when they name MORE THAN ONE calendar \u2014 "add it to Dad and Mom's calendars"), match_query?: "words identifying the EXISTING event (update/delete), e.g. dentist", match_date?: "YYYY-MM-DD the existing event is on, if the user named its day", scope?: "all (ONLY when they say the whole series/all of them; default is just that one)"} - CHANGE the family calendar: action "create" to add ("add/put/schedule X on the calendar", "can you add an event\u2026"), "update" to change an existing event ("move/change/reschedule/rename my dentist appointment"), "delete" to remove one ("cancel/delete/remove my dentist appointment" \u2014 cancelling an APPOINTMENT/EVENT is a delete, not a conversation-cancel). Emit the action IMMEDIATELY with whatever the user actually said \u2014 every field is optional (a bare "add an event to dad's calendar" is a valid create with ONLY calendar_name); the DEVICE walks the user through anything missing (what to add, day and time, which calendar, which event) and ALWAYS asks for confirmation before touching the calendar. NEVER invent a field, NEVER ask your own follow-up questions for this tool \u2014 call it and let the device ask. For update/delete identify the existing event in match_query (+ match_date if they named its day) and put ONLY the changes in the top-level fields ("move the dentist to 4pm" = match_query "dentist" + start_time "16:00"). Dates are ABSOLUTE from the current date in your context ("Friday" = a real YYYY-MM-DD; "Friday at 8am" = date + start_time together). Omit end_time unless stated (defaults to one hour / the event's current length; "two hours" = end_time is start plus that). EXCEPTION \u2014 a SPORTING EVENT (a game, match, or fixture: "add the Argentina game", "put the Chiefs game on the calendar"): set end_time to TWO hours after start_time (e.g. start 15:00 \u2192 end_time 17:00), since games run long \u2014 unless the user gives a duration. When the user answers a device question, re-emit the SAME action carrying the newly answered field(s) (the device remembers the rest); AFTER the device asks its confirmation question, ANY yes ("yes", "yep", "do it", "go ahead", "delete it") = action "confirm" \u2014 NEVER re-send create/update/delete at that point unless the user CHANGED a detail ("make it two hours" = re-emit the action with the corrected field); "no"/"never mind" there = action "cancel". NOT for reading the calendar (calendar_events), NOT for reminders/timers (schedule_action)
 - family_members: query: {} - Info about family members (age, relationship, etc.)
@@ -1754,7 +1817,8 @@ var INQUIRY_BY_TYPE = {
   "family-locations": INQUIRY_FAMILY_LOCATIONS,
   "weather": INQUIRY_WEATHER,
   "sports": INQUIRY_SPORTS,
-  "dashie-help": INQUIRY_DASHIE_HELP
+  "dashie-help": INQUIRY_DASHIE_HELP,
+  "personalities": INQUIRY_PERSONALITIES
 };
 function languageNameFor(code) {
   return {
@@ -1826,6 +1890,8 @@ function buildInquiryValues(inquiryType, data, baseValues) {
       return { ...baseValues, SEARCH_RESULTS: JSON.stringify(data, null, 2) };
     case "dashie-help":
       return { ...baseValues, DASHIE_HELP_DATA: JSON.stringify(data, null, 2) };
+    case "personalities":
+      return { ...baseValues, PERSONALITY_CATALOG: JSON.stringify(data, null, 2) };
     case "chores":
       return {
         ...baseValues,
@@ -2839,6 +2905,21 @@ async function synthesizeImage(query, criteria, ctx) {
 
 // supabase/functions/voice-conversation/personality.ts
 var UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+async function listAvailablePersonalities(supabase) {
+  const { data, error } = await supabase.from("personality_templates").select("key, name, description, is_seasonal, seasonal_start, seasonal_end").eq("is_available", true).order("sort_order", { ascending: true });
+  if (error || !Array.isArray(data)) return [];
+  const today = (/* @__PURE__ */ new Date()).toISOString().slice(0, 10);
+  return data.filter((r) => {
+    if (!r.is_seasonal) return true;
+    const start = r.seasonal_start;
+    const end = r.seasonal_end;
+    return (!start || today >= start) && (!end || today <= end);
+  }).map((r) => ({
+    key: String(r.key),
+    name: String(r.name),
+    description: r.description ?? null
+  }));
+}
 async function resolvePersonality(supabase, userId, endpointId, explicitId) {
   const id = explicitId || await readDevicePersonalityId(supabase, userId, endpointId);
   if (!id || id === "dashie") {
@@ -3541,6 +3622,16 @@ weather for a specific place. I use your family's home location unless you name 
     "action": null,
     "body": `Say "switch to dark mode," "turn on the light theme," or "change your voice." For anything else in
 settings, ask me where it is and I'll point you to the right page.`
+  },
+  {
+    "id": "voice-capabilities:change-my-personality",
+    "file": "voice-capabilities.md",
+    "title": "Change my personality",
+    "topic": "voice",
+    "status": "ga",
+    "page": null,
+    "action": null,
+    "body": 'Ask "what personalities do you have?" to hear the options, then say "switch to the princess\npersonality," "be a pirate," or "talk like a wizard" to change me. Each personality has its own\nvoice, and the change applies to this device only \u2014 so a different Dashie in another room keeps\nits own. Say "go back to normal" to return to the default.'
   },
   {
     "id": "voice-capabilities:sports-scores",
@@ -4572,6 +4663,21 @@ async function orchestrate(deps, io, voiceCtx) {
     };
     return await secondPass(io, deps, t0, "dashie-help", helpData, [p1Stage, fetchStage], pass1, provider, modelId, context, sessionId, retain, route);
   }
+  if (p1Parsed.type === "info_request" && p1Parsed.tool === "personalities") {
+    await logPass(io, token, REQUEST_TYPE, req.endpoint_id, sessionId, p1Prompt, pass1);
+    const tFetch = Date.now();
+    const choices = io.listPersonalities ? await io.listPersonalities(supabase) : await listAvailablePersonalities(supabase);
+    const fetchStage = {
+      name: "fetch_personalities",
+      latency_ms: Date.now() - tFetch,
+      result_count: choices.length
+    };
+    const catalogData = choices.length ? { found: true, current_personality: personality?.name ?? "Dashie", personalities: choices } : {
+      found: false,
+      note: "Could not read the personality list. Say you had trouble checking just now and to try again in a moment. Do NOT name personalities from memory and do NOT switch."
+    };
+    return await secondPass(io, deps, t0, "personalities", catalogData, [p1Stage, fetchStage], pass1, provider, modelId, context, sessionId, retain, route);
+  }
   if (p1Parsed.type === "multi") {
     const stepsIn = p1Parsed.steps ?? [];
     if (stepsIn.length < 2) {
@@ -4876,4 +4982,4 @@ function toolMeta(parsed, route, caps) {
   templateCanAnswer,
   wantsGameDetail
 });
-module.exports.BRAIN_SOURCE_SHA = "edfd77c7541091a69ec4e35c84a01050b9bccc5d";
+module.exports.BRAIN_SOURCE_SHA = "30198802f343912a8425775f6b0403f2be6b4e3e";
