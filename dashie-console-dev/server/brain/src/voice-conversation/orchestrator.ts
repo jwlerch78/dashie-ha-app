@@ -213,6 +213,26 @@ function resolveWeatherLocation(query: Record<string, unknown>, zip: string | nu
   return null;
 }
 
+/** Deterministic voice enrichment for a `set_personality` action (VOICE_SINGLE_PATH item 11):
+ *  attach the switched-to template's voice fields (`voice_mode`/`voice_key`/`greeting_fallback`)
+ *  so native clients apply the switch without a template service. Must run on EVERY path that
+ *  can emit the action — the personalities second pass AND a direct pass-1 action (the model
+ *  frequently routes an explicit "switch to X" as `type:'action'`; found on-device 2026-07-19
+ *  when the direct path shipped the action unenriched). Additive params; no-op when the key
+ *  isn't in the catalog. */
+function enrichSetPersonalityAction(
+  action: { command?: string; parameters?: Record<string, unknown> } | null | undefined,
+  choices: PersonalityChoice[],
+): void {
+  const params = action?.command === 'set_personality' ? action.parameters : null;
+  if (!params || typeof params.key !== 'string') return;
+  const row = choices.find((c) => c.key === params.key);
+  if (!row) return;
+  if (row.voice_mode != null) params.voice_mode = row.voice_mode;
+  if (row.voice != null) params.voice_key = row.voice;
+  if (row.greeting_fallback != null) params.greeting_fallback = row.greeting_fallback;
+}
+
 /** Injectable I/O — the runtime's I/O shell. Deno provides `defaultIO` (default-io.ts);
  *  the Node add-on (L3) provides its own; tests pass fakes. Signatures are explicit (not
  *  `typeof` the impls) so the core needs no value import of the Deno modules. */
@@ -604,6 +624,20 @@ async function orchestrate(deps: OrchestrationDeps, io: OrchestratorIO, voiceCtx
 
   // Direct response / action → pass1 is terminal.
   if (!p1Parsed || p1Parsed.type === 'response' || p1Parsed.type === 'action') {
+    // set_personality emitted as a DIRECT pass-1 action (not via the personalities tool):
+    // fetch the catalog and attach the template's voice fields here too — the tool branch's
+    // enrichment never runs on this path. A read failure degrades to the unenriched action
+    // (the client applies id/name and leaves the voice — same as an old brain).
+    if (p1Parsed?.type === 'action' && p1Parsed.action?.command === 'set_personality') {
+      try {
+        const choices = io.listPersonalities
+          ? await io.listPersonalities(supabase)
+          : await listAvailablePersonalities(supabase);
+        enrichSetPersonalityAction(p1Parsed.action, choices);
+      } catch (e) {
+        console.warn('set_personality direct-path enrichment failed (action ships unenriched):', e);
+      }
+    }
     // §23.6: pre-fetched sports voiced in personality on pass-1 → attach the SAME
     // deterministic card as the no-prefetch template path (only the voice differs).
     const sportsCard = (providedSports && p1Parsed?.type === 'response')
@@ -1080,15 +1114,8 @@ async function orchestrate(deps: OrchestrationDeps, io: OrchestratorIO, voiceCtx
     // making every client re-lookup the template (native Kotlin has no template service at all —
     // this is what lets set_personality apply natively on kiosk AND full mode). Deterministic
     // post-processing, never model-echoed; additive params, so old clients simply ignore them.
-    const params = pTurn.action?.command === 'set_personality' ? pTurn.action.parameters : null;
-    if (params && typeof params.key === 'string') {
-      const row = choices.find((c) => c.key === params.key);
-      if (row) {
-        if (row.voice_mode != null) params.voice_mode = row.voice_mode;
-        if (row.voice != null) params.voice_key = row.voice;
-        if (row.greeting_fallback != null) params.greeting_fallback = row.greeting_fallback;
-      }
-    }
+    // (Shared with the direct pass-1 action path above — enrichSetPersonalityAction.)
+    enrichSetPersonalityAction(pTurn.action, choices);
     return pTurn;
   }
 

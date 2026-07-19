@@ -4,7 +4,7 @@
    The voice-conversation brain core, bundled for the Node add-on (on-prem L3).
    ONE core, TWO runtimes: the cloud Deno edge fn runs the TS source directly;
    this CJS bundle is the add-on's copy of the SAME source. Never hand-edit.
-   Source git SHA: 4c1ea4290de54f822d6c8031aeee3926c96866ad
+   Source git SHA: ef6f7f8d21b6c014dc94205f31c19c19b527f2d1
    Regenerate:  node scripts/build-node-brain.mjs && ./sync-brain-bundle.sh
    Contract:    supabase/functions/voice-conversation/README.md + build plan §13.16
    ============================================================ */
@@ -4065,6 +4065,15 @@ function resolveWeatherLocation(query, zip) {
   if (zip) return { zip };
   return null;
 }
+function enrichSetPersonalityAction(action, choices) {
+  const params = action?.command === "set_personality" ? action.parameters : null;
+  if (!params || typeof params.key !== "string") return;
+  const row = choices.find((c) => c.key === params.key);
+  if (!row) return;
+  if (row.voice_mode != null) params.voice_mode = row.voice_mode;
+  if (row.voice != null) params.voice_key = row.voice;
+  if (row.greeting_fallback != null) params.greeting_fallback = row.greeting_fallback;
+}
 var REQUEST_TYPE = "voice_conversation";
 var DEFAULT_VOICE_KEY = "ASHLEY";
 async function runOrchestration(deps, io) {
@@ -4228,6 +4237,14 @@ async function orchestrate(deps, io, voiceCtx) {
     return finalize({ t0, parsed: clarify, raw: pass1.raw, stages: [p1Stage], usage: pass1.raw.usage, latency: pass1.latency_ms, retain, sessionId, route });
   }
   if (!p1Parsed || p1Parsed.type === "response" || p1Parsed.type === "action") {
+    if (p1Parsed?.type === "action" && p1Parsed.action?.command === "set_personality") {
+      try {
+        const choices = io.listPersonalities ? await io.listPersonalities(supabase) : await listAvailablePersonalities(supabase);
+        enrichSetPersonalityAction(p1Parsed.action, choices);
+      } catch (e) {
+        console.warn("set_personality direct-path enrichment failed (action ships unenriched):", e);
+      }
+    }
     const sportsCard = providedSports && p1Parsed?.type === "response" ? templateSports(providedSports, providedSports.query || {}, { timezone: req.timezone }).structured_data : void 0;
     const imageHint = !sportsCard && retrievePictures && p1Parsed?.type === "response" ? p1Parsed.image : void 0;
     const imageCard = imageHint?.searchTerms ? await resolveImageHint(p1Parsed, token, sessionId, io.toolConn) : void 0;
@@ -4676,15 +4693,7 @@ async function orchestrate(deps, io, voiceCtx) {
       note: "Could not read the personality list. Say you had trouble checking just now and to try again in a moment. Do NOT name personalities from memory and do NOT switch."
     };
     const pTurn = await secondPass(io, deps, t0, "personalities", catalogData, [p1Stage, fetchStage], pass1, provider, modelId, context, sessionId, retain, route);
-    const params = pTurn.action?.command === "set_personality" ? pTurn.action.parameters : null;
-    if (params && typeof params.key === "string") {
-      const row = choices.find((c) => c.key === params.key);
-      if (row) {
-        if (row.voice_mode != null) params.voice_mode = row.voice_mode;
-        if (row.voice != null) params.voice_key = row.voice;
-        if (row.greeting_fallback != null) params.greeting_fallback = row.greeting_fallback;
-      }
-    }
+    enrichSetPersonalityAction(pTurn.action, choices);
     return pTurn;
   }
   if (p1Parsed.type === "multi") {
@@ -4993,4 +5002,4 @@ function toolMeta(parsed, route, caps) {
   templateCanAnswer,
   wantsGameDetail
 });
-module.exports.BRAIN_SOURCE_SHA = "4c1ea4290de54f822d6c8031aeee3926c96866ad";
+module.exports.BRAIN_SOURCE_SHA = "ef6f7f8d21b6c014dc94205f31c19c19b527f2d1";
