@@ -49,6 +49,8 @@ Pure Node/Express server that:
 
 The Python `custom_components/dashie/` HA integration remains unchanged — it provides entities; this add-on reads them.
 
-## Licence
+## License
 
-Proprietary. All rights reserved.
+[MIT](LICENSE). This includes the console frontend, the Node server, and the
+on-prem AI brain (`server/brain/` — TypeScript source in `server/brain/src/`,
+with `voice-brain.bundle.js` as its build artifact).
