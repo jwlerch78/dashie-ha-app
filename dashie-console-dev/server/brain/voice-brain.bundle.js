@@ -4,7 +4,7 @@
    The voice-conversation brain core, bundled for the Node add-on (on-prem L3).
    ONE core, TWO runtimes: the cloud Deno edge fn runs the TS source directly;
    this CJS bundle is the add-on's copy of the SAME source. Never hand-edit.
-   Source git SHA: a2e3dbf8e14b74784ba10247993389a8de46133e
+   Source git SHA: 2dd30a6718c7ad20366b114210c46162e222a4d8
    Regenerate:  node scripts/build-node-brain.mjs && ./sync-brain-bundle.sh
    Contract:    supabase/functions/voice-conversation/README.md + build plan §13.16
    ============================================================ */
@@ -4083,6 +4083,19 @@ function enrichSetPersonalityAction(action, choices) {
   if (row.greeting_fallback != null) params.greeting_fallback = row.greeting_fallback;
   return row;
 }
+async function restampVoiceForSwitch(io, supabase, voiceCtx, row) {
+  const targetKey = row?.voice;
+  if (!targetKey || !io.resolveVoiceId) return;
+  try {
+    const v = await io.resolveVoiceId(supabase, targetKey);
+    if (v?.voiceId) {
+      voiceCtx.voiceId = v.voiceId;
+      voiceCtx.voiceProvider = v.provider;
+    }
+  } catch (e) {
+    console.warn("set_personality voice restamp failed (turn keeps the prior voice):", e);
+  }
+}
 var REQUEST_TYPE = "voice_conversation";
 var DEFAULT_VOICE_KEY = "ASHLEY";
 async function runOrchestration(deps, io) {
@@ -4252,6 +4265,7 @@ async function orchestrate(deps, io, voiceCtx) {
         const row = enrichSetPersonalityAction(p1Parsed.action, choices);
         const greeting = row?.greeting_fallback?.trim();
         if (greeting) p1Parsed.voice = greeting;
+        await restampVoiceForSwitch(io, supabase, voiceCtx, row);
       } catch (e) {
         console.warn("set_personality direct-path enrichment failed (action ships unenriched):", e);
       }
@@ -4707,6 +4721,7 @@ async function orchestrate(deps, io, voiceCtx) {
     const enrichedRow = enrichSetPersonalityAction(pTurn.action, choices);
     const greeting = enrichedRow?.greeting_fallback?.trim();
     if (greeting) pTurn.voice = greeting;
+    await restampVoiceForSwitch(io, supabase, voiceCtx, enrichedRow);
     return pTurn;
   }
   if (p1Parsed.type === "multi") {
@@ -5015,4 +5030,4 @@ function toolMeta(parsed, route, caps) {
   templateCanAnswer,
   wantsGameDetail
 });
-module.exports.BRAIN_SOURCE_SHA = "a2e3dbf8e14b74784ba10247993389a8de46133e";
+module.exports.BRAIN_SOURCE_SHA = "2dd30a6718c7ad20366b114210c46162e222a4d8";

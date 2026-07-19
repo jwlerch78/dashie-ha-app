@@ -240,6 +240,31 @@ function enrichSetPersonalityAction(
   return row;
 }
 
+/** Trailing-voice fix (John 2026-07-19): the turn's TTS voice is resolved once at request
+ *  START — while the OLD personality is still active — so a switch confirmation spoke one
+ *  personality behind (the princess greeting arrived in the pirate voice). Re-stamp THIS
+ *  turn's voiceCtx with the switched-to template's voice (its pinned voice when `fixed`,
+ *  its preferred voice otherwise) so the greeting speaks as the NEW character. Later turns
+ *  resolve the full WS-G chain normally. Best-effort: a resolve miss keeps the old stamp. */
+async function restampVoiceForSwitch(
+  io: OrchestratorIO,
+  supabase: unknown,
+  voiceCtx: OrchestrateCtx,
+  row: PersonalityChoice | null,
+): Promise<void> {
+  const targetKey = row?.voice;
+  if (!targetKey || !io.resolveVoiceId) return;
+  try {
+    const v = await io.resolveVoiceId(supabase, targetKey);
+    if (v?.voiceId) {
+      voiceCtx.voiceId = v.voiceId;
+      voiceCtx.voiceProvider = v.provider;
+    }
+  } catch (e) {
+    console.warn('set_personality voice restamp failed (turn keeps the prior voice):', e);
+  }
+}
+
 /** Injectable I/O — the runtime's I/O shell. Deno provides `defaultIO` (default-io.ts);
  *  the Node add-on (L3) provides its own; tests pass fakes. Signatures are explicit (not
  *  `typeof` the impls) so the core needs no value import of the Deno modules. */
@@ -642,10 +667,14 @@ async function orchestrate(deps: OrchestrationDeps, io: OrchestratorIO, voiceCtx
           : await listAvailablePersonalities(supabase);
         const row = enrichSetPersonalityAction(p1Parsed.action, choices);
         // Speak the NEW character's greeting instead of the old character narrating the
-        // switch — the client applies the new voice before TTS, so this line arrives
-        // already in-character AND in-voice. Blank/absent greeting → keep the model's line.
+        // switch. Blank/absent greeting → keep the model's line.
         const greeting = row?.greeting_fallback?.trim();
         if (greeting) p1Parsed.voice = greeting;
+        // TRAILING-VOICE fix (John 2026-07-19): the turn's TTS voice was resolved at
+        // request START (still the OLD personality), so every switch confirmation spoke
+        // one personality behind ("Oh, hello!" in the pirate voice). Re-stamp THIS
+        // turn's voice with the switched-to template's voice.
+        await restampVoiceForSwitch(io, supabase, voiceCtx, row);
       } catch (e) {
         console.warn('set_personality direct-path enrichment failed (action ships unenriched):', e);
       }
@@ -1131,6 +1160,8 @@ async function orchestrate(deps: OrchestrationDeps, io: OrchestratorIO, voiceCtx
     // In-character greeting replaces the switch narration (see the direct-path note above).
     const greeting = enrichedRow?.greeting_fallback?.trim();
     if (greeting) pTurn.voice = greeting;
+    // Trailing-voice fix — this turn speaks in the switched-to voice (see direct-path note).
+    await restampVoiceForSwitch(io, supabase, voiceCtx, enrichedRow);
     return pTurn;
   }
 
