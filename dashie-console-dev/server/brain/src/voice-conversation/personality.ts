@@ -71,6 +71,14 @@ export async function listAvailablePersonalities(supabase: Supa): Promise<Person
       key: String(r.key),
       name: String(r.name),
       description: (r.description as string | null) ?? null,
+      // Voice fields MUST survive this map — set_personality enrichment reads them off the
+      // catalog row. 2026-07-19 field bug: they were SELECTed above but dropped here, so
+      // every switch shipped unenriched (the optional interface fields hid it from the
+      // type-checker, and the orchestrator tests' fake catalogs included what the real
+      // impl stripped).
+      voice_mode: (r.voice_mode as string | null) ?? null,
+      voice: (r.voice as string | null) ?? null,
+      greeting_fallback: (r.greeting_fallback as string | null) ?? null,
     }));
 }
 

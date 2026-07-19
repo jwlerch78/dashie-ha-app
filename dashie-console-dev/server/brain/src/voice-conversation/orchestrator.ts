@@ -219,18 +219,25 @@ function resolveWeatherLocation(query: Record<string, unknown>, zip: string | nu
  *  can emit the action — the personalities second pass AND a direct pass-1 action (the model
  *  frequently routes an explicit "switch to X" as `type:'action'`; found on-device 2026-07-19
  *  when the direct path shipped the action unenriched). Additive params; no-op when the key
- *  isn't in the catalog. */
+ *  isn't in the catalog.
+ *
+ *  Returns the matched catalog row so the caller can also swap the spoken confirmation for
+ *  the template's IN-CHARACTER greeting (John 2026-07-19): the model narrates the switch in
+ *  the OLD personality's style ("Ho ho ho! Switching to Pirate now!"), but the moment worth
+ *  hearing is the NEW character introducing itself — and since the client pins the new voice
+ *  BEFORE TTS, the greeting speaks in the new voice too. */
 function enrichSetPersonalityAction(
   action: { command?: string; parameters?: Record<string, unknown> } | null | undefined,
   choices: PersonalityChoice[],
-): void {
+): PersonalityChoice | null {
   const params = action?.command === 'set_personality' ? action.parameters : null;
-  if (!params || typeof params.key !== 'string') return;
+  if (!params || typeof params.key !== 'string') return null;
   const row = choices.find((c) => c.key === params.key);
-  if (!row) return;
+  if (!row) return null;
   if (row.voice_mode != null) params.voice_mode = row.voice_mode;
   if (row.voice != null) params.voice_key = row.voice;
   if (row.greeting_fallback != null) params.greeting_fallback = row.greeting_fallback;
+  return row;
 }
 
 /** Injectable I/O — the runtime's I/O shell. Deno provides `defaultIO` (default-io.ts);
@@ -633,7 +640,12 @@ async function orchestrate(deps: OrchestrationDeps, io: OrchestratorIO, voiceCtx
         const choices = io.listPersonalities
           ? await io.listPersonalities(supabase)
           : await listAvailablePersonalities(supabase);
-        enrichSetPersonalityAction(p1Parsed.action, choices);
+        const row = enrichSetPersonalityAction(p1Parsed.action, choices);
+        // Speak the NEW character's greeting instead of the old character narrating the
+        // switch — the client applies the new voice before TTS, so this line arrives
+        // already in-character AND in-voice. Blank/absent greeting → keep the model's line.
+        const greeting = row?.greeting_fallback?.trim();
+        if (greeting) p1Parsed.voice = greeting;
       } catch (e) {
         console.warn('set_personality direct-path enrichment failed (action ships unenriched):', e);
       }
@@ -1115,7 +1127,10 @@ async function orchestrate(deps: OrchestrationDeps, io: OrchestratorIO, voiceCtx
     // this is what lets set_personality apply natively on kiosk AND full mode). Deterministic
     // post-processing, never model-echoed; additive params, so old clients simply ignore them.
     // (Shared with the direct pass-1 action path above — enrichSetPersonalityAction.)
-    enrichSetPersonalityAction(pTurn.action, choices);
+    const enrichedRow = enrichSetPersonalityAction(pTurn.action, choices);
+    // In-character greeting replaces the switch narration (see the direct-path note above).
+    const greeting = enrichedRow?.greeting_fallback?.trim();
+    if (greeting) pTurn.voice = greeting;
     return pTurn;
   }
 

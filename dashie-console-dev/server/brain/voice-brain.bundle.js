@@ -4,7 +4,7 @@
    The voice-conversation brain core, bundled for the Node add-on (on-prem L3).
    ONE core, TWO runtimes: the cloud Deno edge fn runs the TS source directly;
    this CJS bundle is the add-on's copy of the SAME source. Never hand-edit.
-   Source git SHA: ef6f7f8d21b6c014dc94205f31c19c19b527f2d1
+   Source git SHA: a2e3dbf8e14b74784ba10247993389a8de46133e
    Regenerate:  node scripts/build-node-brain.mjs && ./sync-brain-bundle.sh
    Contract:    supabase/functions/voice-conversation/README.md + build plan §13.16
    ============================================================ */
@@ -2916,7 +2916,15 @@ async function listAvailablePersonalities(supabase) {
   }).map((r) => ({
     key: String(r.key),
     name: String(r.name),
-    description: r.description ?? null
+    description: r.description ?? null,
+    // Voice fields MUST survive this map — set_personality enrichment reads them off the
+    // catalog row. 2026-07-19 field bug: they were SELECTed above but dropped here, so
+    // every switch shipped unenriched (the optional interface fields hid it from the
+    // type-checker, and the orchestrator tests' fake catalogs included what the real
+    // impl stripped).
+    voice_mode: r.voice_mode ?? null,
+    voice: r.voice ?? null,
+    greeting_fallback: r.greeting_fallback ?? null
   }));
 }
 async function resolvePersonality(supabase, userId, endpointId, explicitId) {
@@ -4067,12 +4075,13 @@ function resolveWeatherLocation(query, zip) {
 }
 function enrichSetPersonalityAction(action, choices) {
   const params = action?.command === "set_personality" ? action.parameters : null;
-  if (!params || typeof params.key !== "string") return;
+  if (!params || typeof params.key !== "string") return null;
   const row = choices.find((c) => c.key === params.key);
-  if (!row) return;
+  if (!row) return null;
   if (row.voice_mode != null) params.voice_mode = row.voice_mode;
   if (row.voice != null) params.voice_key = row.voice;
   if (row.greeting_fallback != null) params.greeting_fallback = row.greeting_fallback;
+  return row;
 }
 var REQUEST_TYPE = "voice_conversation";
 var DEFAULT_VOICE_KEY = "ASHLEY";
@@ -4240,7 +4249,9 @@ async function orchestrate(deps, io, voiceCtx) {
     if (p1Parsed?.type === "action" && p1Parsed.action?.command === "set_personality") {
       try {
         const choices = io.listPersonalities ? await io.listPersonalities(supabase) : await listAvailablePersonalities(supabase);
-        enrichSetPersonalityAction(p1Parsed.action, choices);
+        const row = enrichSetPersonalityAction(p1Parsed.action, choices);
+        const greeting = row?.greeting_fallback?.trim();
+        if (greeting) p1Parsed.voice = greeting;
       } catch (e) {
         console.warn("set_personality direct-path enrichment failed (action ships unenriched):", e);
       }
@@ -4693,7 +4704,9 @@ async function orchestrate(deps, io, voiceCtx) {
       note: "Could not read the personality list. Say you had trouble checking just now and to try again in a moment. Do NOT name personalities from memory and do NOT switch."
     };
     const pTurn = await secondPass(io, deps, t0, "personalities", catalogData, [p1Stage, fetchStage], pass1, provider, modelId, context, sessionId, retain, route);
-    enrichSetPersonalityAction(pTurn.action, choices);
+    const enrichedRow = enrichSetPersonalityAction(pTurn.action, choices);
+    const greeting = enrichedRow?.greeting_fallback?.trim();
+    if (greeting) pTurn.voice = greeting;
     return pTurn;
   }
   if (p1Parsed.type === "multi") {
@@ -5002,4 +5015,4 @@ function toolMeta(parsed, route, caps) {
   templateCanAnswer,
   wantsGameDetail
 });
-module.exports.BRAIN_SOURCE_SHA = "ef6f7f8d21b6c014dc94205f31c19c19b527f2d1";
+module.exports.BRAIN_SOURCE_SHA = "a2e3dbf8e14b74784ba10247993389a8de46133e";
