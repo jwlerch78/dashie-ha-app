@@ -4,7 +4,7 @@
    The voice-conversation brain core, bundled for the Node add-on (on-prem L3).
    ONE core, TWO runtimes: the cloud Deno edge fn runs the TS source directly;
    this CJS bundle is the add-on's copy of the SAME source. Never hand-edit.
-   Source git SHA: dc8b8c034fd1cceb78d34449ebb3f6e5cf7cb8ce
+   Source git SHA: d6e1363a0ff40046173e76be88898c07baa25e17
    Regenerate:  node scripts/build-node-brain.mjs && ./sync-brain-bundle.sh
    Contract:    supabase/functions/voice-conversation/README.md + build plan §13.16
    ============================================================ */
@@ -1851,6 +1851,13 @@ function injectMultiBlock(prompt) {
 ${RESPONSE_FORMAT_MULTI}
 ${MULTI_ANCHOR_CRITICAL}`);
 }
+function dropUnofferedExamples(text, context) {
+  const offered = new Set(offeredToolNames(context));
+  return text.split("\n").filter((line) => {
+    const m = line.match(/tool:\s*"([a-z_]+)"/);
+    return !m || offered.has(m[1]);
+  }).join("\n");
+}
 function toolsListFor(context) {
   const drop = [];
   if (context.webSearchEnabled === false) drop.push("- web_search:");
@@ -2026,9 +2033,9 @@ function buildPrompt({ userRequest, inquiryType, retrievedData, context = {} }) 
       const inquiryValues = buildInquiryValues(inquiryType, retrievedData, baseValues);
       prompt += "\n\n" + fillTemplate(inquiryTemplate, inquiryValues);
     }
-    prompt += "\n\n" + fillTemplate(RESPONSE_FORMAT_FULL, baseValues);
+    prompt += "\n\n" + dropUnofferedExamples(fillTemplate(RESPONSE_FORMAT_FULL, baseValues), context);
   } else {
-    prompt += "\n\n" + fillTemplate(RESPONSE_FORMAT_INITIAL, baseValues);
+    prompt += "\n\n" + dropUnofferedExamples(fillTemplate(RESPONSE_FORMAT_INITIAL, baseValues), context);
     if (context.multiEnabled) {
       prompt = injectMultiBlock(prompt);
     }
@@ -5068,4 +5075,4 @@ function toolMeta(parsed, route, caps) {
   templateCanAnswer,
   wantsGameDetail
 });
-module.exports.BRAIN_SOURCE_SHA = "dc8b8c034fd1cceb78d34449ebb3f6e5cf7cb8ce";
+module.exports.BRAIN_SOURCE_SHA = "d6e1363a0ff40046173e76be88898c07baa25e17";
