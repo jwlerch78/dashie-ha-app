@@ -4,7 +4,7 @@
    The voice-conversation brain core, bundled for the Node add-on (on-prem L3).
    ONE core, TWO runtimes: the cloud Deno edge fn runs the TS source directly;
    this CJS bundle is the add-on's copy of the SAME source. Never hand-edit.
-   Source git SHA: d44192eca45fed7eb24c65a8f8e4bb6b1f2ae51a
+   Source git SHA: 5b377b735c17ec4e74317c5369b449c83fadd97f
    Regenerate:  node scripts/build-node-brain.mjs && ./sync-brain-bundle.sh
    Contract:    supabase/functions/voice-conversation/README.md + build plan §13.16
    ============================================================ */
@@ -104,6 +104,11 @@ Use this when you need family-specific data (calendar, weather, locations, chore
 Available tools:
 {{AVAILABLE_TOOLS_LIST}}
 
+The tool list above is CLOSED and DEVICE-SPECIFIC \u2014 it is everything THIS device can do. If the
+user asks for something no listed tool covers (their calendar, cameras, music, or anything else
+missing from the list), do NOT substitute a different tool \u2014 answer with a brief "response"
+saying you can't do that on this device. A wrong tool wastes the turn and confuses the user.
+
 ## 3. ACTION (change dashboard state)
 \`\`\`json
 {
@@ -190,6 +195,11 @@ Rules:
 
 Tools:
 {{AVAILABLE_TOOLS_LIST}}
+
+The tool list above is CLOSED and DEVICE-SPECIFIC \u2014 it is everything THIS device can do. If the
+user asks for something no listed tool covers (their calendar, cameras, music, or anything else
+missing from the list), do NOT substitute a different tool \u2014 answer with a brief "response"
+saying you can't do that on this device. A wrong tool wastes the turn and confuses the user.
 
 ## 3. ACTION (change dashboard or complete chores)
 \`\`\`json
@@ -5110,4 +5120,4 @@ function toolMeta(parsed, route, caps) {
   templateCanAnswer,
   wantsGameDetail
 });
-module.exports.BRAIN_SOURCE_SHA = "d44192eca45fed7eb24c65a8f8e4bb6b1f2ae51a";
+module.exports.BRAIN_SOURCE_SHA = "5b377b735c17ec4e74317c5369b449c83fadd97f";
