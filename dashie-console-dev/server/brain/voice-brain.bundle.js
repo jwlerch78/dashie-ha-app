@@ -4,7 +4,7 @@
    The voice-conversation brain core, bundled for the Node add-on (on-prem L3).
    ONE core, TWO runtimes: the cloud Deno edge fn runs the TS source directly;
    this CJS bundle is the add-on's copy of the SAME source. Never hand-edit.
-   Source git SHA: d6e1363a0ff40046173e76be88898c07baa25e17
+   Source git SHA: d44192eca45fed7eb24c65a8f8e4bb6b1f2ae51a
    Regenerate:  node scripts/build-node-brain.mjs && ./sync-brain-bundle.sh
    Contract:    supabase/functions/voice-conversation/README.md + build plan §13.16
    ============================================================ */
@@ -2212,6 +2212,16 @@ function parseContent(content) {
     } catch {
     }
     if (!parsed) {
+      const first = firstBalancedObject(cleaned);
+      if (first && first.length < cleaned.length) {
+        try {
+          parsed = JSON.parse(first);
+          console.warn(`[parse] MULTI-EMISSION: took first balanced object (${first.length} of ${cleaned.length} chars) \u2014 model emitted trailing content`);
+        } catch {
+        }
+      }
+    }
+    if (!parsed) {
       const repaired = repairTruncatedJson(cleaned);
       if (repaired) {
         try {
@@ -2278,6 +2288,31 @@ function sanitizeVoice(s) {
   );
   out = out.replace(/[ \t]{2,}/g, " ").replace(/[ \t]+\n/g, "\n").replace(/\n{3,}/g, "\n\n").trim();
   return out;
+}
+function firstBalancedObject(s) {
+  if (!s || s[0] !== "{") return null;
+  let inString = false;
+  let escape = false;
+  let depth = 0;
+  for (let i = 0; i < s.length; i++) {
+    const ch = s[i];
+    if (escape) {
+      escape = false;
+      continue;
+    }
+    if (inString) {
+      if (ch === "\\") escape = true;
+      else if (ch === '"') inString = false;
+      continue;
+    }
+    if (ch === '"') inString = true;
+    else if (ch === "{") depth++;
+    else if (ch === "}") {
+      depth--;
+      if (depth === 0) return s.slice(0, i + 1);
+    }
+  }
+  return null;
 }
 function repairTruncatedJson(s) {
   if (!s || s[0] !== "{") return null;
@@ -5075,4 +5110,4 @@ function toolMeta(parsed, route, caps) {
   templateCanAnswer,
   wantsGameDetail
 });
-module.exports.BRAIN_SOURCE_SHA = "d6e1363a0ff40046173e76be88898c07baa25e17";
+module.exports.BRAIN_SOURCE_SHA = "d44192eca45fed7eb24c65a8f8e4bb6b1f2ae51a";
