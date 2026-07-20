@@ -4,7 +4,7 @@
    The voice-conversation brain core, bundled for the Node add-on (on-prem L3).
    ONE core, TWO runtimes: the cloud Deno edge fn runs the TS source directly;
    this CJS bundle is the add-on's copy of the SAME source. Never hand-edit.
-   Source git SHA: f8f53a90ac2ec6bb562a6424594682bfd3247d31
+   Source git SHA: dc8b8c034fd1cceb78d34449ebb3f6e5cf7cb8ce
    Regenerate:  node scripts/build-node-brain.mjs && ./sync-brain-bundle.sh
    Contract:    supabase/functions/voice-conversation/README.md + build plan §13.16
    ============================================================ */
@@ -4013,6 +4013,13 @@ async function dispatchMultiTurn(steps, deps) {
 }
 
 // supabase/functions/voice-conversation/orchestrator.ts
+var KNOWN_DEVICE_TOOL_DECLINES = {
+  calendar_events: "I can't check the calendar on this device.",
+  calendar_write: "I can't make calendar changes on this device.",
+  music: "I can't control music on this device.",
+  video_feeds: "I can't show cameras on this device.",
+  open_app: "I can't open apps on this device."
+};
 var GAME_DETAIL_RE = /\b(summar(?:y|ize|ise)|recap|rundown|breakdown|break it down|highlights?|walk me through|go deeper|analy(?:sis|ze|se)|how did .{0,24}?(?:play|do|look)|what happened|tell me more|tell me about|more about|(?:any |more )?details?|who scored|who (?:got|had) (?:the |a )?goals?|top scorers?|hat[- ]?trick)\b/i;
 function wantsGameDetail(text) {
   return !!text && GAME_DETAIL_RE.test(text);
@@ -4245,11 +4252,29 @@ async function orchestrate(deps, io, voiceCtx) {
     deps.onStage?.({ stage: "fetching", tool: p1Parsed.tool, status: statusForTool(p1Parsed.tool, p1Parsed.query), elapsed_ms: Date.now() - t0 });
   }
   if (!p1Parsed && /^\s*(```[a-z]*\s*)?[{[]/i.test(pass1.raw.content || "")) {
+    const blobTool = (pass1.raw.content || "").match(/"tool"\s*:\s*"([a-z_]+)"/)?.[1];
+    if (blobTool && !caps.tools.includes(blobTool) && KNOWN_DEVICE_TOOL_DECLINES[blobTool]) {
+      console.warn(`[orchestrator] DROP\u2192decline: pass-1 emitted unparseable JSON for unoffered tool '${blobTool}' \u2014 speaking the device-capability decline`);
+      const declineVoice = KNOWN_DEVICE_TOOL_DECLINES[blobTool];
+      const decline = { type: "response", voice: declineVoice, text: null, action: null };
+      await logPass(
+        io,
+        deps,
+        REQUEST_TYPE,
+        req.endpoint_id,
+        sessionId,
+        p1Prompt,
+        pass1,
+        retainFields(retain.serverPersist, retain.userText, declineVoice, null),
+        turnMeta
+      );
+      return finalize({ t0, parsed: decline, raw: pass1.raw, stages: [p1Stage], usage: pass1.raw.usage, latency: pass1.latency_ms, retain, sessionId, route });
+    }
     const clarifyVoice = "Sorry, I didn't quite catch that \u2014 could you say it again?";
     const clarify = { type: "response", voice: clarifyVoice, text: null, action: null };
     await logPass(
       io,
-      token,
+      deps,
       REQUEST_TYPE,
       req.endpoint_id,
       sessionId,
@@ -4292,7 +4317,7 @@ async function orchestrate(deps, io, voiceCtx) {
     } : turnMeta;
     await logPass(
       io,
-      token,
+      deps,
       REQUEST_TYPE,
       req.endpoint_id,
       sessionId,
@@ -4318,7 +4343,7 @@ async function orchestrate(deps, io, voiceCtx) {
     });
   }
   if (p1Parsed.type === "info_request" && p1Parsed.tool === "web_search") {
-    await logPass(io, token, REQUEST_TYPE, req.endpoint_id, sessionId, p1Prompt, pass1);
+    await logPass(io, deps, REQUEST_TYPE, req.endpoint_id, sessionId, p1Prompt, pass1);
     const queryStr = typeof p1Parsed.query === "string" ? p1Parsed.query : p1Parsed.query?.query || p1Parsed.query?.q || req.text;
     if (!webSearchAllowed) {
       const NO_SEARCH_SENTINEL = {
@@ -4338,7 +4363,7 @@ async function orchestrate(deps, io, voiceCtx) {
     const tFetch = Date.now();
     let search;
     try {
-      search = await io.runWebSearch(queryStr);
+      search = await io.runWebSearch(queryStr, token);
     } catch (e) {
       return errorTurn(
         t0,
@@ -4361,15 +4386,15 @@ async function orchestrate(deps, io, voiceCtx) {
   if (p1Parsed.type === "info_request" && p1Parsed.tool === "home_assistant") {
     const entities = req.provided_context?.ha_entities;
     if (!entities) {
-      await logPass(io, token, REQUEST_TYPE, req.endpoint_id, sessionId, p1Prompt, pass1);
+      await logPass(io, deps, REQUEST_TYPE, req.endpoint_id, sessionId, p1Prompt, pass1);
       return finalize({ t0, parsed: p1Parsed, raw: pass1.raw, stages: [p1Stage], usage: pass1.raw.usage, latency: pass1.latency_ms, unsupported_tool: "home_assistant", sessionId, route });
     }
-    await logPass(io, token, REQUEST_TYPE, req.endpoint_id, sessionId, p1Prompt, pass1);
+    await logPass(io, deps, REQUEST_TYPE, req.endpoint_id, sessionId, p1Prompt, pass1);
     const commandHint = p1Parsed.query?.command_hint || req.text;
     return await secondPass(io, deps, t0, "home-assistant", { entities, command_hint: commandHint }, [p1Stage], pass1, provider, modelId, context, sessionId, retain, route);
   }
   if (p1Parsed.type === "info_request" && p1Parsed.tool === "sports") {
-    await logPass(io, token, REQUEST_TYPE, req.endpoint_id, sessionId, p1Prompt, pass1);
+    await logPass(io, deps, REQUEST_TYPE, req.endpoint_id, sessionId, p1Prompt, pass1);
     const sportsQuery = typeof p1Parsed.query === "object" && p1Parsed.query ? p1Parsed.query : { team: req.text };
     if (req.timezone && sportsQuery.tz == null) sportsQuery.tz = req.timezone;
     {
@@ -4421,7 +4446,7 @@ async function orchestrate(deps, io, voiceCtx) {
         };
         await logPass(
           io,
-          token,
+          deps,
           REQUEST_TYPE,
           req.endpoint_id,
           sessionId,
@@ -4453,7 +4478,7 @@ async function orchestrate(deps, io, voiceCtx) {
     };
     await logPass(
       io,
-      token,
+      deps,
       REQUEST_TYPE,
       req.endpoint_id,
       sessionId,
@@ -4476,7 +4501,7 @@ async function orchestrate(deps, io, voiceCtx) {
     });
   }
   if (p1Parsed.type === "info_request" && p1Parsed.tool === "calendar_events") {
-    await logPass(io, token, REQUEST_TYPE, req.endpoint_id, sessionId, p1Prompt, pass1, deviceFulfilledRetain(), turnMeta);
+    await logPass(io, deps, REQUEST_TYPE, req.endpoint_id, sessionId, p1Prompt, pass1, deviceFulfilledRetain(), turnMeta);
     return finalize({
       t0,
       parsed: p1Parsed,
@@ -4495,7 +4520,7 @@ async function orchestrate(deps, io, voiceCtx) {
       const decline = { type: "response", voice: declineVoice, text: null, action: null };
       await logPass(
         io,
-        token,
+        deps,
         REQUEST_TYPE,
         req.endpoint_id,
         sessionId,
@@ -4522,7 +4547,7 @@ async function orchestrate(deps, io, voiceCtx) {
       const decline = { type: "response", voice: declineVoice, text: null, action: null };
       await logPass(
         io,
-        token,
+        deps,
         REQUEST_TYPE,
         req.endpoint_id,
         sessionId,
@@ -4543,7 +4568,7 @@ async function orchestrate(deps, io, voiceCtx) {
         route
       });
     }
-    await logPass(io, token, REQUEST_TYPE, req.endpoint_id, sessionId, p1Prompt, pass1, deviceFulfilledRetain(), turnMeta);
+    await logPass(io, deps, REQUEST_TYPE, req.endpoint_id, sessionId, p1Prompt, pass1, deviceFulfilledRetain(), turnMeta);
     return finalize({
       t0,
       parsed: p1Parsed,
@@ -4557,7 +4582,7 @@ async function orchestrate(deps, io, voiceCtx) {
     });
   }
   if (p1Parsed.type === "info_request" && p1Parsed.tool === "music") {
-    await logPass(io, token, REQUEST_TYPE, req.endpoint_id, sessionId, p1Prompt, pass1, deviceFulfilledRetain(), turnMeta);
+    await logPass(io, deps, REQUEST_TYPE, req.endpoint_id, sessionId, p1Prompt, pass1, deviceFulfilledRetain(), turnMeta);
     return finalize({
       t0,
       parsed: p1Parsed,
@@ -4571,7 +4596,7 @@ async function orchestrate(deps, io, voiceCtx) {
     });
   }
   if (p1Parsed.type === "info_request" && p1Parsed.tool === "video_feeds") {
-    await logPass(io, token, REQUEST_TYPE, req.endpoint_id, sessionId, p1Prompt, pass1, deviceFulfilledRetain(), turnMeta);
+    await logPass(io, deps, REQUEST_TYPE, req.endpoint_id, sessionId, p1Prompt, pass1, deviceFulfilledRetain(), turnMeta);
     return finalize({
       t0,
       parsed: p1Parsed,
@@ -4585,7 +4610,7 @@ async function orchestrate(deps, io, voiceCtx) {
     });
   }
   if (p1Parsed.type === "info_request" && p1Parsed.tool === "schedule_action") {
-    await logPass(io, token, REQUEST_TYPE, req.endpoint_id, sessionId, p1Prompt, pass1, deviceFulfilledRetain(), turnMeta);
+    await logPass(io, deps, REQUEST_TYPE, req.endpoint_id, sessionId, p1Prompt, pass1, deviceFulfilledRetain(), turnMeta);
     return finalize({
       t0,
       parsed: p1Parsed,
@@ -4621,7 +4646,7 @@ async function orchestrate(deps, io, voiceCtx) {
       const synth = { type: "response", voice: synthVoice, text: null, action: null };
       await logPass(
         io,
-        token,
+        deps,
         REQUEST_TYPE,
         req.endpoint_id,
         sessionId,
@@ -4642,7 +4667,7 @@ async function orchestrate(deps, io, voiceCtx) {
         route
       });
     }
-    await logPass(io, token, REQUEST_TYPE, req.endpoint_id, sessionId, p1Prompt, pass1, deviceFulfilledRetain(), turnMeta);
+    await logPass(io, deps, REQUEST_TYPE, req.endpoint_id, sessionId, p1Prompt, pass1, deviceFulfilledRetain(), turnMeta);
     return finalize({
       t0,
       parsed: p1Parsed,
@@ -4667,7 +4692,7 @@ async function orchestrate(deps, io, voiceCtx) {
     };
     await logPass(
       io,
-      token,
+      deps,
       REQUEST_TYPE,
       req.endpoint_id,
       sessionId,
@@ -4689,7 +4714,7 @@ async function orchestrate(deps, io, voiceCtx) {
     });
   }
   if (p1Parsed.type === "info_request" && p1Parsed.tool === "dashie_help") {
-    await logPass(io, token, REQUEST_TYPE, req.endpoint_id, sessionId, p1Prompt, pass1);
+    await logPass(io, deps, REQUEST_TYPE, req.endpoint_id, sessionId, p1Prompt, pass1);
     const hq = typeof p1Parsed.query === "object" && p1Parsed.query ? String(p1Parsed.query.question ?? req.text) : typeof p1Parsed.query === "string" && p1Parsed.query ? p1Parsed.query : req.text;
     const tFetch = Date.now();
     const help = await dashieHelpTool.execute({ question: hq }, { timezone: req.timezone });
@@ -4707,7 +4732,7 @@ async function orchestrate(deps, io, voiceCtx) {
     return await secondPass(io, deps, t0, "dashie-help", helpData, [p1Stage, fetchStage], pass1, provider, modelId, context, sessionId, retain, route);
   }
   if (p1Parsed.type === "info_request" && p1Parsed.tool === "personalities") {
-    await logPass(io, token, REQUEST_TYPE, req.endpoint_id, sessionId, p1Prompt, pass1);
+    await logPass(io, deps, REQUEST_TYPE, req.endpoint_id, sessionId, p1Prompt, pass1);
     const tFetch = Date.now();
     const choices = io.listPersonalities ? await io.listPersonalities(supabase) : await listAvailablePersonalities(supabase);
     const fetchStage = {
@@ -4729,7 +4754,7 @@ async function orchestrate(deps, io, voiceCtx) {
   if (p1Parsed.type === "multi") {
     const stepsIn = p1Parsed.steps ?? [];
     if (stepsIn.length < 2) {
-      await logPass(io, token, REQUEST_TYPE, req.endpoint_id, sessionId, p1Prompt, pass1);
+      await logPass(io, deps, REQUEST_TYPE, req.endpoint_id, sessionId, p1Prompt, pass1);
       const emptyMulti = { type: "response", voice: "", text: null, action: null };
       return finalize({ t0, parsed: emptyMulti, raw: pass1.raw, stages: [p1Stage], usage: pass1.raw.usage, latency: pass1.latency_ms, unsupported_tool: "multi", sessionId, route: "multi" });
     }
@@ -4743,7 +4768,7 @@ async function orchestrate(deps, io, voiceCtx) {
     });
     await logPass(
       io,
-      token,
+      deps,
       REQUEST_TYPE,
       req.endpoint_id,
       sessionId,
@@ -4767,7 +4792,7 @@ async function orchestrate(deps, io, voiceCtx) {
     });
   }
   console.warn(`[orchestrator] DROP: pass-1 routed to unsupported tool '${p1Parsed.tool}' \u2014 falling back to caller's native path`);
-  await logPass(io, token, REQUEST_TYPE, req.endpoint_id, sessionId, p1Prompt, pass1);
+  await logPass(io, deps, REQUEST_TYPE, req.endpoint_id, sessionId, p1Prompt, pass1);
   return finalize({ t0, parsed: p1Parsed, raw: pass1.raw, stages: [p1Stage], usage: pass1.raw.usage, latency: pass1.latency_ms, unsupported_tool: p1Parsed.tool, sessionId, route });
 }
 function routeOf(parsed) {
@@ -4799,7 +4824,7 @@ async function secondPass(io, deps, t0, inquiryType, retrievedData, priorStages,
   }
   await logPass(
     io,
-    deps.token,
+    deps,
     REQUEST_TYPE,
     deps.req.endpoint_id,
     sessionId,
@@ -4988,7 +5013,7 @@ function formatHistory(history) {
 ${lines.join("\n")}
 `;
 }
-async function logPass(io, token, requestType, endpointId, sessionId, prompt, pass, retainText = {}, meta = {}) {
+async function logPass(io, deps, requestType, endpointId, sessionId, prompt, pass, retainText = {}, meta = {}) {
   const usage = pass.raw?.usage || {};
   const trace = meta.tool_trace;
   const logMeta = trace && trace.args != null ? { ...meta, tool_trace: { ...trace, args: await redactToolArgs(trace.args) } } : meta;
@@ -4998,7 +5023,7 @@ async function logPass(io, token, requestType, endpointId, sessionId, prompt, pa
   const route = logMeta.tool_trace?.route ?? meta.tool_trace?.route;
   const isAnswerRow = isTemplate || parsed?.type === "response" || parsed?.type === "action" || !!route;
   const missClass = isAnswerRow ? classifyMiss(route, parsed?.voice ?? (isTemplate ? pass.raw?.content ?? null : null)) : { miss: null, reason: null };
-  await io.logInteraction(token, {
+  await io.logInteraction(deps.token, {
     parsed_ok: parsedOk,
     miss: missClass.miss,
     miss_reason: missClass.reason,
@@ -5017,6 +5042,17 @@ async function logPass(io, token, requestType, endpointId, sessionId, prompt, pa
     ...retainText,
     ...logMeta
   });
+  const inTok = usage.input_tokens || 0;
+  const outTok = usage.output_tokens || 0;
+  if (io.debitAiUsage && (inTok || outTok)) {
+    await io.debitAiUsage(deps.supabase, deps.userId, {
+      model: pass.raw?.model || "unknown",
+      inputTokens: inTok,
+      outputTokens: outTok,
+      requestType,
+      sessionId
+    });
+  }
 }
 function toolMeta(parsed, route, caps) {
   const tool = (parsed?.type === "info_request" ? parsed.tool : null) ?? null;
@@ -5032,4 +5068,4 @@ function toolMeta(parsed, route, caps) {
   templateCanAnswer,
   wantsGameDetail
 });
-module.exports.BRAIN_SOURCE_SHA = "f8f53a90ac2ec6bb562a6424594682bfd3247d31";
+module.exports.BRAIN_SOURCE_SHA = "dc8b8c034fd1cceb78d34449ebb3f6e5cf7cb8ce";
