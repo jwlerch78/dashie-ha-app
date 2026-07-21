@@ -4,7 +4,7 @@
    The voice-conversation brain core, bundled for the Node add-on (on-prem L3).
    ONE core, TWO runtimes: the cloud Deno edge fn runs the TS source directly;
    this CJS bundle is the add-on's copy of the SAME source. Never hand-edit.
-   Source git SHA: 5b377b735c17ec4e74317c5369b449c83fadd97f
+   Source git SHA: 9737ccdd1e02d55b5f85287dc946d42a59d98459
    Regenerate:  node scripts/build-node-brain.mjs && ./sync-brain-bundle.sh
    Contract:    supabase/functions/voice-conversation/README.md + build plan §13.16
    ============================================================ */
@@ -87,6 +87,10 @@ Rules:
   denial. Whenever the user asks to see someone or something \u2014 even alongside another question
   ("show me a picture of X and tell me what team he plays for") \u2014 set "image" AND caption it. A
   claim without the picture, or a picture with a denial, is the worst possible answer.
+- **Don't re-picture a subject that is already on screen.** If an earlier turn of THIS conversation
+  already showed a photo of the subject, set "image" to null on follow-ups about it ("how tall is
+  it?" after picturing the mountain) \u2014 every "image" runs a fresh search and stacks a duplicate
+  photo. Set it again only for a NEW subject, or when the user asks to see it again or see another.
 - Be CONCISE and family-friendly. The word limits above ("voice" max 20 words, "text" max 60 words) are HARD CAPS \u2014 never exceed them, and a persona/character style is NO excuse to run long. Leave "text" null whenever "voice" already answers.
 
 ## 2. INFO_REQUEST (need to fetch data)
@@ -175,6 +179,10 @@ Rules:
   denial. Whenever the user asks to see someone or something \u2014 even alongside another question
   ("show me a picture of X and tell me what team he plays for") \u2014 set "image" AND caption it. A
   claim without the picture, or a picture with a denial, is the worst possible answer.
+- **Don't re-picture a subject that is already on screen.** If an earlier turn of THIS conversation
+  already showed a photo of the subject, set "image" to null on follow-ups about it ("how tall is
+  it?" after picturing the mountain) \u2014 every "image" runs a fresh search and stacks a duplicate
+  photo. Set it again only for a NEW subject, or when the user asks to see it again or see another.
 - display_events: For calendar queries, include event indices (idx field from calendar data) to show as visual event cards. Use for 1-10 specific events that answer the question. 1-2 events show as large cards, 3+ events show as a compact list grouped by day. Example: "When is Charlie's next game?" \u2192 display_events: [0] to show the first matching event. Example: "What are Mary's games this month?" \u2192 display_events: [0, 1, 2, 3, 4, 5] to show multiple games in list format.
 - timing: For travel time queries ONLY. Include the exact departure and arrival times you calculate. These must match what you say in voice.
 - trip: For location event queries ONLY. Include the primary event that answers the question (arrival or departure). We'll display a map showing the journey.
@@ -1877,7 +1885,6 @@ function toolsListFor(context) {
     for (const tool of DEVICE_ONLY_TOOLS) {
       if (!context.clientTools.includes(tool)) drop.push(`- ${tool}:`);
     }
-    if (!context.clientTools.includes("calendar")) drop.push("- calendar_events:");
     if (!context.clientTools.includes("calendar_write")) drop.push("- calendar_write:");
   }
   if (drop.length === 0) return AVAILABLE_TOOLS_LIST;
@@ -4066,7 +4073,10 @@ async function dispatchMultiTurn(steps, deps) {
 
 // supabase/functions/voice-conversation/orchestrator.ts
 var KNOWN_DEVICE_TOOL_DECLINES = {
-  calendar_events: "I can't check the calendar on this device.",
+  // NB: calendar_events is intentionally NOT here — it's now offered to every caller and its
+  // decline is self-fulfilled in the calendar branch (a non-claiming kiosk routes to it and gets
+  // "…not set up on this device"). This map is the parse-fail backstop for tools that are DROPPED
+  // from the offering (caps.tools), where a blob naming a dropped tool needs a canned decline.
   calendar_write: "I can't make calendar changes on this device.",
   music: "I can't control music on this device.",
   video_feeds: "I can't show cameras on this device.",
@@ -4553,6 +4563,32 @@ async function orchestrate(deps, io, voiceCtx) {
     });
   }
   if (p1Parsed.type === "info_request" && p1Parsed.tool === "calendar_events") {
+    if (!callerFulfills(req, "calendar")) {
+      const declineVoice = "You don't have calendar access set up on this device yet.";
+      const decline = { type: "response", voice: declineVoice, text: null, action: null };
+      await logPass(
+        io,
+        deps,
+        REQUEST_TYPE,
+        req.endpoint_id,
+        sessionId,
+        p1Prompt,
+        pass1,
+        retainFields(retain.serverPersist, retain.userText, declineVoice, null),
+        turnMeta
+      );
+      return finalize({
+        t0,
+        parsed: decline,
+        raw: pass1.raw,
+        stages: [p1Stage],
+        usage: pass1.raw.usage,
+        latency: pass1.latency_ms,
+        retain,
+        sessionId,
+        route
+      });
+    }
     await logPass(io, deps, REQUEST_TYPE, req.endpoint_id, sessionId, p1Prompt, pass1, deviceFulfilledRetain(), turnMeta);
     return finalize({
       t0,
@@ -5120,4 +5156,4 @@ function toolMeta(parsed, route, caps) {
   templateCanAnswer,
   wantsGameDetail
 });
-module.exports.BRAIN_SOURCE_SHA = "5b377b735c17ec4e74317c5369b449c83fadd97f";
+module.exports.BRAIN_SOURCE_SHA = "9737ccdd1e02d55b5f85287dc946d42a59d98459";

@@ -22,6 +22,20 @@
 // here and provided at call time via OrchestratorIO. Deno wires them in default-io.ts; the Node
 // add-on wires its own. Keep it this way — see README "Dual-runtime sync contract" + §13.16.
 import { buildPrompt, offeredToolNames } from './prompt.ts';
+
+// Spoken decline per KNOWN tool a caller wasn't offered (see the clarify-path refinement in
+// runOrchestration). Only tools a device can legitimately lack belong here — server tools are
+// always offered. Deterministic English v1 (matches the clarify sentinel's precedent).
+const KNOWN_DEVICE_TOOL_DECLINES: Record<string, string> = {
+  // NB: calendar_events is intentionally NOT here — it's now offered to every caller and its
+  // decline is self-fulfilled in the calendar branch (a non-claiming kiosk routes to it and gets
+  // "…not set up on this device"). This map is the parse-fail backstop for tools that are DROPPED
+  // from the offering (caps.tools), where a blob naming a dropped tool needs a canned decline.
+  calendar_write: "I can't make calendar changes on this device.",
+  music: "I can't control music on this device.",
+  video_feeds: "I can't show cameras on this device.",
+  open_app: "I can't open apps on this device.",
+};
 import { redactToolArgs } from './redact-args.ts';
 import { parseContent, isLikelyNoise } from './parse.ts';
 import { isEndIntent, classifyMiss, NOISE_REPLY } from './dialog-policy.ts';
@@ -273,7 +287,10 @@ export interface OrchestratorIO {
   // `temperature`, when set, OVERRIDES that intent default (WS-F.0c bench knob — see the pass-1
   // call site). Both optional so a runtime that doesn't care (or an old mock) still satisfies the type.
   callGateway: (args: { provider: string; prompt: string; modelId: string; grounding?: boolean; kind?: 'decide' | 'narrate'; temperature?: number; thinkingBudget?: number }) => Promise<GatewayResult>;
-  runWebSearch: (query: string) => Promise<WebSearchResult>;
+  // `authToken` (the turn's user JWT) is forwarded to the billable web-search gateway as
+  // the caller identity — the gateway rejects bare-anon once enforcement is on. OPTIONAL so
+  // a runtime/mock that omits it still satisfies the type (falls back to anon in the impl).
+  runWebSearch: (query: string, authToken?: string) => Promise<WebSearchResult>;
   runSports: (query: Record<string, unknown>) => Promise<SportsResult>;
   // Self-fulfill weather (Open-Meteo + geocode) — ONLY the headless/anon path calls this
   // (a device fulfills weather locally from its dashboard source). OPTIONAL — absent IO
@@ -293,6 +310,11 @@ export interface OrchestratorIO {
   // back to the direct implementation, so the Node add-on shell and older tests are unaffected.
   listPersonalities?: (supabase: unknown) => Promise<PersonalityChoice[]>;
   logInteraction: (token: string, data: LogData) => Promise<void>;
+  // Debit AI token usage AT-SOURCE (audit #7) from the REAL API-returned counts, in-process,
+  // instead of trusting the client-forgeable log_ai_interaction round-trip. OPTIONAL: only the
+  // cloud IO binds it (default-io → debitBalance, gated by debit_at_source); the Node/on-prem
+  // shell omits it (BYOK never debits) and older mocks are unaffected → no debit there.
+  debitAiUsage?: (supabase: unknown, userId: string, args: { model: string; inputTokens: number; outputTokens: number; requestType: string; sessionId: string }) => Promise<void>;
   logWebSearch: (token: string, data: WebSearchLogData) => Promise<void>;
   logSports: (token: string, data: SportsLogData) => Promise<void>;
   getDefaultModel: (supabase: unknown) => Promise<string>;
@@ -647,9 +669,24 @@ async function orchestrate(deps: OrchestrationDeps, io: OrchestratorIO, voiceCtx
   // voicing a tool request makes no sense to the user. Plain-prose fallbacks (no leading brace)
   // still pass through to the direct-response branch below.
   if (!p1Parsed && /^\s*(```[a-z]*\s*)?[{[]/i.test(pass1.raw.content || '')) {
+    // Honest-decline refinement (2026-07-19, found on the kiosk): when the malformed blob
+    // NAMES a real tool the caller was deliberately NOT offered (e.g. a kiosk asking about
+    // the calendar — the model, taught the tool by the prompt's examples, contorts into
+    // broken JSON for it), "didn't catch that" gaslights the user — they said it perfectly.
+    // Say what's true instead: this device can't do that. Regex over the RAW so malformed/
+    // truncated JSON still matches; unknown tool names keep the clarify (genuine garble).
+    const blobTool = (pass1.raw.content || '').match(/"tool"\s*:\s*"([a-z_]+)"/)?.[1];
+    if (blobTool && !caps.tools.includes(blobTool) && KNOWN_DEVICE_TOOL_DECLINES[blobTool]) {
+      console.warn(`[orchestrator] DROP→decline: pass-1 emitted unparseable JSON for unoffered tool '${blobTool}' — speaking the device-capability decline`);
+      const declineVoice = KNOWN_DEVICE_TOOL_DECLINES[blobTool];
+      const decline = { type: 'response', voice: declineVoice, text: null, action: null } as ReturnType<typeof parseContent>;
+      await logPass(io, deps, REQUEST_TYPE, req.endpoint_id, sessionId, p1Prompt, pass1,
+        retainFields(retain.serverPersist, retain.userText, declineVoice, null), turnMeta);
+      return finalize({ t0, parsed: decline, raw: pass1.raw, stages: [p1Stage], usage: pass1.raw.usage, latency: pass1.latency_ms, retain, sessionId, route });
+    }
     const clarifyVoice = "Sorry, I didn't quite catch that — could you say it again?";
     const clarify = { type: 'response', voice: clarifyVoice, text: null, action: null } as ReturnType<typeof parseContent>;
-    await logPass(io, token, REQUEST_TYPE, req.endpoint_id, sessionId, p1Prompt, pass1,
+    await logPass(io, deps, REQUEST_TYPE, req.endpoint_id, sessionId, p1Prompt, pass1,
       retainFields(retain.serverPersist, retain.userText, clarifyVoice, null), turnMeta);
     return finalize({ t0, parsed: clarify, raw: pass1.raw, stages: [p1Stage], usage: pass1.raw.usage, latency: pass1.latency_ms, retain, sessionId, route });
   }
@@ -716,7 +753,7 @@ async function orchestrate(deps: OrchestrationDeps, io: OrchestratorIO, voiceCtx
           ? { tool_used: 'calendar_context', response_type: p1Parsed?.type ?? null,
               tool_trace: { route: 'calendar', tool: 'calendar_context', args: { time_range: providedCalendar.time_range ?? null }, caps } }
           : turnMeta;
-    await logPass(io, token, REQUEST_TYPE, req.endpoint_id, sessionId, p1Prompt, pass1,
+    await logPass(io, deps, REQUEST_TYPE, req.endpoint_id, sessionId, p1Prompt, pass1,
       retainFields(retain.serverPersist, retain.userText, responseTextOf(p1Parsed, pass1.raw), p1Parsed?.text ?? null), logMeta);
     return finalize({
       t0, parsed: p1Parsed, raw: pass1.raw, stages: [p1Stage], usage: pass1.raw.usage,
@@ -732,7 +769,7 @@ async function orchestrate(deps: OrchestrationDeps, io: OrchestratorIO, voiceCtx
   // ── info_request → web_search (self-fulfilled) ────────────────────────────
   if (p1Parsed.type === 'info_request' && p1Parsed.tool === 'web_search') {
     // Non-terminal pass: token/cost logged, but no transcript text (pass2 is terminal).
-    await logPass(io, token, REQUEST_TYPE, req.endpoint_id, sessionId, p1Prompt, pass1);
+    await logPass(io, deps, REQUEST_TYPE, req.endpoint_id, sessionId, p1Prompt, pass1);
     const queryStr = typeof p1Parsed.query === 'string'
       ? p1Parsed.query
       : ((p1Parsed.query as Record<string, string>)?.query || (p1Parsed.query as Record<string, string>)?.q || req.text);
@@ -769,7 +806,7 @@ async function orchestrate(deps: OrchestrationDeps, io: OrchestratorIO, voiceCtx
     const tFetch = Date.now();
     let search: WebSearchResult;
     try {
-      search = await io.runWebSearch(queryStr);
+      search = await io.runWebSearch(queryStr, token);
     } catch (e) {
       return errorTurn(t0, { error: `Web search failed: ${(e as Error).message}`, latency_ms: pass1.latency_ms },
         [p1Stage, { name: 'fetch_search', latency_ms: Date.now() - tFetch, error: (e as Error).message }]);
@@ -795,18 +832,18 @@ async function orchestrate(deps: OrchestrationDeps, io: OrchestratorIO, voiceCtx
     if (!entities) {
       // Brain can't fetch HA entities; caller didn't supply them. Surface as unsupported
       // so the caller can fall back to its native HA path. Not a Dashie spoken turn → no transcript.
-      await logPass(io, token, REQUEST_TYPE, req.endpoint_id, sessionId, p1Prompt, pass1);
+      await logPass(io, deps, REQUEST_TYPE, req.endpoint_id, sessionId, p1Prompt, pass1);
       return finalize({ t0, parsed: p1Parsed, raw: pass1.raw, stages: [p1Stage], usage: pass1.raw.usage, latency: pass1.latency_ms, unsupported_tool: 'home_assistant', sessionId, route });
     }
     // Non-terminal pass: no transcript text (pass2 is terminal).
-    await logPass(io, token, REQUEST_TYPE, req.endpoint_id, sessionId, p1Prompt, pass1);
+    await logPass(io, deps, REQUEST_TYPE, req.endpoint_id, sessionId, p1Prompt, pass1);
     const commandHint = (p1Parsed.query as Record<string, string>)?.command_hint || req.text;
     return await secondPass(io, deps, t0, 'home-assistant', { entities, command_hint: commandHint }, [p1Stage], pass1, provider, modelId, context, sessionId, retain, route);
   }
 
   // ── info_request → sports (self-fulfilled via sports-gateway) ─────────────
   if (p1Parsed.type === 'info_request' && p1Parsed.tool === 'sports') {
-    await logPass(io, token, REQUEST_TYPE, req.endpoint_id, sessionId, p1Prompt, pass1);
+    await logPass(io, deps, REQUEST_TYPE, req.endpoint_id, sessionId, p1Prompt, pass1);
     const sportsQuery = (typeof p1Parsed.query === 'object' && p1Parsed.query) ? p1Parsed.query as Record<string, unknown> : { team: req.text };
     // The user's zone rides along so the gateway anchors "today" on the USER's calendar
     // day — the server is UTC, where 8 PM Eastern is already tomorrow.
@@ -895,7 +932,7 @@ async function orchestrate(deps: OrchestrationDeps, io: OrchestratorIO, voiceCtx
           ok: true, latency_ms: 0,
           raw: { content: slate.voice, usage: { input_tokens: 0, output_tokens: 0, total_tokens: 0 }, model: 'template', provider: 'template' },
         };
-        await logPass(io, token, REQUEST_TYPE, req.endpoint_id, sessionId, '(sports slate template)', slatePass,
+        await logPass(io, deps, REQUEST_TYPE, req.endpoint_id, sessionId, '(sports slate template)', slatePass,
           retainFields(retain.serverPersist, retain.userText, slate.voice, null), turnMeta);
         return finalize({
           t0, parsed: parsedSlate, raw: pass1.raw!, stages: [p1Stage, fetchStage],
@@ -913,7 +950,7 @@ async function orchestrate(deps: OrchestrationDeps, io: OrchestratorIO, voiceCtx
       ok: true, latency_ms: 0,
       raw: { content: synth.voice, usage: { input_tokens: 0, output_tokens: 0, total_tokens: 0 }, model: 'template', provider: 'template' },
     };
-    await logPass(io, token, REQUEST_TYPE, req.endpoint_id, sessionId, '(sports template)', templatePass,
+    await logPass(io, deps, REQUEST_TYPE, req.endpoint_id, sessionId, '(sports template)', templatePass,
       retainFields(retain.serverPersist, retain.userText, synth.voice, synth.text), turnMeta);
     return finalize({
       t0, parsed, raw: pass1.raw!, stages: [p1Stage, fetchStage],
@@ -930,9 +967,27 @@ async function orchestrate(deps: OrchestrationDeps, io: OrchestratorIO, voiceCtx
   // calendar tool + renders the card — no pass-2, no AIService fallback.
   // Build plan 20260623_VOICE_TIER1_STRUCTURED_TOOLS.md §3.
   if (p1Parsed.type === 'info_request' && p1Parsed.tool === 'calendar_events') {
+    // A caller that doesn't fulfill 'calendar' (kiosk — its JS-lane executor 404s) is now OFFERED
+    // the tool anyway (prompt.ts) and routes here reliably; the brain SELF-FULFILLS a graceful
+    // decline instead of handing back a client_tool the device would drop. This replaces the
+    // 2026-07-19 offering DROP, which produced tool-substitution rather than a decline (0/2 models
+    // declined on their own — bench 2026-07-20). Same shape as calendar_write's decline below.
+    // It's a spoken `response` turn the brain owns — no client_tool — so there's no old-APK
+    // raw-JSON-leak risk (the concern the honest-handshake guarded), and "not configured" is a
+    // truthful calendar STATE, not a hidden capability drop.
+    if (!callerFulfills(req, 'calendar')) {
+      const declineVoice = "You don't have calendar access set up on this device yet.";
+      const decline = { type: 'response', voice: declineVoice, text: null, action: null } as ReturnType<typeof parseContent>;
+      await logPass(io, deps, REQUEST_TYPE, req.endpoint_id, sessionId, p1Prompt, pass1,
+        retainFields(retain.serverPersist, retain.userText, declineVoice, null), turnMeta);
+      return finalize({
+        t0, parsed: decline, raw: pass1.raw, stages: [p1Stage], usage: pass1.raw.usage,
+        latency: pass1.latency_ms, retain, sessionId, route,
+      });
+    }
     // turnMeta so the device-fulfilled turn still carries route/tool/args(redacted)/caps —
     // the "calendar with time_range=next_week vs next_weekend" diagnostic the trace exists for.
-    await logPass(io, token, REQUEST_TYPE, req.endpoint_id, sessionId, p1Prompt, pass1, deviceFulfilledRetain(), turnMeta);
+    await logPass(io, deps, REQUEST_TYPE, req.endpoint_id, sessionId, p1Prompt, pass1, deviceFulfilledRetain(), turnMeta);
     return finalize({
       t0, parsed: p1Parsed, raw: pass1.raw, stages: [p1Stage], usage: pass1.raw.usage,
       latency: pass1.latency_ms, client_tool: { tool: 'calendar', query: p1Parsed.query }, sessionId, route,
@@ -954,7 +1009,7 @@ async function orchestrate(deps: OrchestrationDeps, io: OrchestratorIO, voiceCtx
     if (!voiceCalendarWrites) {
       const declineVoice = "Making calendar changes by voice is turned off. You can turn it on in Calendar settings.";
       const decline = { type: 'response', voice: declineVoice, text: null, action: null } as ReturnType<typeof parseContent>;
-      await logPass(io, token, REQUEST_TYPE, req.endpoint_id, sessionId, p1Prompt, pass1,
+      await logPass(io, deps, REQUEST_TYPE, req.endpoint_id, sessionId, p1Prompt, pass1,
         retainFields(retain.serverPersist, retain.userText, declineVoice, null), turnMeta);
       return finalize({
         t0, parsed: decline, raw: pass1.raw, stages: [p1Stage], usage: pass1.raw.usage,
@@ -965,14 +1020,14 @@ async function orchestrate(deps: OrchestrationDeps, io: OrchestratorIO, voiceCtx
     if (!Array.isArray(caps) || !caps.includes('calendar_write')) {
       const declineVoice = "I can read the calendar here, but I can't make calendar changes from this device yet.";
       const decline = { type: 'response', voice: declineVoice, text: null, action: null } as ReturnType<typeof parseContent>;
-      await logPass(io, token, REQUEST_TYPE, req.endpoint_id, sessionId, p1Prompt, pass1,
+      await logPass(io, deps, REQUEST_TYPE, req.endpoint_id, sessionId, p1Prompt, pass1,
         retainFields(retain.serverPersist, retain.userText, declineVoice, null), turnMeta);
       return finalize({
         t0, parsed: decline, raw: pass1.raw, stages: [p1Stage], usage: pass1.raw.usage,
         latency: pass1.latency_ms, retain, sessionId, route,
       });
     }
-    await logPass(io, token, REQUEST_TYPE, req.endpoint_id, sessionId, p1Prompt, pass1, deviceFulfilledRetain(), turnMeta);
+    await logPass(io, deps, REQUEST_TYPE, req.endpoint_id, sessionId, p1Prompt, pass1, deviceFulfilledRetain(), turnMeta);
     return finalize({
       t0, parsed: p1Parsed, raw: pass1.raw, stages: [p1Stage], usage: pass1.raw.usage,
       latency: pass1.latency_ms, client_tool: { tool: 'calendar_write', query: p1Parsed.query }, sessionId, route,
@@ -985,7 +1040,7 @@ async function orchestrate(deps: OrchestrationDeps, io: OrchestratorIO, voiceCtx
   // the query, the device fulfills + speaks deterministically. No pass-2.
   // Design: 20260711_AI_MUSIC_TOOL_DESIGN.md §3.
   if (p1Parsed.type === 'info_request' && p1Parsed.tool === 'music') {
-    await logPass(io, token, REQUEST_TYPE, req.endpoint_id, sessionId, p1Prompt, pass1, deviceFulfilledRetain(), turnMeta);
+    await logPass(io, deps, REQUEST_TYPE, req.endpoint_id, sessionId, p1Prompt, pass1, deviceFulfilledRetain(), turnMeta);
     return finalize({
       t0, parsed: p1Parsed, raw: pass1.raw, stages: [p1Stage], usage: pass1.raw.usage,
       latency: pass1.latency_ms, client_tool: { tool: 'music', query: p1Parsed.query }, sessionId, route,
@@ -1005,7 +1060,7 @@ async function orchestrate(deps: OrchestrationDeps, io: OrchestratorIO, voiceCtx
   // Capability-gated upstream: the tool isn't in the prompt at all unless the caller declared
   // 'video_feeds', so a device with no cameras can't route here.
   if (p1Parsed.type === 'info_request' && p1Parsed.tool === 'video_feeds') {
-    await logPass(io, token, REQUEST_TYPE, req.endpoint_id, sessionId, p1Prompt, pass1, deviceFulfilledRetain(), turnMeta);
+    await logPass(io, deps, REQUEST_TYPE, req.endpoint_id, sessionId, p1Prompt, pass1, deviceFulfilledRetain(), turnMeta);
     return finalize({
       t0, parsed: p1Parsed, raw: pass1.raw, stages: [p1Stage], usage: pass1.raw.usage,
       latency: pass1.latency_ms, client_tool: { tool: 'video_feeds', query: p1Parsed.query }, sessionId, route,
@@ -1019,7 +1074,7 @@ async function orchestrate(deps: OrchestrationDeps, io: OrchestratorIO, voiceCtx
   // prompt, label}; ScheduleActionDirective.kt creates the action and speaks
   // the ack. Plan 20260710_VOICE_ID_CONDITION_ALERTS_PLAN.md WS5-a.
   if (p1Parsed.type === 'info_request' && p1Parsed.tool === 'schedule_action') {
-    await logPass(io, token, REQUEST_TYPE, req.endpoint_id, sessionId, p1Prompt, pass1, deviceFulfilledRetain(), turnMeta);
+    await logPass(io, deps, REQUEST_TYPE, req.endpoint_id, sessionId, p1Prompt, pass1, deviceFulfilledRetain(), turnMeta);
     return finalize({
       t0, parsed: p1Parsed, raw: pass1.raw, stages: [p1Stage], usage: pass1.raw.usage,
       latency: pass1.latency_ms, client_tool: { tool: 'schedule_action', query: p1Parsed.query }, sessionId, route,
@@ -1059,7 +1114,7 @@ async function orchestrate(deps: OrchestrationDeps, io: OrchestratorIO, voiceCtx
         }
       }
       const synth = { type: 'response', voice: synthVoice, text: null, action: null } as ReturnType<typeof parseContent>;
-      await logPass(io, token, REQUEST_TYPE, req.endpoint_id, sessionId, p1Prompt, pass1,
+      await logPass(io, deps, REQUEST_TYPE, req.endpoint_id, sessionId, p1Prompt, pass1,
         retainFields(retain.serverPersist, retain.userText, synthVoice, null), turnMeta);
       return finalize({
         t0, parsed: synth, raw: pass1.raw, stages: [p1Stage, fetchStage], usage: pass1.raw.usage,
@@ -1067,7 +1122,7 @@ async function orchestrate(deps: OrchestrationDeps, io: OrchestratorIO, voiceCtx
       });
     }
     // Device-fulfilled weather: same turnMeta stamp as calendar above (route/tool/args/caps).
-    await logPass(io, token, REQUEST_TYPE, req.endpoint_id, sessionId, p1Prompt, pass1, deviceFulfilledRetain(), turnMeta);
+    await logPass(io, deps, REQUEST_TYPE, req.endpoint_id, sessionId, p1Prompt, pass1, deviceFulfilledRetain(), turnMeta);
     return finalize({
       t0, parsed: p1Parsed, raw: pass1.raw, stages: [p1Stage], usage: pass1.raw.usage,
       latency: pass1.latency_ms, client_tool: { tool: 'weather', query: p1Parsed.query }, sessionId, route,
@@ -1087,7 +1142,7 @@ async function orchestrate(deps: OrchestrationDeps, io: OrchestratorIO, voiceCtx
       ok: true, latency_ms: 0,
       raw: { content: spoken, usage: { input_tokens: 0, output_tokens: 0, total_tokens: 0 }, model: 'template', provider: 'template' },
     };
-    await logPass(io, token, REQUEST_TYPE, req.endpoint_id, sessionId, '(current_time template)', templatePass,
+    await logPass(io, deps, REQUEST_TYPE, req.endpoint_id, sessionId, '(current_time template)', templatePass,
       retainFields(retain.serverPersist, retain.userText, spoken, null), turnMeta);
     return finalize({
       t0, parsed, raw: pass1.raw!, stages: [p1Stage],
@@ -1103,7 +1158,7 @@ async function orchestrate(deps: OrchestrationDeps, io: OrchestratorIO, voiceCtx
   // to defer to support@dashieapp.com rather than invent settings paths or prices.
   // Design: 20260711_DASHIE_SKILL_DESIGN.md §4.2.
   if (p1Parsed.type === 'info_request' && p1Parsed.tool === 'dashie_help') {
-    await logPass(io, token, REQUEST_TYPE, req.endpoint_id, sessionId, p1Prompt, pass1);
+    await logPass(io, deps, REQUEST_TYPE, req.endpoint_id, sessionId, p1Prompt, pass1);
     const hq = (typeof p1Parsed.query === 'object' && p1Parsed.query)
       ? String((p1Parsed.query as Record<string, unknown>).question ?? req.text)
       : (typeof p1Parsed.query === 'string' && p1Parsed.query ? p1Parsed.query : req.text);
@@ -1132,7 +1187,7 @@ async function orchestrate(deps: OrchestrationDeps, io: OrchestratorIO, voiceCtx
   // resolves the spoken words to a real `key` it can see, instead of guessing one that would
   // fail closed at the client.
   if (p1Parsed.type === 'info_request' && p1Parsed.tool === 'personalities') {
-    await logPass(io, token, REQUEST_TYPE, req.endpoint_id, sessionId, p1Prompt, pass1);
+    await logPass(io, deps, REQUEST_TYPE, req.endpoint_id, sessionId, p1Prompt, pass1);
     const tFetch = Date.now();
     const choices = io.listPersonalities
       ? await io.listPersonalities(supabase)
@@ -1177,7 +1232,7 @@ async function orchestrate(deps: OrchestrationDeps, io: OrchestratorIO, voiceCtx
     // confirmation would claim work we never did). Surface as unsupported so the caller can retry
     // via its native path — same treatment as an unfulfillable tool.
     if (stepsIn.length < 2) {
-      await logPass(io, token, REQUEST_TYPE, req.endpoint_id, sessionId, p1Prompt, pass1);
+      await logPass(io, deps, REQUEST_TYPE, req.endpoint_id, sessionId, p1Prompt, pass1);
       const emptyMulti = { type: 'response', voice: '', text: null, action: null } as ReturnType<typeof parseContent>;
       return finalize({ t0, parsed: emptyMulti, raw: pass1.raw, stages: [p1Stage], usage: pass1.raw.usage, latency: pass1.latency_ms, unsupported_tool: 'multi', sessionId, route: 'multi' });
     }
@@ -1191,7 +1246,7 @@ async function orchestrate(deps: OrchestrationDeps, io: OrchestratorIO, voiceCtx
     });
     // The brain speaks ONE confirmation for the whole turn — retain it as the spoken text (the
     // device fulfills the steps but the user hears `voice`).
-    await logPass(io, token, REQUEST_TYPE, req.endpoint_id, sessionId, p1Prompt, pass1,
+    await logPass(io, deps, REQUEST_TYPE, req.endpoint_id, sessionId, p1Prompt, pass1,
       retainFields(retain.serverPersist, retain.userText, typeof p1Parsed.voice === 'string' ? p1Parsed.voice : '', null), turnMeta);
     const multiParsed = { type: 'multi', voice: p1Parsed.voice, text: null, action: null } as ReturnType<typeof parseContent>;
     return finalize({
@@ -1208,7 +1263,7 @@ async function orchestrate(deps: OrchestrationDeps, io: OrchestratorIO, voiceCtx
   // Graceful by design, but LOUD: the model routing to a tool with no brain branch is
   // prompt/schema drift (a renamed tool, or a hand-list ghost) — logPass alone hides it.
   console.warn(`[orchestrator] DROP: pass-1 routed to unsupported tool '${p1Parsed.tool}' — falling back to caller's native path`);
-  await logPass(io, token, REQUEST_TYPE, req.endpoint_id, sessionId, p1Prompt, pass1);
+  await logPass(io, deps, REQUEST_TYPE, req.endpoint_id, sessionId, p1Prompt, pass1);
   return finalize({ t0, parsed: p1Parsed, raw: pass1.raw, stages: [p1Stage], usage: pass1.raw.usage, latency: pass1.latency_ms, unsupported_tool: p1Parsed.tool, sessionId, route });
 }
 
@@ -1283,7 +1338,7 @@ async function secondPass(
     parsed = { type: 'response', voice: clarifyVoice, text: null, action: null } as ReturnType<typeof parseContent>;
   }
   // Tool decision comes from pass-1 (the info_request that triggered this synthesis) + the route.
-  await logPass(io, deps.token, REQUEST_TYPE, deps.req.endpoint_id, sessionId, prompt, pass2,
+  await logPass(io, deps, REQUEST_TYPE, deps.req.endpoint_id, sessionId, prompt, pass2,
     retainFields(retain.serverPersist, retain.userText, responseTextOf(parsed, pass2.raw), parsed?.text ?? null),
     toolMeta(parseContent(pass1.raw?.content ?? ''), route, (context as { caps?: CapsSnapshot } | null)?.caps));
   const p2Stage = passStage('pass2', pass2, parsed?.type);
@@ -1551,7 +1606,7 @@ function formatHistory(history?: VoiceRequest['history']): string {
 
 async function logPass(
   io: OrchestratorIO,
-  token: string,
+  deps: OrchestrationDeps,
   requestType: string,
   endpointId: string,
   sessionId: string,
@@ -1595,7 +1650,7 @@ async function logPass(
   const missClass = isAnswerRow
     ? classifyMiss(route, parsed?.voice ?? (isTemplate ? (pass.raw?.content ?? null) : null))
     : { miss: null as boolean | null, reason: null as string | null };
-  await io.logInteraction(token, {
+  await io.logInteraction(deps.token, {
     parsed_ok: parsedOk,
     miss: missClass.miss,
     miss_reason: missClass.reason,
@@ -1614,6 +1669,22 @@ async function logPass(
     ...retainText,
     ...logMeta,
   });
+
+  // Debit AI tokens AT-SOURCE (#7): the cloud IO debits in-process from the REAL counts we just
+  // logged (same predicate the log_ai_interaction op used); the Node/on-prem shell omits
+  // debitAiUsage (BYOK never debits). Gated INSIDE the impl by debit_at_source, so this is inert
+  // until the cutover. Fail-soft — debitBalance never throws.
+  const inTok = usage.input_tokens || 0;
+  const outTok = usage.output_tokens || 0;
+  if (io.debitAiUsage && (inTok || outTok)) {
+    await io.debitAiUsage(deps.supabase, deps.userId, {
+      model: pass.raw?.model || 'unknown',
+      inputTokens: inTok,
+      outputTokens: outTok,
+      requestType,
+      sessionId,
+    });
+  }
 }
 
 /** Per-turn tool decision for the log: the route + the pass-1 tool call + its args (null on a

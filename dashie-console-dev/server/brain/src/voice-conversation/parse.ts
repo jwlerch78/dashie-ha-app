@@ -29,6 +29,21 @@ export function parseContent(content: string): ParsedResponse | null {
     const cleaned = body.replace(/,(\s*[}\]])/g, '$1');
     try { parsed = JSON.parse(cleaned); } catch { /* fall through */ }
     if (!parsed) {
+      // MULTI-EMISSION repair (2026-07-19, the kiosk-calendar silence): haiku's thrash mode
+      // emits SEVERAL top-level objects (or an object + prose) in one turn — brace-balanced
+      // overall, so the truncation repair returned the whole string and JSON.parse failed on
+      // "unexpected token after JSON". Take the FIRST balanced top-level object (the actual
+      // decision; the tail is elaboration/repeats) and shout about the tail so the thrash
+      // stays visible in logs while the user still gets an answer.
+      const first = firstBalancedObject(cleaned);
+      if (first && first.length < cleaned.length) {
+        try {
+          parsed = JSON.parse(first);
+          console.warn(`[parse] MULTI-EMISSION: took first balanced object (${first.length} of ${cleaned.length} chars) — model emitted trailing content`);
+        } catch { /* fall through to truncation repair */ }
+      }
+    }
+    if (!parsed) {
       // Truncated response repair: trim to the last balanced brace.
       const repaired = repairTruncatedJson(cleaned);
       if (repaired) {
@@ -128,6 +143,28 @@ export function sanitizeVoice(s: string): string {
   // Collapse whitespace left behind by the removals.
   out = out.replace(/[ \t]{2,}/g, ' ').replace(/[ \t]+\n/g, '\n').replace(/\n{3,}/g, '\n\n').trim();
   return out;
+}
+
+/** The first balanced top-level {…} object in s (string-aware), or null when none closes.
+ *  Multi-emission repair support — see parseContent. */
+function firstBalancedObject(s: string): string | null {
+  if (!s || s[0] !== '{') return null;
+  let inString = false;
+  let escape = false;
+  let depth = 0;
+  for (let i = 0; i < s.length; i++) {
+    const ch = s[i];
+    if (escape) { escape = false; continue; }
+    if (inString) {
+      if (ch === '\\') escape = true;
+      else if (ch === '"') inString = false;
+      continue;
+    }
+    if (ch === '"') inString = true;
+    else if (ch === '{') depth++;
+    else if (ch === '}') { depth--; if (depth === 0) return s.slice(0, i + 1); }
+  }
+  return null;
 }
 
 /** Best-effort recovery of JSON truncated by max_tokens: track brace/bracket depth,

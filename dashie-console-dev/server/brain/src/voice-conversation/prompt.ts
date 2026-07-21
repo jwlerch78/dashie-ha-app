@@ -141,6 +141,24 @@ function injectMultiBlock(prompt: string): string {
     .replace(MULTI_ANCHOR_CRITICAL, `\n${RESPONSE_FORMAT_MULTI}\n${MULTI_ANCHOR_CRITICAL}`);
 }
 
+/**
+ * Examples must follow the OFFERING (2026-07-19, found live on the kiosk): the Tools list is
+ * gated per-caller, but the templates' hand-authored Examples still demonstrated routing to
+ * dropped tools ("When is Charlie's next game?" → calendar_events on a kiosk that can't
+ * fulfill it). Taught-but-unoffered is exactly the contradiction that made haiku contort
+ * into unparseable JSON → clarify → device silence. Strip any example line that names a tool
+ * absent from this caller's offered set; lines naming no tool pass through.
+ */
+function dropUnofferedExamples(text: string, context: ToolsContext): string {
+  const offered = new Set(offeredToolNames(context));
+  return text.split('\n')
+    .filter((line) => {
+      const m = line.match(/tool:\s*"([a-z_]+)"/);
+      return !m || offered.has(m[1]);
+    })
+    .join('\n');
+}
+
 function toolsListFor(context: ToolsContext): string {
   const drop: string[] = [];
   if (context.webSearchEnabled === false) drop.push('- web_search:');
@@ -150,6 +168,16 @@ function toolsListFor(context: ToolsContext): string {
     for (const tool of DEVICE_ONLY_TOOLS) {
       if (!context.clientTools.includes(tool)) drop.push(`- ${tool}:`);
     }
+    // calendar_events stays OFFERED to every caller (like weather), even one that doesn't claim
+    // 'calendar'. Superseding the 2026-07-19 honest-handshake DROP: omitting the tool didn't make
+    // the model decline — it substituted the nearest tool (haiku → get_current_time, gemini →
+    // trivia; 0/2 declined, bench 2026-07-20). Instead the orchestrator SELF-FULFILLS a graceful
+    // "calendar isn't set up on this device" for a non-claiming caller (see the calendar_events
+    // branch), the same shape as calendar_write's decline and weather's server fulfill. The model
+    // routes reliably (6/6) and we author the decline, so it's deterministic — not model goodwill.
+    // calendar_WRITE is still dropped: its own branch declines defensively, and a write tool must
+    // not tempt routing at all (FB13 raw-JSON-leak risk on old APKs).
+    if (!context.clientTools.includes('calendar_write')) drop.push('- calendar_write:');
   }
   if (drop.length === 0) return AVAILABLE_TOOLS_LIST;
   return AVAILABLE_TOOLS_LIST.split('\n')
@@ -376,10 +404,10 @@ export function buildPrompt({ userRequest, inquiryType, retrievedData, context =
       prompt += '\n\n' + fillTemplate(inquiryTemplate, inquiryValues);
     }
     // With retrieved data, use the full response format (all display flags).
-    prompt += '\n\n' + fillTemplate(RESPONSE_FORMAT_FULL, baseValues);
+    prompt += '\n\n' + dropUnofferedExamples(fillTemplate(RESPONSE_FORMAT_FULL, baseValues), context);
   } else {
     // Initial request — slim format focused on tool selection.
-    prompt += '\n\n' + fillTemplate(RESPONSE_FORMAT_INITIAL, baseValues);
+    prompt += '\n\n' + dropUnofferedExamples(fillTemplate(RESPONSE_FORMAT_INITIAL, baseValues), context);
     // Multi-tool emission (capability-gated): teach pass-1 to emit {type:"multi", steps:[…]}
     // ONLY when the caller declared the `multi` capability. Withheld otherwise so old clients —
     // which never declare it — keep today's exact single-tool behavior (a multi envelope would
