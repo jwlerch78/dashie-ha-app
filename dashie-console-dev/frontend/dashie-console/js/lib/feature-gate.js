@@ -113,7 +113,10 @@ const FeatureGate = {
         // Voice / AI features (Dashie Cloud token spend) — the hand-selected BETA
         // cohort. Moved alpha→beta in the 2026-07-03 access-tier restructure.
         voiceAi:    'beta-only',
-        videoFeeds: 'beta-only',
+        // Video Feeds — STANDARD access (2026-07-22): HA camera feeds are a core HA
+        // capability, not a metered cloud product, so it's visible to all users (an
+        // account without HA simply has no feeds to show). Was 'beta-only'.
+        videoFeeds: true,
 
         // Credits / token-bank / BYOK — the beta cohort meters cloud voice/AI and
         // gets starter credits, so it's a beta gate now (was alpha).
