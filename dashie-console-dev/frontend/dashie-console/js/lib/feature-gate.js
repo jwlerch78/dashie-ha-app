@@ -187,7 +187,10 @@ const FeatureGate = {
     ENTITLEMENT_GATED_PAGES: new Set([
         'family', 'calendar', 'photos',
         'chores', 'rewards', 'locations',
-        'voice-ai', 'video-feeds',
+        'voice-ai',
+        // video-feeds is intentionally NOT here (2026-07-22): HA camera feeds are a
+        // core HA capability available to ALL HA users, independent of Dashie
+        // subscription/trial state — an expired or ha_only account still sees them.
     ]),
 
     /**
