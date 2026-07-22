@@ -343,8 +343,9 @@ const FamilyPage = {
                         Device linked · ${this._escape(member.device_name || 'Unknown device')}
                     </div>
                 </div>
-                ${this._renderReminderAlertToggle(member)}
             ` : ''}
+
+            ${!isNew ? this._renderReminderAlertToggle(member) : ''}
 
             <div class="edit-panel-actions" style="margin-top: 16px;">
                 <button class="btn btn-primary" onclick="FamilyPage._save('${id}')" ${saving ? 'disabled' : ''}>
@@ -363,13 +364,20 @@ const FamilyPage = {
         `;
     },
 
-    // Timer/reminder push toggle — only rendered for mobile-linked members
-    // (a member without the app can't receive the push). Immediate-apply.
+    // Timer/reminder push toggle — shown for every saved member. The push only
+    // reaches members who've installed & linked the Dashie mobile app; the hint
+    // says so for members without a linked device. Immediate-apply.
     _renderReminderAlertToggle(member) {
         const id = this._escape(member.id);
         const loading = this._reminderPrefLoading[member.id];
         const saving = this._reminderPrefSaving[member.id];
+        const linked = !!member.device_linked_at;
         const on = this._reminderPrefs[member.id] !== false; // default on until loaded
+        const hint = loading
+            ? 'Loading…'
+            : (linked
+                ? 'Send a notification to their phone when a timer or reminder goes off.'
+                : 'Notifies their phone when a timer or reminder goes off — once they’ve installed and linked the Dashie mobile app.');
         return `
             <div class="form-group" style="margin-top: 12px;">
                 <label class="toggle-row">
@@ -378,7 +386,7 @@ const FamilyPage = {
                         onchange="FamilyPage._toggleReminderAlerts('${id}', this.checked)">
                         <span class="toggle-slider"></span></label>
                 </label>
-                <div class="field-hint">${loading ? 'Loading…' : 'Send a notification to their phone when a timer or reminder goes off.'}</div>
+                <div class="field-hint">${hint}</div>
             </div>
         `;
     },
@@ -538,10 +546,9 @@ const FamilyPage = {
             return;
         }
         this._expandedIds.add(memberId);
-        // Lazy-load this member's reminder-alert pref (only mobile-linked members
-        // show the toggle, so only they need the fetch).
+        // Lazy-load this member's reminder-alert pref (shown for every saved member).
         const member = (this._members || []).find(m => m.id === memberId);
-        if (member && member.device_linked_at &&
+        if (member && memberId !== 'new' &&
             this._reminderPrefs[memberId] === undefined &&
             !this._reminderPrefLoading[memberId]) {
             this._fetchReminderPref(memberId);
