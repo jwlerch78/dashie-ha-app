@@ -25,6 +25,13 @@ const FamilyPage = {
     _householdSaving: false,
     _householdSaveTimer: null,
 
+    // Per-member "timer & reminder alerts to their phone" toggle
+    // (member_notification_preferences.notify_on_reminder). Only shown for
+    // mobile-linked members; loaded lazily on expand, saved immediately on toggle.
+    _reminderPrefs: {},        // memberId -> boolean (loaded value; undefined = not loaded)
+    _reminderPrefLoading: {},  // memberId -> true while fetching
+    _reminderPrefSaving: {},   // memberId -> true while saving
+
     // Preset palette from backend auto-assignment
     PALETTE: ['#FF6B6B', '#4ECDC4', '#45B7D1', '#FFA07A', '#98D8C8', '#F7DC6F', '#BB8FCE', '#85C1E2', '#F8B739', '#52B788'],
     RELATIONSHIPS: ['parent', 'child', 'guest'],
@@ -336,6 +343,7 @@ const FamilyPage = {
                         Device linked · ${this._escape(member.device_name || 'Unknown device')}
                     </div>
                 </div>
+                ${this._renderReminderAlertToggle(member)}
             ` : ''}
 
             <div class="edit-panel-actions" style="margin-top: 16px;">
@@ -351,6 +359,26 @@ const FamilyPage = {
                         ${deleting ? 'Removing…' : 'Remove Member'}
                     </button>
                 ` : ''}
+            </div>
+        `;
+    },
+
+    // Timer/reminder push toggle — only rendered for mobile-linked members
+    // (a member without the app can't receive the push). Immediate-apply.
+    _renderReminderAlertToggle(member) {
+        const id = this._escape(member.id);
+        const loading = this._reminderPrefLoading[member.id];
+        const saving = this._reminderPrefSaving[member.id];
+        const on = this._reminderPrefs[member.id] !== false; // default on until loaded
+        return `
+            <div class="form-group" style="margin-top: 12px;">
+                <label class="toggle-row">
+                    <span class="toggle-text">Timer &amp; reminder alerts</span>
+                    <label class="toggle"><input type="checkbox" ${on ? 'checked' : ''} ${loading || saving ? 'disabled' : ''}
+                        onchange="FamilyPage._toggleReminderAlerts('${id}', this.checked)">
+                        <span class="toggle-slider"></span></label>
+                </label>
+                <div class="field-hint">${loading ? 'Loading…' : 'Send a notification to their phone when a timer or reminder goes off.'}</div>
             </div>
         `;
     },
@@ -447,6 +475,47 @@ const FamilyPage = {
         }
     },
 
+    // ---- Per-member timer/reminder push toggle ----
+
+    async _fetchReminderPref(memberId) {
+        this._reminderPrefLoading[memberId] = true;
+        try {
+            const result = await DashieAuth.dbRequest('get_notification_preferences', {
+                family_member_id: memberId,
+            });
+            const prefs = result.data || result;
+            // Server default is on; only an explicit false turns it off.
+            this._reminderPrefs[memberId] = prefs.notify_on_reminder !== false;
+        } catch (e) {
+            console.error('[FamilyPage] reminder pref load failed:', e);
+            this._reminderPrefs[memberId] = true; // matches server default
+        } finally {
+            this._reminderPrefLoading[memberId] = false;
+            App.renderPage();
+        }
+    },
+
+    async _toggleReminderAlerts(memberId, checked) {
+        const prev = this._reminderPrefs[memberId];
+        this._reminderPrefs[memberId] = checked; // optimistic
+        this._reminderPrefSaving[memberId] = true;
+        App.renderPage();
+        try {
+            await DashieAuth.dbRequest('set_notification_preferences', {
+                family_member_id: memberId,
+                notify_on_reminder: checked,
+            });
+            Toast.success?.(checked ? 'Timer & reminder alerts on' : 'Timer & reminder alerts off');
+        } catch (e) {
+            console.error('[FamilyPage] reminder pref save failed:', e);
+            this._reminderPrefs[memberId] = prev; // revert on failure
+            Toast.error(Toast.friendly(e, 'update timer & reminder alerts'));
+        } finally {
+            this._reminderPrefSaving[memberId] = false;
+            App.renderPage();
+        }
+    },
+
     /**
      * Cancel: collapse the row. For the synthetic 'new' member, also drop
      * it from the list so the empty form disappears entirely.
@@ -469,6 +538,14 @@ const FamilyPage = {
             return;
         }
         this._expandedIds.add(memberId);
+        // Lazy-load this member's reminder-alert pref (only mobile-linked members
+        // show the toggle, so only they need the fetch).
+        const member = (this._members || []).find(m => m.id === memberId);
+        if (member && member.device_linked_at &&
+            this._reminderPrefs[memberId] === undefined &&
+            !this._reminderPrefLoading[memberId]) {
+            this._fetchReminderPref(memberId);
+        }
         App.renderPage();
         // Focus the name field for new-member rows so the user can type
         // immediately. Existing rows skip this — clicking to expand for

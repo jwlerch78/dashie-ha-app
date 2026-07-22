@@ -409,6 +409,7 @@ const AccountUsage = {
         return `
             <div style="max-width: 800px;">
                 ${this._renderFlash()}
+                ${CreditsControls.renderFailureNotice()}
                 ${this._renderStatStrip()}
                 ${CreditsControls.renderExpiryNotice(this._expiry)}
                 ${this._renderAdminSection()}

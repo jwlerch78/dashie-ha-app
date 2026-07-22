@@ -289,6 +289,35 @@ const CreditsControls = {
             </div></div>`;
     },
 
+    /** Auto-refill FAILURE pill (WS-L.3) — prominent, top-of-page sibling of the expiry
+     *  notice. Shown while a failure streak is live (last_error set, cleared by the next
+     *  successful charge). The buried 12px line in _autorefillBlock stays as detail; this
+     *  is the signal. Actions reuse the existing flows: buy-a-pack (saves the new card —
+     *  how a card gets REPLACED) or the enabled kill switch. */
+    renderFailureNotice() {
+        const ar = this._autorefill || {};
+        if (!ar.enabled || !ar.last_error) return '';
+        const when = ar.last_error_at
+            ? new Date(ar.last_error_at).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
+            : null;
+        const color = 'var(--status-error, #c00)';
+        // Stripe decline messages usually already end in a period ("Your card was
+        // declined.") — don't double it up.
+        const reason = String(ar.last_error).trim().replace(/[.\s]+$/, '');
+        return `
+            <div class="card" style="margin-bottom: 12px; border-color: ${color};">
+                <div class="card-body" style="padding: 12px 16px; font-size: 13px; display:flex; justify-content:space-between; align-items:center; gap:12px; flex-wrap:wrap;">
+                    <span style="color: ${color};">
+                        ⚠️ <strong>Auto-refill payment failed</strong>${when ? ` (${when})` : ''}: ${this._escape(reason)}.
+                        Voice keeps working until your balance runs out. Buy a pack to save a new card, or turn auto-refill off.
+                    </span>
+                    <span style="display:inline-flex; gap:8px;">
+                        <button class="btn btn-primary btn-sm" onclick="CreditsControls.openBuyModal()">Buy credits</button>
+                        <button class="btn btn-secondary btn-sm" onclick="CreditsControls.toggleAutorefill()">Turn off</button>
+                    </span>
+                </div></div>`;
+    },
+
     /** Credit-expiry banner — only shown when the soonest expiry is < 60 days
      *  away. Escalating styling: <=30d warns (border + ⚠️), <=7d errors. */
     renderExpiryNotice(expiryObj) {

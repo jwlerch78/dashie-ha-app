@@ -16,6 +16,23 @@
    mode alike. Gated alpha-only via FeatureGate.
    ============================================================ */
 
+/** DLG-6 "Open dialog after commands" — keep listening after every COMMAND, not just
+ *  questions. Hidden since 2026-07-18 (John): built and verified, but unclear that users
+ *  want it once they've lived with it. Kept, not deleted, in case it's requested.
+ *
+ *  ⚠️ Hiding the row is only half of it. The Android runtime gates the BEHAVIOR on its own
+ *  flag (VoiceFeatureFlags.KEEP_DIALOG_OPEN_ENABLED) because accounts already have
+ *  voice.alwaysOpenDialog stored TRUE — the cloud/hybrid preset used to seed it — and a
+ *  UI-only hide would leave those users chaining with no way to stop it. Stored values are
+ *  left intact so re-enabling restores each user's prior choice.
+ *
+ *  To re-enable: flip this to true, flip the Kotlin flag, and decide deliberately whether
+ *  the cloud/hybrid preset should seed it ON again (those two saveDefault calls were
+ *  REMOVED, not gated, so "on by default" has to be a fresh choice).
+ *
+ *  ⚠️ This file is mirrored byte-for-byte into dashieapp_staging/console/ — edit both. */
+const KEEP_DIALOG_OPEN_UI = false;
+
 const VoiceAiPage = {
     _defaults: null,        // {dotted: value}
     _engines: null,         // GET /api/voice/engines result — add-on mode only (detection-gated picker)
@@ -71,10 +88,13 @@ const VoiceAiPage = {
     // Live S2S models, grouped at the top of the AI-model card (Cloud preset
     // only — Live is fully cloud + credits). Bound to voice.conversationModel
     // (the Live engine reads it). Speaks in a Google voice (beta).
-    // NOTE: "more capable" is a 2.5 model, hence the honest labels.
+    // ⚠️ Ids must stay within CONVERSATION_MODEL_IDS (voice-ai-value-ids.js,
+    // gated by lint:voice-options). Google retires Live aliases without notice —
+    // a retired id here bricks live mode for whoever picks it (the engine
+    // self-heals with a 1008 DROP→retry, but pickers must not sell dead models;
+    // gemini-2.5-flash-native-audio-latest was removed for exactly this).
     CONVERSATION_MODELS: [
-        ['gemini-3.1-flash-live-preview', 'Gemini 3.1 Live (faster)'],
-        ['gemini-2.5-flash-native-audio-latest', 'Gemini 2.5 Live (more capable)'],
+        ['gemini-3.1-flash-live-preview', 'Gemini 3.1 Live'],
     ],
 
     /** Drop HA-only voice options (va_default / piper / voice_assistant) for
@@ -438,7 +458,9 @@ const VoiceAiPage = {
         // so the Android runtime honors them, not just the console display.
         if (id === 'cloud' || id === 'hybrid') {
             if (this._agentMode() !== 'live') this.saveDefault('voice.agentMode', 'dialog');
-            this.saveDefault('voice.alwaysOpenDialog', true);
+            // voice.alwaysOpenDialog is no longer seeded ON — the row is hidden
+            // (KEEP_DIALOG_OPEN_UI) and the runtime ignores it, so seeding it would only
+            // write state the user can't see or change.
             this.saveDefault('ai.retrievePicturesEnabled', true);
         } else if (id === 'local' || id === 'ha_assist') {
             this.saveDefault('ai.retrievePicturesEnabled', false);
@@ -505,7 +527,6 @@ const VoiceAiPage = {
         if (preset === 'cloud' || preset === 'hybrid') {
             const stored = this._storedKeys || new Set();
             if (!stored.has('voice.agentMode') && this._agentMode() !== 'live') this.saveDefault('voice.agentMode', 'dialog');
-            if (!stored.has('voice.alwaysOpenDialog')) this.saveDefault('voice.alwaysOpenDialog', true);
             if (!stored.has('ai.retrievePicturesEnabled')) this.saveDefault('ai.retrievePicturesEnabled', true);
         }
     },
@@ -1413,7 +1434,7 @@ const VoiceAiPage = {
                     <span class="toggle-slider"></span>
                 </label>
             </div>
-            ${dialogOn ? this._toggleRow('Open dialog after commands', 'Keep listening after every command — not just questions — without saying “Hey Dashie” again.', 'voice.alwaysOpenDialog', d['voice.alwaysOpenDialog']) : ''}`;
+            ${dialogOn && KEEP_DIALOG_OPEN_UI ? this._toggleRow('Open dialog after commands', 'Keep listening after every command — not just questions — without saying “Hey Dashie” again.', 'voice.alwaysOpenDialog', d['voice.alwaysOpenDialog']) : ''}`;
     },
 
     /** The AI Model card's option list for the active preset: Live models
