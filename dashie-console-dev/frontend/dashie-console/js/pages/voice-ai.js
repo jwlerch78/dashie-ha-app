@@ -661,11 +661,6 @@ const VoiceAiPage = {
             if (eng?.engineId) this.saveDefault('voice.haSttEngineId', eng.engineId);
         }
         this.saveDefault(stageKey === 'tts' ? 'voice.ttsProvider' : 'voice.sttProvider', id);
-        // In Live mode the pipeline UI is hidden, so customizePipeline may be off — but the
-        // native STT resolver (SttProviderFactory) only honors voice.sttProvider when it's ON,
-        // else it falls back to the control-method default (Dashie Cloud). Flip it so a
-        // Live-mode STT choice actually takes effect on the device.
-        if (stageKey === 'stt' && this._agentMode() === 'live') this.saveDefault('voice.customizePipeline', true);
     },
 
     /** amy (low) from the detected Piper voice list — the default voice a
@@ -1072,11 +1067,12 @@ const VoiceAiPage = {
         const isLive = !isHaAssist && agentMode === 'live';
         const customPipeline = d['voice.customizePipeline'] === true;
         const showPipeline = customPipeline && !isLive;
-        // STT is shown in Live mode too (unlike the rest of the pipeline): it's the engine
-        // that transcribes the FIRST wake command for the local-vs-Live routing decision
-        // (and any local commands). TTS/voice/search stay hidden — Live speaks its own
-        // Google voice and grounds via the model. See _renderLiveSttNote for the copy.
-        const showStt = showPipeline || isLive;
+        // STT shows whenever the pipeline is customized — in cascade (with TTS/search) AND
+        // in Live mode (on its own, below Live Voice). In Live it's the engine that
+        // transcribes the FIRST wake command for the local-vs-Live routing decision; the
+        // rest of the pipeline stays hidden (Live speaks its own voice, grounds via the
+        // model). Gated on the Customize-pipeline toggle so it's opt-in. Asterisked in Live.
+        const showStt = customPipeline;
         // "HA entities" card: which HA entities voice can control. HA users only, and
         // grouped with the pipeline (only while Customize is on) — sits below Web search
         // source. Not shown under HA Assist (HA owns entity control there).
@@ -1141,7 +1137,7 @@ const VoiceAiPage = {
             ${showPipeline ? card('Text-to-speech', 'tts', ttsCardOpts, ttsSelectedId) : ''}
             ${showPipeline && voiceField ? this._renderVoiceRow(voiceField, d) : ''}
             ${showPipeline ? card('Speech-to-text', 'stt', this._applyProbed(filtered('stt', O.sttOptions(this._engines))), sttSelectedId) : ''}` : `
-            ${P.renderCustomizeRow(customPipeline, !isLive)}
+            ${P.renderCustomizeRow(customPipeline, true)}
             ${card('AI Model', 'model', this._markKeyed(this._applyProbed(this._modelOptions(preset))), this._selectedModelId(agentMode))}
             ${D.renderWakeWordCard({
                 currentId: String(d['ai.defaultWakeWord'] || 'hey_dashie'),
@@ -1156,7 +1152,7 @@ const VoiceAiPage = {
             ${showPipeline ? this._renderEngineDetectionRow() : ''}
             ${showPipeline ? card('Text-to-speech', 'tts', ttsCardOpts, ttsSelectedId) : ''}
             ${showPipeline && voiceField ? this._renderVoiceRow(voiceField, d) : ''}
-            ${showStt ? card('Speech-to-text', 'stt', this._applyProbed(isLive ? this._haFilter(O.sttOptions(this._engines)) : filtered('stt', O.sttOptions(this._engines))), sttSelectedId) + (isLive ? this._renderLiveSttNote() : '') : ''}
+            ${showStt ? card(isLive ? 'Speech-to-text*' : 'Speech-to-text', 'stt', this._applyProbed(isLive ? this._haFilter(O.sttOptions(this._engines)) : filtered('stt', O.sttOptions(this._engines))), sttSelectedId) + (isLive ? this._renderLiveSttNote() : '') : ''}
             ${showPipeline ? card('Web search source', 'search', this._markKeyed(searchOptions), searchSelected) : ''}
             ${showEntities ? this._renderEntitySourceCard() : ''}`;
             // Sports source card hidden for now (John, 2026-07-11) — ESPN is the
@@ -1195,7 +1191,7 @@ const VoiceAiPage = {
      *  commands). Explains why the STT picker is present in Live mode. */
     _renderLiveSttNote() {
         return `<div style="font-size: 12px; color: var(--text-muted); margin: 2px 4px 12px; line-height: 1.45;">
-            Dashie transcribes the first request to decide whether to handle locally or send to Live.
+            * Dashie transcribes the first request to decide whether to handle locally or send to Live.
         </div>`;
     },
 
