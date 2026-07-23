@@ -1156,7 +1156,7 @@ const VoiceAiPage = {
             ${showPipeline ? this._renderEngineDetectionRow() : ''}
             ${showPipeline ? card('Text-to-speech', 'tts', ttsCardOpts, ttsSelectedId) : ''}
             ${showPipeline && voiceField ? this._renderVoiceRow(voiceField, d) : ''}
-            ${showStt ? card('Speech-to-text', 'stt', this._applyProbed(filtered('stt', O.sttOptions(this._engines))), sttSelectedId) + (isLive ? this._renderLiveSttNote() : '') : ''}
+            ${showStt ? card('Speech-to-text', 'stt', this._applyProbed(isLive ? this._haFilter(O.sttOptions(this._engines)) : filtered('stt', O.sttOptions(this._engines))), sttSelectedId) + (isLive ? this._renderLiveSttNote() : '') : ''}
             ${showPipeline ? card('Web search source', 'search', this._markKeyed(searchOptions), searchSelected) : ''}
             ${showEntities ? this._renderEntitySourceCard() : ''}`;
             // Sports source card hidden for now (John, 2026-07-11) — ESPN is the
