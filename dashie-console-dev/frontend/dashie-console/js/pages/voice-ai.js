@@ -1141,7 +1141,6 @@ const VoiceAiPage = {
                 currentId: String(d['ai.defaultPersonalityId'] || 'dashie'),
                 saving: this._savingKey === 'ai.defaultPersonalityId',
             })}
-            ${isLive ? P.renderLiveNote() : ''}
             ${isLive ? this._renderLiveVoiceRow(d) : ''}
             ${showPipeline ? this._renderEngineDetectionRow() : ''}
             ${showPipeline ? card('Text-to-speech', 'tts', ttsCardOpts, ttsSelectedId) : ''}
@@ -1182,21 +1181,21 @@ const VoiceAiPage = {
 
     /** Live (Gemini S2S) speaks in one fixed Google voice — this row picks which
      *  (voice.liveVoiceName). Empty = the engine default (Aoede). Rendered only in
-     *  Live mode; the cascade voice follows the personality's TTS voice, set elsewhere.
-     *  No in-app preview yet — audition at aistudio.google.com/generate-speech. */
+     *  Live mode, styled as the standard voice row (icon + label + select) so it
+     *  matches the other pipeline dropdowns. The cascade voice follows the
+     *  personality's TTS voice, set elsewhere. */
     _renderLiveVoiceRow(d) {
         const D = window.VoiceAiDefaultsCards;
-        const cur = String(d['voice.liveVoiceName'] || '');
+        const cur = String(d['voice.liveVoiceName'] || '') || 'Aoede';
         const opts = this.CONVERSATION_VOICES.map(([id, label]) =>
-            `<option value="${this._escape(id)}" ${(cur ? id === cur : id === 'Aoede') ? 'selected' : ''}>${this._escape(label)}</option>`).join('');
-        return `
-            <div class="card"><div class="card-body" style="display:flex;align-items:center;justify-content:space-between;gap:12px;">
-                <div>
-                    <div style="font-size:14px;font-weight:600;">Live voice</div>
-                    <div style="font-size:12px;opacity:0.7;">The Google voice Live speaks in. Preview at <a href="https://aistudio.google.com/generate-speech" target="_blank" rel="noopener">AI&nbsp;Studio</a>.</div>
-                </div>
-                <select style="${D.SELECT_STYLE}" onchange="VoiceAiPage.saveLocalField('voice.liveVoiceName', this.value)">${opts}</select>
-            </div></div>`;
+            `<option value="${this._escape(id)}" ${id === cur ? 'selected' : ''}>${this._escape(label)}</option>`).join('');
+        return D.renderControlRow({
+            label: 'Live voice',
+            icon: 'icon-voice',
+            saving: this._savingKey === 'voice.liveVoiceName',
+            controlHtml: `<select style="${D.SELECT_STYLE}" onchange="VoiceAiPage.saveLocalField('voice.liveVoiceName', this.value)">${opts}</select>`,
+            caret: true,
+        });
     },
 
     /** The voice-id field to render as the Voice row under Text-to-speech, for whatever
