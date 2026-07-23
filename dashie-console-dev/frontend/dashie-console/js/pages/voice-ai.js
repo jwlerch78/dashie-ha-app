@@ -95,6 +95,7 @@ const VoiceAiPage = {
     // gemini-2.5-flash-native-audio-latest was removed for exactly this).
     CONVERSATION_MODELS: [
         ['gemini-3.1-flash-live-preview', 'Gemini 3.1 Live'],
+        ['gemini-2.5-flash-native-audio-preview-12-2025', 'Gemini 2.5 Live'],
     ],
 
     // Gemini Live prebuilt voices (voice.liveVoiceName) — the fixed Google roster a
@@ -660,6 +661,11 @@ const VoiceAiPage = {
             if (eng?.engineId) this.saveDefault('voice.haSttEngineId', eng.engineId);
         }
         this.saveDefault(stageKey === 'tts' ? 'voice.ttsProvider' : 'voice.sttProvider', id);
+        // In Live mode the pipeline UI is hidden, so customizePipeline may be off — but the
+        // native STT resolver (SttProviderFactory) only honors voice.sttProvider when it's ON,
+        // else it falls back to the control-method default (Dashie Cloud). Flip it so a
+        // Live-mode STT choice actually takes effect on the device.
+        if (stageKey === 'stt' && this._agentMode() === 'live') this.saveDefault('voice.customizePipeline', true);
     },
 
     /** amy (low) from the detected Piper voice list — the default voice a
@@ -1066,6 +1072,11 @@ const VoiceAiPage = {
         const isLive = !isHaAssist && agentMode === 'live';
         const customPipeline = d['voice.customizePipeline'] === true;
         const showPipeline = customPipeline && !isLive;
+        // STT is shown in Live mode too (unlike the rest of the pipeline): it's the engine
+        // that transcribes the FIRST wake command for the local-vs-Live routing decision
+        // (and any local commands). TTS/voice/search stay hidden — Live speaks its own
+        // Google voice and grounds via the model. See _renderLiveSttNote for the copy.
+        const showStt = showPipeline || isLive;
         // "HA entities" card: which HA entities voice can control. HA users only, and
         // grouped with the pipeline (only while Customize is on) — sits below Web search
         // source. Not shown under HA Assist (HA owns entity control there).
@@ -1145,7 +1156,7 @@ const VoiceAiPage = {
             ${showPipeline ? this._renderEngineDetectionRow() : ''}
             ${showPipeline ? card('Text-to-speech', 'tts', ttsCardOpts, ttsSelectedId) : ''}
             ${showPipeline && voiceField ? this._renderVoiceRow(voiceField, d) : ''}
-            ${showPipeline ? card('Speech-to-text', 'stt', this._applyProbed(filtered('stt', O.sttOptions(this._engines))), sttSelectedId) : ''}
+            ${showStt ? (isLive ? this._renderLiveSttNote() : '') + card('Speech-to-text', 'stt', this._applyProbed(filtered('stt', O.sttOptions(this._engines))), sttSelectedId) : ''}
             ${showPipeline ? card('Web search source', 'search', this._markKeyed(searchOptions), searchSelected) : ''}
             ${showEntities ? this._renderEntitySourceCard() : ''}`;
             // Sports source card hidden for now (John, 2026-07-11) — ESPN is the
@@ -1177,6 +1188,16 @@ const VoiceAiPage = {
         // Conversation memory (+ duration) hidden for now (John, 2026-07-12) —
         // not in use yet. Re-add via ai.conversationContextEnabled /
         // ai.conversationTimeout toggle+select rows when it ships.
+    },
+
+    /** Subtext above the STT card in Live mode. Live still needs an STT for the FIRST
+     *  wake command — it transcribes it to decide local-vs-Live routing (and to run local
+     *  commands). Explains why the card is here and that local/HA STT avoids cloud credits. */
+    _renderLiveSttNote() {
+        return `<div style="font-size: 12px; color: var(--text-muted); margin: 2px 4px 8px; line-height: 1.45;">
+            Live still transcribes your first words to decide whether to answer locally or hand off to the Live model.
+            Pick a local or Home Assistant engine to keep that first-pass speech-to-text free — Dashie Cloud uses credits.
+        </div>`;
     },
 
     /** Live (Gemini S2S) speaks in one fixed Google voice — this row picks which
