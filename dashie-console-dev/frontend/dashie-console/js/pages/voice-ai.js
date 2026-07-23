@@ -97,6 +97,43 @@ const VoiceAiPage = {
         ['gemini-3.1-flash-live-preview', 'Gemini 3.1 Live'],
     ],
 
+    // Gemini Live prebuilt voices (voice.liveVoiceName) — the fixed Google roster a
+    // Live session can speak in. Ids MUST stay within CONVERSATION_VOICE_IDS
+    // (js/data/settings/voice-ai-value-ids.js), gated by lint:voice-options. Labels
+    // carry Google's style word; no in-app preview yet (audition at AI Studio).
+    CONVERSATION_VOICES: [
+        ['Aoede', 'Aoede — Breezy'],
+        ['Zephyr', 'Zephyr — Bright'],
+        ['Puck', 'Puck — Upbeat'],
+        ['Charon', 'Charon — Informative'],
+        ['Kore', 'Kore — Firm'],
+        ['Fenrir', 'Fenrir — Excitable'],
+        ['Leda', 'Leda — Youthful'],
+        ['Orus', 'Orus — Firm'],
+        ['Callirrhoe', 'Callirrhoe — Easy-going'],
+        ['Autonoe', 'Autonoe — Bright'],
+        ['Enceladus', 'Enceladus — Breathy'],
+        ['Iapetus', 'Iapetus — Clear'],
+        ['Umbriel', 'Umbriel — Easy-going'],
+        ['Algieba', 'Algieba — Smooth'],
+        ['Despina', 'Despina — Smooth'],
+        ['Erinome', 'Erinome — Clear'],
+        ['Algenib', 'Algenib — Gravelly'],
+        ['Rasalgethi', 'Rasalgethi — Informative'],
+        ['Laomedeia', 'Laomedeia — Upbeat'],
+        ['Achernar', 'Achernar — Soft'],
+        ['Alnilam', 'Alnilam — Firm'],
+        ['Schedar', 'Schedar — Even'],
+        ['Gacrux', 'Gacrux — Mature'],
+        ['Pulcherrima', 'Pulcherrima — Forward'],
+        ['Achird', 'Achird — Friendly'],
+        ['Zubenelgenubi', 'Zubenelgenubi — Casual'],
+        ['Vindemiatrix', 'Vindemiatrix — Gentle'],
+        ['Sadachbia', 'Sadachbia — Lively'],
+        ['Sadaltager', 'Sadaltager — Knowledgeable'],
+        ['Sulafat', 'Sulafat — Warm'],
+    ],
+
     /** Drop HA-only voice options (va_default / piper / voice_assistant) for
      *  accounts without Home Assistant. Gated on the live user_profiles.is_ha_user
      *  flag (DashieAuth.isHaUser). Accepts both descriptor objects ({haOnly}) and
@@ -340,7 +377,7 @@ const VoiceAiPage = {
         // Coerce to the stored type: timeout numeric; model/control-method/STT/TTS
         // are string selects; everything else boolean.
         let value = rawValue;
-        const STRING_KEYS = ['ai.model', 'voice.controlMethod', 'voice.conversationModel', 'voice.agentMode',
+        const STRING_KEYS = ['ai.model', 'voice.controlMethod', 'voice.conversationModel', 'voice.liveVoiceName', 'voice.agentMode',
             'voice.pipelinePreset',   // cloud | hybrid | local | ha_assist (Open Brain §6)
             'ai.defaultPersonalityId', 'ai.defaultVoiceKey', 'ai.defaultWakeWord',   // account defaults (WS-G Round A)
             'voice.sttProvider', 'voice.ttsProvider',
@@ -1105,6 +1142,7 @@ const VoiceAiPage = {
                 saving: this._savingKey === 'ai.defaultPersonalityId',
             })}
             ${isLive ? P.renderLiveNote() : ''}
+            ${isLive ? this._renderLiveVoiceRow(d) : ''}
             ${showPipeline ? this._renderEngineDetectionRow() : ''}
             ${showPipeline ? card('Text-to-speech', 'tts', ttsCardOpts, ttsSelectedId) : ''}
             ${showPipeline && voiceField ? this._renderVoiceRow(voiceField, d) : ''}
@@ -1140,6 +1178,25 @@ const VoiceAiPage = {
         // Conversation memory (+ duration) hidden for now (John, 2026-07-12) —
         // not in use yet. Re-add via ai.conversationContextEnabled /
         // ai.conversationTimeout toggle+select rows when it ships.
+    },
+
+    /** Live (Gemini S2S) speaks in one fixed Google voice — this row picks which
+     *  (voice.liveVoiceName). Empty = the engine default (Aoede). Rendered only in
+     *  Live mode; the cascade voice follows the personality's TTS voice, set elsewhere.
+     *  No in-app preview yet — audition at aistudio.google.com/generate-speech. */
+    _renderLiveVoiceRow(d) {
+        const D = window.VoiceAiDefaultsCards;
+        const cur = String(d['voice.liveVoiceName'] || '');
+        const opts = this.CONVERSATION_VOICES.map(([id, label]) =>
+            `<option value="${this._escape(id)}" ${(cur ? id === cur : id === 'Aoede') ? 'selected' : ''}>${this._escape(label)}</option>`).join('');
+        return `
+            <div class="card"><div class="card-body" style="display:flex;align-items:center;justify-content:space-between;gap:12px;">
+                <div>
+                    <div style="font-size:14px;font-weight:600;">Live voice</div>
+                    <div style="font-size:12px;opacity:0.7;">The Google voice Live speaks in. Preview at <a href="https://aistudio.google.com/generate-speech" target="_blank" rel="noopener">AI&nbsp;Studio</a>.</div>
+                </div>
+                <select style="${D.SELECT_STYLE}" onchange="VoiceAiPage.saveLocalField('voice.liveVoiceName', this.value)">${opts}</select>
+            </div></div>`;
     },
 
     /** The voice-id field to render as the Voice row under Text-to-speech, for whatever
