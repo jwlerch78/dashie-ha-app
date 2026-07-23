@@ -104,7 +104,7 @@ export async function resolvePersonality(
       .eq('template_key', 'dashie')
       .maybeSingle();
     if (dflt?.family_notes) {
-      return { name: 'Dashie (Default)', family_notes: dflt.family_notes } as Personality;
+      return { name: 'Dashie', family_notes: dflt.family_notes } as Personality;
     }
     return null; // no notes → base prompt (unchanged)
   }
