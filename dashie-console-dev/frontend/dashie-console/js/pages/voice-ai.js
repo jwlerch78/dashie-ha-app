@@ -1090,7 +1090,7 @@ const VoiceAiPage = {
         // anyExpanded true and dims every visible card indefinitely.
         const visibleStages = new Set(isHaAssist
             ? (showPipeline ? ['tts', 'stt'] : [])
-            : ['model', ...(showPipeline ? ['tts', 'stt', 'search'] : []), ...(showEntities ? ['entities'] : [])]);
+            : ['model', ...(showStt ? ['stt'] : []), ...(showPipeline ? ['tts', 'search'] : []), ...(showEntities ? ['entities'] : [])]);
         for (const k of [...this._expandedCards]) {
             if (!visibleStages.has(k)) this._expandedCards.delete(k);
         }
@@ -1156,7 +1156,7 @@ const VoiceAiPage = {
             ${showPipeline ? this._renderEngineDetectionRow() : ''}
             ${showPipeline ? card('Text-to-speech', 'tts', ttsCardOpts, ttsSelectedId) : ''}
             ${showPipeline && voiceField ? this._renderVoiceRow(voiceField, d) : ''}
-            ${showStt ? (isLive ? this._renderLiveSttNote() : '') + card('Speech-to-text', 'stt', this._applyProbed(filtered('stt', O.sttOptions(this._engines))), sttSelectedId) : ''}
+            ${showStt ? card('Speech-to-text', 'stt', this._applyProbed(filtered('stt', O.sttOptions(this._engines))), sttSelectedId) + (isLive ? this._renderLiveSttNote() : '') : ''}
             ${showPipeline ? card('Web search source', 'search', this._markKeyed(searchOptions), searchSelected) : ''}
             ${showEntities ? this._renderEntitySourceCard() : ''}`;
             // Sports source card hidden for now (John, 2026-07-11) — ESPN is the
@@ -1190,13 +1190,12 @@ const VoiceAiPage = {
         // ai.conversationTimeout toggle+select rows when it ships.
     },
 
-    /** Subtext above the STT card in Live mode. Live still needs an STT for the FIRST
+    /** Subtext BELOW the STT card in Live mode. Live still needs an STT for the FIRST
      *  wake command — it transcribes it to decide local-vs-Live routing (and to run local
-     *  commands). Explains why the card is here and that local/HA STT avoids cloud credits. */
+     *  commands). Explains why the STT picker is present in Live mode. */
     _renderLiveSttNote() {
-        return `<div style="font-size: 12px; color: var(--text-muted); margin: 2px 4px 8px; line-height: 1.45;">
-            Live still transcribes your first words to decide whether to answer locally or hand off to the Live model.
-            Pick a local or Home Assistant engine to keep that first-pass speech-to-text free — Dashie Cloud uses credits.
+        return `<div style="font-size: 12px; color: var(--text-muted); margin: 2px 4px 12px; line-height: 1.45;">
+            Dashie transcribes the first request to decide whether to handle locally or send to Live.
         </div>`;
     },
 
