@@ -21,6 +21,13 @@ map:
   - data:rw
   - addon_config:rw
 
+# Keep BYO provider API keys (gemini/claude/…) out of HA backups/snapshots — the one
+# realistic off-box leak vector for the plaintext /data/api-keys.json (chmod 600). A
+# restore won't carry the keys → the user re-enters them (the correct posture).
+# See .reference/build-plans/20260723_BYOK_LIVE_EPHEMERAL_TOKENS.md (Option A).
+backup_exclude:
+  - api-keys.json
+
 # Ingress: HA serves the UI at /api/hassio_ingress/<token>/
 # The add-on listens on port 8099 internally; HA proxies external traffic to it.
 ingress: true

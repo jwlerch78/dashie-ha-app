@@ -13,6 +13,7 @@ const express = require('express');
 const auth = require('../auth');
 const keyStore = require('../key-store');
 const providers = require('../brain/providers');
+const { mintEphemeralToken } = require('../live-token');
 
 const router = express.Router();
 
@@ -78,6 +79,31 @@ router.put('/', requireSignedIn, express.json(), (req, res) => {
         return res.status(500).json({ error: 'write_failed' });
     }
     res.json({ providers: keyStore.maskedKeys() });
+});
+
+/**
+ * POST /api/keys/live-token   { model? }
+ * Mint a short-lived, Live-only Gemini ephemeral token from the box's stored gemini key,
+ * for a BYOK Live session. The RAW KEY NEVER LEAVES THE BOX — only the token is returned.
+ * Ingress-protected like /status (the device brokers this on the household LAN; the relay
+ * independently authenticates the device's JWT downstream).
+ * → { token, expireTime, newSessionExpireTime } | 503 no_gemini_key | 502 mint_failed
+ */
+router.post('/live-token', express.json(), async (req, res) => {
+    const entry = keyStore.readKeys().gemini;
+    const key = entry && typeof entry.key === 'string' ? entry.key : '';
+    if (!key) return res.status(503).json({ error: 'no_gemini_key' });
+    try {
+        // Mint UNCONSTRAINED for now. Model-locking (bidiGenerateContentSetup) 1011s at WS
+        // connect — the constrained-setup protocol needs more work (Phase-0/1 finding). The
+        // token is still Live-only + short-lived, which is the security that matters here.
+        const out = await mintEphemeralToken(key);
+        res.json(out); // token only — the raw key never leaves the box
+    } catch (e) {
+        // e.message / e.detail never contain the key (see live-token.js).
+        console.error(`[keys] live-token mint failed: ${e.message}${e.status ? ' status=' + e.status : ''}`);
+        res.status(e.message === 'no_gemini_key' ? 503 : 502).json({ error: 'mint_failed', status: e.status || null });
+    }
 });
 
 module.exports = router;
