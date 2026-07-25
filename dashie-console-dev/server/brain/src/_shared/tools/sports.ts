@@ -105,14 +105,18 @@ function envVar(key: string): string {
 export async function runSports(
   // deno-lint-ignore no-explicit-any
   query: Record<string, any>,
-  ctx?: { supabaseUrl?: string; anonKey?: string; provider?: string },
+  ctx?: { supabaseUrl?: string; anonKey?: string; jwt?: string; provider?: string },
 ): Promise<SportsResult> {
   const url = ctx?.supabaseUrl || envVar('SUPABASE_URL');
   const key = ctx?.anonKey || envVar('SUPABASE_ANON_KEY');
   const provider = ctx?.provider ?? 'auto';
+  // Forward the USER JWT so the gateway can attribute + gate the paid call (mirrors
+  // image_search.runImageSearch); fall back to the anon key when anonymous. The gateway's
+  // gateway_auth_enforce gate reads the `sub` from this Bearer.
+  const auth = ctx?.jwt ? `Bearer ${ctx.jwt}` : `Bearer ${key}`;
   const resp = await fetch(`${url}/functions/v1/sports-gateway`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json', apikey: key, Authorization: `Bearer ${key}` },
+    headers: { 'Content-Type': 'application/json', apikey: key, Authorization: auth },
     body: JSON.stringify({ provider, query }),
   });
   const body = await resp.json().catch(() => ({}));
@@ -518,7 +522,7 @@ export const sportsTool: ToolDef = {
     required: ['league'],
   },
   async execute(args, ctx: ToolContext): Promise<ToolResult> {
-    const gw = { supabaseUrl: ctx.supabaseUrl, anonKey: ctx.anonKey };
+    const gw = { supabaseUrl: ctx.supabaseUrl, anonKey: ctx.anonKey, jwt: ctx.jwt };
     const team = String(args.team ?? '');
 
     // ── Slate mode: MULTIPLE games (agenda-style card) ──────────────────────────

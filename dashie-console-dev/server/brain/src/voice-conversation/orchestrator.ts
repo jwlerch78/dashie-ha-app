@@ -291,7 +291,7 @@ export interface OrchestratorIO {
   // the caller identity — the gateway rejects bare-anon once enforcement is on. OPTIONAL so
   // a runtime/mock that omits it still satisfies the type (falls back to anon in the impl).
   runWebSearch: (query: string, authToken?: string) => Promise<WebSearchResult>;
-  runSports: (query: Record<string, unknown>) => Promise<SportsResult>;
+  runSports: (query: Record<string, unknown>, authToken?: string) => Promise<SportsResult>;
   // Self-fulfill weather (Open-Meteo + geocode) — ONLY the headless/anon path calls this
   // (a device fulfills weather locally from its dashboard source). OPTIONAL — absent IO
   // (Node add-on shell without it / older tests) → the weather branch falls back to handing
@@ -871,7 +871,7 @@ async function orchestrate(deps: OrchestrationDeps, io: OrchestratorIO, voiceCtx
     const tFetch = Date.now();
     let sports: SportsResult;
     try {
-      sports = await io.runSports(sportsQuery);
+      sports = await io.runSports(sportsQuery, token);
     } catch (e) {
       return errorTurn(t0, { error: `Sports lookup failed: ${(e as Error).message}`, latency_ms: pass1.latency_ms },
         [p1Stage, { name: 'fetch_sports', latency_ms: Date.now() - tFetch, error: (e as Error).message }]);

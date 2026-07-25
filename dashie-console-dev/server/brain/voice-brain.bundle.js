@@ -4,7 +4,7 @@
    The voice-conversation brain core, bundled for the Node add-on (on-prem L3).
    ONE core, TWO runtimes: the cloud Deno edge fn runs the TS source directly;
    this CJS bundle is the add-on's copy of the SAME source. Never hand-edit.
-   Source git SHA: 50d631536d6868eec314054dd217d0ac21059dd3
+   Source git SHA: 1d644d036c02fd0c8659de2dceaebe52ad5f3532
    Regenerate:  node scripts/build-node-brain.mjs && ./sync-brain-bundle.sh
    Contract:    supabase/functions/voice-conversation/README.md + build plan §13.16
    ============================================================ */
@@ -2628,9 +2628,10 @@ async function runSports(query, ctx) {
   const url = ctx?.supabaseUrl || envVar("SUPABASE_URL");
   const key = ctx?.anonKey || envVar("SUPABASE_ANON_KEY");
   const provider = ctx?.provider ?? "auto";
+  const auth = ctx?.jwt ? `Bearer ${ctx.jwt}` : `Bearer ${key}`;
   const resp = await fetch(`${url}/functions/v1/sports-gateway`, {
     method: "POST",
-    headers: { "Content-Type": "application/json", apikey: key, Authorization: `Bearer ${key}` },
+    headers: { "Content-Type": "application/json", apikey: key, Authorization: auth },
     body: JSON.stringify({ provider, query })
   });
   const body = await resp.json().catch(() => ({}));
@@ -4473,7 +4474,7 @@ async function orchestrate(deps, io, voiceCtx) {
     const tFetch = Date.now();
     let sports;
     try {
-      sports = await io.runSports(sportsQuery);
+      sports = await io.runSports(sportsQuery, token);
     } catch (e) {
       return errorTurn(
         t0,
@@ -5156,4 +5157,4 @@ function toolMeta(parsed, route, caps) {
   templateCanAnswer,
   wantsGameDetail
 });
-module.exports.BRAIN_SOURCE_SHA = "50d631536d6868eec314054dd217d0ac21059dd3";
+module.exports.BRAIN_SOURCE_SHA = "1d644d036c02fd0c8659de2dceaebe52ad5f3532";
