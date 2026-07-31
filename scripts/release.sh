@@ -62,6 +62,35 @@ fi
 echo "==> [$CHANNEL] Vendoring dashie-console '$CONSOLE_BRANCH' → $ADDON_DIR/frontend/dashie-console"
 CONSOLE_SHA="$("$ADDON_ROOT/scripts/sync-console.sh" "$CONSOLE_BRANCH" "$DIR/frontend/dashie-console")"
 
+# ── publish gate ──────────────────────────────────────────────────────────────
+# This repo is PUBLIC and the line above just copied a private tree into it. That
+# pipe has run on every release since April 2026 — 376 files, ungated, with nobody
+# deciding to. It happens to be clean; nothing made it clean, and nothing would
+# have caught it otherwise. So scan what is about to be committed, and refuse.
+#
+# scan-publish-secrets.mjs is vendored from dashieapp_staging (canonical). Do not
+# edit it here — `npm run lint:public-mirror` over there fails if the copies drift.
+echo "==> [$CHANNEL] Secret-scanning the vendored tree"
+if ! command -v node >/dev/null 2>&1; then
+  echo "Error: node is required for the publish secret scan. Refusing to release blind." >&2
+  exit 1
+fi
+if [[ ! -f "$ADDON_ROOT/scripts/scan-publish-secrets.mjs" ]]; then
+  echo "Error: scripts/scan-publish-secrets.mjs is missing — this repo publishes to a" >&2
+  echo "       public remote and must not release without the gate. Re-vendor it from" >&2
+  echo "       dashieapp_staging/scripts/." >&2
+  exit 1
+fi
+SCAN_ALLOW="$ADDON_ROOT/scripts/publish-scan-allow.json"
+SCAN_ARGS=("$DIR")
+[[ -f "$SCAN_ALLOW" ]] && SCAN_ARGS+=(--allow "$SCAN_ALLOW")
+if ! node "$ADDON_ROOT/scripts/scan-publish-secrets.mjs" "${SCAN_ARGS[@]}"; then
+  echo "" >&2
+  echo "Error: the secret scan refused $ADDON_DIR — NOTHING was committed or pushed." >&2
+  echo "       Fix the finding at its source (the private repo), re-sync, and retry." >&2
+  exit 1
+fi
+
 echo "==> [$CHANNEL] Bumping version → $NEW_VERSION"
 sed -i.bak -E "s/^version: \"[^\"]+\"/version: \"$NEW_VERSION\"/" "$DIR/config.yaml"; rm -f "$DIR/config.yaml.bak"
 sed -i.bak -E "s/(\"version\": *\")[^\"]+(\")/\1$NEW_VERSION\2/" "$DIR/package.json"; rm -f "$DIR/package.json.bak"
