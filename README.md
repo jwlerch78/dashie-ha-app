@@ -51,6 +51,36 @@ The Python `custom_components/dashie/` HA integration remains unchanged — it p
 
 ## License
 
-[MIT](LICENSE). This includes the console frontend, the Node server, and the
-on-prem AI brain (`server/brain/` — TypeScript source in `server/brain/src/`,
-with `voice-brain.bundle.js` as its build artifact).
+[MIT](LICENSE), and that is deliberate — see below.
+
+### What MIT covers here, and why it is stated explicitly
+
+This repository contains source that is **vendored in from a private repo** by
+`scripts/release.sh` on every release:
+
+| What | Where | Notes |
+|---|---|---|
+| Console frontend | `dashie-console/frontend/`, `dashie-console-dev/frontend/` | unminified source, comments intact |
+| Node add-on server | `dashie-console/server/`, `dashie-console-dev/server/` | |
+| Prompt builder | `…/frontend/dashie-console/js/lib/prompt-builder.js` | both channels |
+| On-prem AI brain — TypeScript source and knowledge base | `dashie-console-dev/server/brain/src/` (39 files, incl. `_shared/tools/dashie-kb.generated.ts`) | **dev channel only.** The prod channel ships the built `voice-brain.bundle.js` without `src/` |
+
+All of it originates in the private
+[`dashie-console`](https://github.com/jwlerch78/dashie-console) repo.
+
+**All of it is MIT, on purpose.** That vendoring started as a build-script side effect
+rather than a decision, which left the code's license and our intent pointing in
+different directions. Ratified 2026-07-30: the intent now matches the license. Nothing
+is being retracted or reclassified, and no previously published snapshot changes.
+
+Two things this does **not** mean:
+
+- **MIT covers this source, not the hosted service.** The console and brain can talk to
+  Dashie's backend, which is a separate, closed, metered service. The license grants you
+  no rights to it and no claim on it. Running your own copy against your own
+  infrastructure is your business; running it against ours is not covered.
+- **It is not an invitation to contribute.** Read and fork freely — that is what MIT is
+  for. Pull requests are not accepted. Issues are.
+
+Copyright is retained, so future versions remain free to differ from what is published
+here.
