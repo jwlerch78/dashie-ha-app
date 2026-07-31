@@ -51,9 +51,9 @@ The Python `custom_components/dashie/` HA integration remains unchanged — it p
 
 ## License
 
-[MIT](LICENSE), and that is deliberate — see below.
+[AGPL-3.0](LICENSE) as of 2026-07-30. Releases before that date were MIT — see below.
 
-### What MIT covers here, and why it is stated explicitly
+### What the license covers, and why this changed
 
 This repository contains source that is **vendored in from a private repo** by
 `scripts/release.sh` on every release:
@@ -68,19 +68,28 @@ This repository contains source that is **vendored in from a private repo** by
 All of it originates in the private
 [`dashie-console`](https://github.com/jwlerch78/dashie-console) repo.
 
-**All of it is MIT, on purpose.** That vendoring started as a build-script side effect
-rather than a decision, which left the code's license and our intent pointing in
-different directions. Ratified 2026-07-30: the intent now matches the license. Nothing
-is being retracted or reclassified, and no previously published snapshot changes.
+That vendoring started as a build-script side effect rather than a decision, and it
+carried MIT with it — which was never a choice anyone made. The same code is also
+published under **AGPL-3.0** in
+[dashie-ha](https://github.com/jwlerch78/dashie-ha) (the brain source is byte-identical
+between the two). Two licenses on one codebase is not a posture; it is an accident with
+a license attached.
 
-Two things this does **not** mean:
+**Resolved 2026-07-30 by moving this repo to AGPL-3.0**, matching `dashie-ha`. One
+posture across everything we publish.
 
-- **MIT covers this source, not the hosted service.** The console and brain can talk to
-  Dashie's backend, which is a separate, closed, metered service. The license grants you
-  no rights to it and no claim on it. Running your own copy against your own
-  infrastructure is your business; running it against ours is not covered.
-- **It is not an invitation to contribute.** Read and fork freely — that is what MIT is
-  for. Pull requests are not accepted. Issues are.
+To be exact about what that does and does not do:
 
-Copyright is retained, so future versions remain free to differ from what is published
-here.
+- **Releases made before 2026-07-30 were MIT and stay MIT.** A license already granted
+  cannot be withdrawn, and we are not pretending otherwise. Anyone who took a copy under
+  those terms keeps them.
+- **From here on the terms are AGPL-3.0** — including its network-use clause. This is the
+  more restrictive direction, so nobody loses a right they were exercising.
+- **The license covers this source, not the hosted service.** The console and brain can
+  talk to Dashie's backend, which is a separate, closed, metered service. Neither license
+  grants you rights to it. Running your own copy against your own infrastructure is your
+  business; running it against ours is not covered. What the cloud runs, and which parts
+  of it are not published, is spelled out in
+  [dashie-ha/PROVENANCE.md](https://github.com/jwlerch78/dashie-ha/blob/main/PROVENANCE.md).
+- **It is not an invitation to contribute.** Read, fork, and self-host freely. Pull
+  requests are not accepted. Issues are.
