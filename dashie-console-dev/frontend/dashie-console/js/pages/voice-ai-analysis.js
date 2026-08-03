@@ -112,17 +112,17 @@ const VoiceAiAnalysis = {
         if (this._shareBusy || !this._retain) { App.renderPage(); return; }
         if (enabled) {
             const ok = await ConfirmModal.confirm({
-                title: 'Share conversations to improve Dashie',
+                title: `Share conversations to improve ${BRAND.productName}`,
                 messageHtml: `
                     <p style="margin: 0 0 10px;">When on, your saved conversations — what you said, how
-                    Dashie answered, and which tools it used — may be reviewed by the Dashie team to
-                    improve Dashie’s voice AI.</p>
+                    ${BRAND.assistantName} answered, and which tools it used — may be reviewed by ${BRAND.teamName} to
+                    improve ${BRAND.productName}’s voice AI.</p>
                     <ul style="margin: 0 0 10px; padding-left: 18px;">
                         <li>Calendar conversations are never shared.</li>
                         <li>Turn this off any time to stop sharing and remove your past conversations
                         from the improvement program.</li>
                     </ul>
-                    <p style="margin: 0;"><a href="https://dashieapp.com/privacy-policy.html" target="_blank"
+                    <p style="margin: 0;"><a href="${BRAND.urls.privacy}" target="_blank"
                     rel="noopener">Privacy Policy ↗</a></p>`,
                 confirmLabel: 'Turn on sharing',
             });
@@ -258,17 +258,17 @@ const VoiceAiAnalysis = {
 
     _renderHeader() {
         const on = this._retain;
-        const retainTip = 'When on, Dashie keeps what you said and how it answered so you can review them here. '
+        const retainTip = `When on, ${BRAND.assistantName} keeps what you said and how it answered so you can review them here. `
             + 'Cloud accounts store this securely; Home Assistant kiosks keep it on your own HA box.';
-        const shareTip = 'Off by default. When on, your saved conversations — what you said, how Dashie answered, '
-            + 'and which tools it used — may be reviewed by the Dashie team to improve Dashie’s voice AI. '
+        const shareTip = `Off by default. When on, your saved conversations — what you said, how ${BRAND.assistantName} answered, `
+            + `and which tools it used — may be reviewed by ${BRAND.teamName} to improve ${BRAND.productName}’s voice AI. `
             + 'Calendar conversations are never shared. Turn this off any time to stop sharing and remove your '
             + 'past conversations from the improvement program. Requires “Save conversation details”.';
         // Beta cohort only (FeatureGate ladder) — the hand-selected group that already has Voice & AI.
         const shareVisible = typeof FeatureGate !== 'undefined' && FeatureGate.isBetaUser();
         const shareRow = shareVisible ? `
                 <div style="display: flex; justify-content: space-between; align-items: center; gap: 16px; margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--border, #e5e7eb);">
-                    <div style="font-weight: 600;">Share conversations to improve Dashie${this._infoTip(shareTip)}</div>
+                    <div style="font-weight: 600;">Share conversations to improve ${BRAND.productName}${this._infoTip(shareTip)}</div>
                     <label class="toggle" style="flex-shrink: 0;${on ? '' : ' opacity: 0.45;'}">
                         <input type="checkbox" ${this._share ? 'checked' : ''} ${(!on || this._shareBusy) ? 'disabled' : ''}
                             onchange="VoiceAiAnalysis.toggleShare(this.checked)">
@@ -300,7 +300,7 @@ const VoiceAiAnalysis = {
             return `
                 <div class="card"><div class="card-body" style="color: var(--text-muted); text-align: center; padding: 32px 16px;">
                     ${this._retain
-                        ? 'No saved interactions yet. Ask Dashie something and it’ll show up here.'
+                        ? `No saved interactions yet. Ask ${BRAND.assistantName} something and it’ll show up here.`
                         : 'Turn on “Save conversation details” above to start keeping a record of your interactions.'}
                 </div></div>`;
         }
@@ -448,7 +448,7 @@ const VoiceAiAnalysis = {
             <div style="position: relative; background: var(--surface-muted, #f7f7f8); border-radius: 8px; padding: 10px 12px;${fbThumbs ? ' padding-right: 64px;' : ''} margin: 0 0 8px;">
                 ${fbThumbs ? `<div style="position: absolute; top: 8px; right: 10px;">${fbThumbs}</div>` : ''}
                 ${intr.prompt ? this._line('You said', intr.prompt, 13) : ''}
-                ${intr.response ? this._line('Dashie said', intr.response, 13) : ''}
+                ${intr.response ? this._line(`${BRAND.assistantName} said`, intr.response, 13) : ''}
                 ${intr.subtext ? this._line('On-screen', intr.subtext, 12, true) : ''}
             </div>` : `<div style="color: var(--text-muted); font-size: 12px; margin: 0 0 8px;">(transcript not saved for this turn)</div>`;
         }
@@ -524,7 +524,7 @@ const VoiceAiAnalysis = {
             : '';
         const dashie = t.response ? `
             <div style="margin: 0 0 4px;">
-                <span style="color: var(--text-muted); font-size: 10px; text-transform: uppercase; letter-spacing: 0.5px;">Dashie said</span>${lat}
+                <span style="color: var(--text-muted); font-size: 10px; text-transform: uppercase; letter-spacing: 0.5px;">${BRAND.assistantName} said</span>${lat}
                 <div style="font-size: 13px; line-height: 1.4;">${this._escape(t.response)}</div>
             </div>` : '';
         // On-screen (written) elaboration — cascade turns carry it; realtime turns don't.

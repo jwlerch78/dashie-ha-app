@@ -74,7 +74,7 @@ const LocalEnginesPage = {
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(subnetOverride ? { subnet: subnetOverride } : {}),
             });
-            if (r.status === 404) { this._scan = { error: 'Update the Dashie add-on to scan for engines.' }; }
+            if (r.status === 404) { this._scan = { error: `Update the ${BRAND.productName} add-on to scan for engines.` }; }
             else {
                 const data = await r.json();
                 this._scan = data?.ok ? data : { error: data?.reason === 'no_subnet'
@@ -273,7 +273,7 @@ const LocalEnginesPage = {
         if (typeof DashieAuth === 'undefined' || !DashieAuth.isAddonMode) {
             return `
                 <div class="card" style="max-width: 800px;"><div class="card-body" style="color: var(--text-secondary);">
-                    Local engines run on your own network, so they're managed from the Dashie Console
+                    Local engines run on your own network, so they're managed from the ${BRAND.consoleName}
                     add-on on your Home Assistant box.
                 </div></div>`;
         }

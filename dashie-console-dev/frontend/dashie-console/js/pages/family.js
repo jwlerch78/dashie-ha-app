@@ -163,7 +163,7 @@ const FamilyPage = {
         // leading "The " / trailing " Family" the user may have typed so we
         // don't render "The The Smith Family Family".
         const base = name.trim().replace(/^The\s+/i, '').replace(/\s+Family$/i, '');
-        const preview = base ? `The ${this._escape(base)} Family` : 'The Dashie Family';
+        const preview = base ? `The ${this._escape(base)} Family` : `The ${BRAND.productName} Family`;
         return `
             <div class="card" style="margin-bottom: 16px;">
                 <div class="card-body">
@@ -377,7 +377,7 @@ const FamilyPage = {
             ? 'Loading…'
             : (linked
                 ? 'Send a notification to their phone when a timer or reminder goes off.'
-                : 'Notifies their phone when a timer or reminder goes off — once they’ve installed and linked the Dashie mobile app.');
+                : `Notifies their phone when a timer or reminder goes off — once they’ve installed and linked the ${BRAND.productName} mobile app.`);
         return `
             <div class="form-group" style="margin-top: 12px;">
                 <label class="toggle-row">

@@ -22,10 +22,10 @@ const VoiceAiPresetPicker = {
         return String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
     },
 
-    /** @param {object} o { presets[], selectedId, available(id)→bool, isAddonMode } */
+    /** @param {object} o { presets[], selectedId, available(id)→bool, isAddonMode, localMode } */
     render(o) {
         const cards = (o.presets || [])
-            .map(p => this._card(p, p.id === o.selectedId, o.available(p.id), o.isAddonMode))
+            .map(p => this._card(p, p.id === o.selectedId, o.available(p.id), o.isAddonMode, !!o.localMode))
             .join('');
         return `
             <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(158px, 1fr)); gap: 10px; margin-bottom: 16px;">
@@ -33,7 +33,7 @@ const VoiceAiPresetPicker = {
             </div>`;
     },
 
-    _card(p, selected, available, isAddonMode) {
+    _card(p, selected, available, isAddonMode, localMode) {
         const O = window.VoiceAiOptions;
         const costColor = p.needsCreditsOrKey ? O.COLOR.cloud : O.COLOR.local;
         // Mixed presets color each tagline half by its locality (Hybrid:
@@ -45,21 +45,38 @@ const VoiceAiPresetPicker = {
             ? `box-shadow: 0 0 0 2px var(--accent); border-color: var(--accent);`
             : '';
         const disabledStyle = available ? '' : 'opacity: 0.55;';
-        const onclick = available ? `onclick="VoiceAiPage.selectPreset('${p.id}')"` : '';
+        // An unavailable Cloud/Hybrid card is CLICKABLE, not inert: the click tries the
+        // one-time starter grant, and only falls through to the Credits page if there is
+        // no grant to give (2026-07-29 — mirrors the tablet's blocked-preset tap). It is
+        // still not a silent no-op — every outcome either activates the preset with a
+        // disclosure or navigates somewhere useful, which is the rule this picker has
+        // always followed. The card keeps its dimmed styling: until the grant lands the
+        // preset genuinely isn't usable, and pretending otherwise would be the lie.
+        const onclick = available
+            ? `onclick="VoiceAiPage.selectPreset('${p.id}')"`
+            : `onclick="VoiceAiPage.tryStarterGrant('${p.id}')"`;
         const check = selected ? `<span style="color: var(--accent); font-weight: 700;">✓</span>` : '';
         // Unavailable Cloud/Hybrid: explicit prompt with working links — the
         // links stay clickable even though the card itself is inert. Both Cloud
         // and Hybrid can run on credits OR a BYO AI key, so we surface both
         // options on either card (not addon-gated). margin-top:auto bottom-
         // justifies the prompt so it aligns across the equal-height cards.
-        const prompt = available ? '' : `
+        //
+        // Local mode swaps the credits half for sign-in: there is no account to
+        // hold credits, and the Credits page is not even routable, so offering
+        // it would be a dead link. The AI-keys half is unchanged — a BYO key
+        // works on the box with no account at all, which is the point.
+        const prompt = available ? '' : (localMode ? `
+            <div style="font-size: 11px; color: var(--text-muted, #777); margin-top: auto; padding-top: 8px; line-height: 1.4; opacity: 1;">
+                <a href="#" onclick="event.preventDefault(); event.stopPropagation(); App.startSignIn()" style="color: var(--accent); font-weight: 600;">Sign in</a> or add your own <a href="#" onclick="event.preventDefault(); event.stopPropagation(); App.navigate('api-keys')" style="color: var(--accent); font-weight: 600;">AI key</a> →
+            </div>` : `
             <div style="font-size: 11px; color: var(--status-error, #c00); margin-top: auto; padding-top: 8px; line-height: 1.4; opacity: 1;">
                 Add <a href="#" onclick="event.preventDefault(); event.stopPropagation(); App.navigate('credits')" style="color: var(--accent); font-weight: 600;">credits</a> or <a href="#" onclick="event.preventDefault(); event.stopPropagation(); App.navigate('api-keys')" style="color: var(--accent); font-weight: 600;">AI keys</a> →
-            </div>`;
+            </div>`);
         return `
             <div ${onclick}
                 class="card"
-                style="cursor: ${available ? 'pointer' : 'default'}; padding: 12px 14px; display: flex; flex-direction: column; ${ring} ${disabledStyle}">
+                style="cursor: pointer; padding: 12px 14px; display: flex; flex-direction: column; ${ring} ${disabledStyle}">
                 <div style="display: flex; justify-content: space-between; align-items: baseline; gap: 8px;">
                     <div style="font-weight: 700; font-size: 14px;">${this._esc(p.label)}</div>
                     ${check}
@@ -96,7 +113,7 @@ const VoiceAiPresetPicker = {
             <div class="card" style="margin-bottom: 16px;"><div class="card-body">
                 <div style="font-weight: 500; margin-bottom: 6px;">Voice is handled by Home Assistant</div>
                 <div style="color: var(--text-secondary); font-size: var(--font-size-sm); line-height: 1.5; margin-bottom: 12px;">
-                    Dashie hands the wake word's audio to your Home Assistant Assist pipeline —
+                    ${BRAND.productName} hands the wake word's audio to your Home Assistant Assist pipeline —
                     speech-to-text, conversation agent, and voice are all configured in HA.
                 </div>
                 <a href="https://my.home-assistant.io/redirect/voice_assistants/" target="_blank" rel="noopener"

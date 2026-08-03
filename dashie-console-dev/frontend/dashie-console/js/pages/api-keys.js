@@ -64,7 +64,7 @@ const ApiKeysPage = {
      *  OpenRouter is the single-key catch-all (and the only path to Amazon Nova). */
     GROUPS: [
         { id: 'direct', title: 'Provider keys',
-          blurb: 'Add a key for the models you use — Dashie runs its brain directly on it, no markup.' },
+          blurb: `Add a key for the models you use — ${BRAND.productName} runs its brain directly on it, no markup.` },
         { id: 'universal', title: 'One key for everything',
           blurb: 'A single OpenRouter key unlocks every model, including Amazon Nova. Direct keys above skip OpenRouter’s markup.' },
     ],
@@ -100,7 +100,7 @@ const ApiKeysPage = {
         if (typeof DashieAuth === 'undefined' || !DashieAuth.isAddonMode) {
             return `
                 <div class="card" style="max-width: 800px;"><div class="card-body" style="color: var(--text-secondary);">
-                    API keys are stored on your Home Assistant box and managed from the Dashie Console add-on there.
+                    API keys are stored on your Home Assistant box and managed from the ${BRAND.consoleName} add-on there.
                 </div></div>`;
         }
         if (!this._providers && !this._loading && !this._error) {
@@ -120,9 +120,9 @@ const ApiKeysPage = {
         return `
             <div style="max-width: 800px;">
                 <div style="margin-bottom: 20px; color: var(--text-secondary); font-size: var(--font-size-sm); line-height: 1.5;">
-                    Bring your own AI: add a model-provider key and Dashie can run its brain on your
-                    account instead of Dashie credits. Keys are stored <strong>only on this Home
-                    Assistant box</strong> — they never leave it and are never synced to Dashie Cloud.
+                    Bring your own AI: add a model-provider key and ${BRAND.productName} can run its brain on your
+                    account instead of ${BRAND.productName} credits. Keys are stored <strong>only on this Home
+                    Assistant box</strong> — they never leave it and are never synced to ${BRAND.cloudName}.
                 </div>
                 ${this.GROUPS.map((g, i) => {
                     const cards = this._visibleProviders().filter(p => p.group === g.id);
@@ -177,7 +177,7 @@ const ApiKeysPage = {
                     ${p.orphaned ? '' : pill}
                 </div>
                 ${p.orphaned ? `<div style="color: var(--text-secondary); font-size: 13px; line-height: 1.5; margin-bottom: 12px;">
-                    Dashie can’t run its brain on this key yet, so it currently does <strong>nothing</strong> — your turns still use Dashie credits. Use an <strong>OpenRouter</strong> key to run these models on your own account, and remove this one.
+                    ${BRAND.productName} can’t run its brain on this key yet, so it currently does <strong>nothing</strong> — your turns still use ${BRAND.productName} credits. Use an <strong>OpenRouter</strong> key to run these models on your own account, and remove this one.
                 </div>` : ''}
                 <div style="display: flex; gap: 12px; flex-wrap: wrap; align-items: flex-end;">
                     ${inputs}
@@ -237,7 +237,7 @@ const ApiKeysPage = {
         const p = this.PROVIDERS.find(x => x.id === providerId);
         const confirmed = await ConfirmModal.confirm({
             title: `Remove ${p?.name || providerId} key?`,
-            message: 'Dashie will stop using this key. You can add it again any time.',
+            message: `${BRAND.productName} will stop using this key. You can add it again any time.`,
             confirmLabel: 'Remove',
             cancelLabel: 'Cancel',
             danger: true,
@@ -309,7 +309,7 @@ const ApiKeysPage = {
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ provider: providerId, value }),
             });
-            if (resp.status === 401) throw new Error('Sign the add-on into a Dashie account first.');
+            if (resp.status === 401) throw new Error(`Sign the add-on into a ${BRAND.productName} account first.`);
             if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
             const data = await resp.json();
             this._providers = data?.providers || this._providers;

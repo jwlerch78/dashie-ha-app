@@ -313,7 +313,7 @@ const PhotosPage = {
             <div class="card" style="margin-bottom: 16px;">
                 <div class="card-body">
                     <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px;">
-                        <div style="font-weight: 500;">Dashie Cloud Storage</div>
+                        <div style="font-weight: 500;">${BRAND.cloudName} Storage</div>
                         <div style="color: var(--text-muted); font-size: var(--font-size-sm);">
                             ${this._formatBytes(used)} / ${this._formatBytes(total)} (${pct}%)
                         </div>

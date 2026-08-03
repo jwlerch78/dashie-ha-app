@@ -313,6 +313,12 @@
 
       // Base values for all templates
       const baseValues = {
+        // Assistant identity is a template variable. Fallback order: caller-
+        // provided name → this build's brand → the pre-variable literal (the
+        // brain-side builder keeps the same final default; see CONTRACTS).
+        ASSISTANT_NAME: context.assistantName
+            || (typeof BRAND !== 'undefined' && BRAND.assistantName)
+            || 'Dashie',
         DATE_TIME: dateTime,
         USER_REQUEST: userRequest,
         CHAT_HISTORY: context.chatHistory || '',  // Empty for now, implement later

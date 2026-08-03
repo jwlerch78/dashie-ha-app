@@ -344,8 +344,8 @@ const CalendarPage = {
                 calendarsHtml = `
                     <div style="padding: 12px 16px; color: var(--text-muted); font-size: 13px;">
                         ${a.auth_invalid
-                            ? 'Reauthorize this account on the Dashie dashboard to load its calendars.'
-                            : 'No calendars synced yet. Open the Dashie dashboard to populate them.'}
+                            ? `Reauthorize this account on the ${BRAND.productName} dashboard to load its calendars.`
+                            : `No calendars synced yet. Open the ${BRAND.productName} dashboard to populate them.`}
                     </div>
                 `;
             } else {
@@ -552,7 +552,7 @@ const CalendarPage = {
             // The button is hidden for protected rows, but a stale click handler
             // could still fire — fall back to the same warning the dashboard shows.
             const why = account.account_type === 'primary'
-                ? 'This is your Dashie sign-in account; removing it requires signing out completely.'
+                ? `This is your ${BRAND.productName} sign-in account; removing it requires signing out completely.`
                 : 'This is a linked family member account; unlink them from Settings → Family to remove it.';
             Toast.info(why);
             return;
@@ -560,7 +560,7 @@ const CalendarPage = {
         const label = account ? (account.email || `${provider}:${accountType}`) : `${provider}:${accountType}`;
         const ok = await ConfirmModal.confirm({
             title: 'Remove calendar account',
-            message: `Remove ${label}?\n\nCalendars from this account will stop appearing on Dashie.`,
+            message: `Remove ${label}?\n\nCalendars from this account will stop appearing on ${BRAND.productName}.`,
             confirmLabel: 'Remove',
             danger: true,
         });

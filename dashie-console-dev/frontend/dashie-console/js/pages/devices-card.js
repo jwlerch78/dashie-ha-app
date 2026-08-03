@@ -1040,7 +1040,7 @@ const DevicesCard = {
 
     async control(deviceId, role, value) {
         if (!DashieAuth.isAddonMode) {
-            throw new Error('Device controls require running inside Dashie Console');
+            throw new Error(`Device controls require running inside ${BRAND.consoleName}`);
         }
         const resp = await fetch(DashieAuth._addonUrl('/api/ha/control'), {
             method: 'POST',

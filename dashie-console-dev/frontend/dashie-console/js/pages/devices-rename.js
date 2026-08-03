@@ -52,7 +52,7 @@ const DevicesRename = {
             <div class="card" style="margin-bottom: 16px; border-left: 3px solid var(--accent);">
                 <div class="card-body" style="display: flex; align-items: center; justify-content: space-between; gap: 12px;">
                     <div>
-                        <strong>${conflicts.length} device${conflicts.length === 1 ? ' has' : 's have'} different names in Home Assistant and Dashie.</strong>
+                        <strong>${conflicts.length} device${conflicts.length === 1 ? ' has' : 's have'} different names in Home Assistant and ${BRAND.productName}.</strong>
                         <div style="color: var(--text-muted); font-size: var(--font-size-sm); margin-top: 4px;">
                             Pick which name to use for each — both sides will be updated.
                         </div>
@@ -244,7 +244,7 @@ const DevicesRename = {
                 }, 1500);
             } catch (e) {
                 console.warn('[DevicesRename] HA rename failed (Supabase succeeded):', e.message);
-                if (!silent) Toast.error(`Saved in Dashie. HA rename failed: ${e.message}`);
+                if (!silent) Toast.error(`Saved in ${BRAND.productName}. HA rename failed: ${e.message}`);
             }
         }
     },

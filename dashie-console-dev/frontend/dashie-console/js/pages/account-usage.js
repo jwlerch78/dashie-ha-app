@@ -1,9 +1,7 @@
 /* ============================================================
    Account → Token Usage tab
    ------------------------------------------------------------
-   Phase 1 of the credits/billing build (see Phase G in
-   /Users/johnlerch/projects/dashieapp_staging/.reference/build-plans/
-   20260415_DASHIE_HA_ADDON_W_TOKEN_MGMT.md).
+   Phase 1 of the credits/billing build.
 
    What this view does today:
      - Stat strip: current balance, today's spend, this-month's spend
@@ -952,7 +950,7 @@ const AccountUsage = {
         const turn = (t, last) => `
             <div style="margin: 0 0 ${last ? '0' : '8px'}; padding: 0 0 ${last ? '0' : '8px'}; ${last ? '' : 'border-bottom: 1px dashed var(--border, #e5e7eb);'}">
                 ${t.prompt ? line('You said', t.prompt) : ''}
-                ${t.response ? line('Dashie said', t.response) : ''}
+                ${t.response ? line(`${BRAND.assistantName} said`, t.response) : ''}
             </div>`;
         return `<div style="background: var(--surface-muted, #f7f7f8); border-radius: 8px; padding: 8px 10px; margin: 0 0 8px;">
             ${turns.map((t, i) => turn(t, i === turns.length - 1)).join('')}
@@ -971,7 +969,7 @@ const AccountUsage = {
         return `
             <div style="background: var(--surface-muted, #f7f7f8); border-radius: 8px; padding: 8px 10px; margin: 0 0 8px;">
                 ${intr.prompt ? line('You said', intr.prompt) : ''}
-                ${intr.response ? line('Dashie replied', intr.response) : ''}
+                ${intr.response ? line(`${BRAND.assistantName} replied`, intr.response) : ''}
             </div>`;
     },
 

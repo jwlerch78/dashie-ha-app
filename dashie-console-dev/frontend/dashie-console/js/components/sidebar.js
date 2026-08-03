@@ -19,7 +19,10 @@ const Sidebar = {
         // hidden when the console is served from the public website; the
         // credits widget is dev-only; locations is hidden everywhere until
         // the feature is ready.
-        const showCredits = FeatureGate.shouldShow('credits');
+        // Gate on the PAGE, not the feature: the widget is a deep link to
+        // 'credits', so it must not render when that page is unreachable — which
+        // is the case in local mode, where there is no account to hold a balance.
+        const showCredits = FeatureGate.isPageEnabled('credits');
         // Dashie Cloud dashboard section — built first so we can drop the whole
         // section (label + divider) when it has no visible items. For an ha_only
         // (voice-only) account every item here is gated off, so the section
@@ -38,22 +41,22 @@ const Sidebar = {
             <div class="sidebar-divider"></div>
 
             <div class="sidebar-section">
-                <div class="sidebar-section-label">Dashie Cloud</div>
+                <div class="sidebar-section-label">${BRAND.cloudName}</div>
                 ${dashieCloudItems}
             </div>
         ` : '';
         return `
             <div class="sidebar-logo">
-                <img src="assets/dashie-logo-orange.png" alt="Dashie" class="sidebar-logo-full">
-                <img src="assets/dashie-icon.png" alt="Dashie" class="sidebar-logo-icon">
+                <img src="${BRAND.logo}" alt="${BRAND.productName}" class="sidebar-logo-full">
+                <img src="${BRAND.icon}" alt="${BRAND.productName}" class="sidebar-logo-icon">
             </div>
 
             <div class="sidebar-section">
-                ${this._navItem('devices', 'Dashboards', 'icon-tv', activePage)}
+                ${this._gatedNavItem('devices', 'Dashboards', 'icon-tv', activePage)}
                 ${this._gatedNavItem('voice-ai', 'Voice & AI', 'icon-ai-chat', activePage)}
                 ${this._gatedNavItem('video-feeds', 'Video Feeds', 'icon-video-camera', activePage)}
                 ${this._gatedNavItem('scheduled-actions', 'Scheduled Actions', 'icon-clock', activePage)}
-                ${this._navItem('preferences', 'Preferences', 'icon-sliders', activePage)}
+                ${this._gatedNavItem('preferences', 'Preferences', 'icon-sliders', activePage)}
             </div>
 
             ${dashieCloudSection}
@@ -62,7 +65,7 @@ const Sidebar = {
 
             <div class="sidebar-section">
                 <div class="sidebar-section-label">Manage</div>
-                ${this._navItem('account', 'Account', 'icon-account-settings', activePage)}
+                ${this._gatedNavItem('account', 'Account', 'icon-account-settings', activePage)}
                 ${this._gatedNavItem('credits', 'Credits', 'icon-credits', activePage)}
                 ${this._gatedNavItem('api-keys', 'API Keys', 'icon-key', activePage)}
                 ${this._gatedNavItem('local-engines', 'Local Engines', 'icon-server', activePage)}
@@ -104,62 +107,19 @@ const Sidebar = {
      * Re-renders with the sidebar whenever FeatureGate.setSubscriptionState
      * fires App.renderPage().
      */
+    /** Trial/subscription pill (delta — Dashie builds only; open-core no-ops). */
     _renderTrialPill() {
-        if (typeof SubscriptionStatus === 'undefined') return '';
-        const chip = SubscriptionStatus.chip();
-        if (!chip) return '';
-
-        const warn = chip.tone === 'warn';
-        const color = warn ? 'var(--status-warning, #b45309)' : 'var(--text-secondary, #555)';
-        const bg = warn ? 'rgba(180,83,9,0.10)' : 'var(--bg-subtle, #f1f3f5)';
-        const ctaStyle = 'display:block; width:100%; margin-top:6px; background: var(--accent, #ffaa00);'
-            + ' color:#fff; border:none; border-radius:6px; padding:5px 10px; font-size:12px;'
-            + ' font-weight:700; cursor:pointer;';
-        let cta = '';
-        if (chip.showSubscribe) {
-            cta = `<button onclick="AccountPage.subscribe && AccountPage.subscribe()" style="${ctaStyle}">Subscribe</button>`;
-        } else if (chip.showManage) {
-            cta = `<button onclick="AccountPage.openBillingPortal && AccountPage.openBillingPortal()" style="${ctaStyle}">Fix payment</button>`;
-        }
-        return `
-            <div class="sidebar-trial"
-                 style="margin-bottom:10px; padding:8px 10px; border-radius:8px; background:${bg};
-                        color:${color}; text-align:center;">
-                <div style="font-size:12px; font-weight:600;">${chip.label}</div>
-                ${cta}
-            </div>`;
+        return window.SubscriptionStatus?.renderSidebarPill?.() ?? '';
     },
 
-    /**
-     * "Start free trial" entry — the ha_only → dashboard opt-in (Phase 6 of the
-     * HA voice-only account model). For an ha_only account every other item in the
-     * Dashie Cloud section is gated off, so instead of collapsing to nothing the
-     * section shows the one thing that IS available: the unspent 30-day trial.
-     * Highlighted (accent) because it's a CTA, not navigation.
-     */
+    /** Trial-start CTA nav entry (delta — Dashie builds only; open-core no-ops). */
     _startTrialNavItem() {
-        if (typeof DashboardTrial === 'undefined' || !DashboardTrial.isAvailable()) return '';
-        return `
-            <div class="sidebar-nav-item" onclick="DashboardTrial.promptAndStart()"
-                 style="color: var(--accent, #ffaa00); font-weight: 600;"
-                 title="30 days of the full Dashie dashboard — free, no card">
-                <span class="nav-icon"><img src="assets/icons/icon-star.svg" alt="Start free trial"></span>
-                <span class="nav-label">Start free trial</span>
-            </div>
-        `;
+        return window.DashboardTrial?.renderStartTrialNavItem?.() ?? '';
     },
 
-    /** "Purchase License" entry in the Dashie Cloud section, shown only when the
-     *  trial/subscription has expired (no entitlement) — a direct sidebar path
-     *  to buy. Goes to subscribe.html via AccountPage.subscribe(). */
+    /** Post-expiry purchase nav entry (delta — Dashie builds only; open-core no-ops). */
     _purchaseNavItem() {
-        if (typeof FeatureGate === 'undefined' || FeatureGate.hasEntitlement()) return '';
-        return `
-            <div class="sidebar-nav-item" onclick="AccountPage.subscribe && AccountPage.subscribe()">
-                <span class="nav-icon"><img src="assets/icons/icon-star.svg" alt="Purchase License"></span>
-                <span class="nav-label">Purchase License</span>
-            </div>
-        `;
+        return window.SubscribeGate?.renderPurchaseNavItem?.() ?? '';
     },
 
     /** Renders a nav item only when FeatureGate allows the page. */

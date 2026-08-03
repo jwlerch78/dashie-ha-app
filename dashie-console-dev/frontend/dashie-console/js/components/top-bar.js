@@ -26,8 +26,15 @@ const TopBar = {
                     style="object-fit: cover;"
                     onerror="this.outerHTML = TopBar._initialsAvatarHtml()">`
             : this._initialsAvatarHtml();
+        // Local mode: no Dashie account, so this slot becomes the sign-in door
+        // instead of an account menu. It shows the HA identity the add-on reports
+        // over ingress — that IS who is signed in here — and the label states the
+        // account is optional, because it is.
+        const localMode = (typeof DashieAuth !== 'undefined') && DashieAuth.isLocalMode;
+        const label = localMode ? (user.name || 'Not signed in') : user.email;
         // Avatar group is clickable — opens an account menu (Account
-        // Settings, Sign Out). Click outside closes via _onDocumentClick.
+        // Settings, Sign Out), or the sign-in menu in local mode. Click outside
+        // closes via _onDocumentClick.
         return `
             <div class="top-bar-left">
                 <button class="hamburger-btn" onclick="App.toggleSidebar()">☰</button>
@@ -41,7 +48,7 @@ const TopBar = {
                          onclick="event.stopPropagation(); TopBar.toggleMenu()"
                          style="cursor: pointer; user-select: none;">
                         ${avatar}
-                        <span class="top-bar-username">${user.email}</span>
+                        <span class="top-bar-username">${label}</span>
                         <span class="top-bar-chevron" style="font-size: 10px; opacity: 0.6; margin-left: 2px;">▾</span>
                     </div>
                     ${this._menuOpen ? this._renderMenu() : ''}
@@ -55,17 +62,13 @@ const TopBar = {
     },
 
     _renderMenu() {
-        // Show Subscribe entry when user has no current entitlement.
-        // FeatureGate.hasEntitlement() is optimistic-true until SubscribeGate
-        // populates state, so this only appears for confirmed-expired users.
-        const showSubscribe = typeof FeatureGate !== 'undefined' && !FeatureGate.hasEntitlement();
-        const subscribeRow = showSubscribe ? `
-                <button onclick="TopBar.closeMenu(); AccountPage.subscribe && AccountPage.subscribe()"
-                        style="width: 100%; text-align: left; padding: 10px 14px; background: none;
-                               border: none; cursor: pointer; font-size: 14px; color: var(--accent, #ffaa00); font-weight: 600;">
-                    Subscribe to Dashie
-                </button>
-                <div style="height: 1px; background: var(--border, #e5e7eb);"></div>` : '';
+        // Local mode: the only account action available is acquiring one. No
+        // Account Settings / Sign Out / Delete — there is nothing to manage,
+        // sign out of, or delete.
+        if ((typeof DashieAuth !== 'undefined') && DashieAuth.isLocalMode) return this._renderSignInMenu();
+        // Subscribe entry for confirmed-expired users (delta — Dashie builds
+        // only; open-core ships without SubscribeGate and this stays '').
+        const subscribeRow = window.SubscribeGate?.renderMenuSubscribeRow?.() ?? '';
         return `
             <div class="top-bar-user-menu" id="top-bar-user-menu"
                  onclick="event.stopPropagation()"
@@ -90,6 +93,29 @@ const TopBar = {
                         style="width: 100%; text-align: left; padding: 10px 14px; background: none;
                                border: none; cursor: pointer; font-size: 14px; color: var(--status-error, #c00);">
                     Delete account…
+                </button>
+            </div>
+        `;
+    },
+
+    /** Local-mode account menu: one door, and nothing else. It used to carry a
+     *  "running on your own engines — no account needed" line; removed 2026-07-30
+     *  (John) — the console already demonstrates that, and a menu is for actions. */
+    _renderSignInMenu() {
+        return `
+            <div class="top-bar-user-menu" id="top-bar-user-menu"
+                 onclick="event.stopPropagation()"
+                 style="position: absolute; top: calc(100% + 6px); right: 0; min-width: 260px;
+                        background: var(--bg-card, #fff); border: 1px solid var(--border, #e5e7eb);
+                        border-radius: 6px; box-shadow: 0 4px 12px rgba(0,0,0,0.08);
+                        z-index: 1050; overflow: hidden;">
+                <button onclick="TopBar.closeMenu(); App.startSignIn()"
+                        style="width: 100%; text-align: left; padding: 10px 14px; background: none;
+                               border: none; cursor: pointer; font-size: 14px; color: var(--text-primary);">
+                    Sign in or create an account
+                    <div style="font-size: 12px; color: var(--text-muted, #777); margin-top: 2px;">
+                        For hosted engines and credits
+                    </div>
                 </button>
             </div>
         `;

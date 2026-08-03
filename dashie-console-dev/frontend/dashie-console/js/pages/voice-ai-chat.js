@@ -198,7 +198,7 @@ const VoiceAiChat = {
         if (!this._open.speak) {
             const ok = await ConfirmModal.confirm({
                 title: 'Play voice out loud?',
-                message: 'Each reply will be spoken in the selected personality’s voice using Dashie Cloud text-to-speech — which uses your credits (billed per character, same as the tablet). Turn it off any time.',
+                message: `Each reply will be spoken in the selected personality’s voice using ${BRAND.cloudName} text-to-speech — which uses your credits (billed per character, same as the tablet). Turn it off any time.`,
                 confirmLabel: 'Turn on voice',
                 cancelLabel: 'Cancel',
             });
@@ -304,7 +304,7 @@ const VoiceAiChat = {
             if (templatePersonalities.length) {
                 groups.push(`<optgroup label="Built-in">${templatePersonalities.map(t => opt(t.key || t.id, t.name)).join('')}</optgroup>`);
             }
-            if (!groups.length) groups.push(opt('dashie', 'Dashie (default)'));
+            if (!groups.length) groups.push(opt('dashie', `${BRAND.assistantName} (default)`));
             return `<select id="voice-ai-chat-personality" onchange="VoiceAiChat.setPersonality(this.value)" style="${selectStyle}">${groups.join('')}</select>`;
         })();
 
@@ -352,7 +352,7 @@ const VoiceAiChat = {
                     </label>
                     <button class="btn ${m.speak ? 'btn-primary' : 'btn-secondary'} btn-sm"
                         onclick="VoiceAiChat.toggleSpeak()"
-                        title="Speak each reply in the personality's voice (Dashie Cloud TTS — uses credits)">
+                        title="Speak each reply in the personality's voice (${BRAND.cloudName} TTS — uses credits)">
                         ${m.speak ? '🔊 Voice on' : '🔈 Play voice out loud'}
                     </button>
                 </div>

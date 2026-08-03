@@ -174,8 +174,10 @@ const DevicesDetailModals = {
                 showOrientation ? this._summaryRow('Orientation',
                     this._labelFor(this.ORIENTATION_MODES, display.orientationLock || 'auto'),
                     `DevicesDetailModals.openPicker('${idAttr}','display','orientationLock','Orientation','ORIENTATION_MODES','auto')`) : '',
-                this._summaryRow('Theme', themeSummary,
-                    `DevicesDetailModals.openTheme('${idAttr}')`),
+                FeatureGate.optionAllowed('display.themeFamily')
+                    ? this._summaryRow('Theme', themeSummary,
+                        `DevicesDetailModals.openTheme('${idAttr}')`)
+                    : '',
                 showAnimationRows ? this._toggleRow(device, 'display', 'animationsEnabled',
                     'Animations', animationsOn) : '',
                 showAnimationRows && animationsOn ? this._summaryRow('Animation Level',
@@ -393,6 +395,10 @@ const DevicesDetailModals = {
 
     renderThemeModal() {
         if (!this._themeOpen) return '';
+        // Belt and braces: the row that opens this is already gated, but the
+        // modal is reachable by any other caller and this is a family-only
+        // control (seasonal theme families).
+        if (!FeatureGate.optionAllowed('display.themeFamily')) return '';
         const device = DevicesPage._findDevice(this._themeDeviceId);
         if (!device) return '';
         const display = device.settings?.display || {};
@@ -432,7 +438,12 @@ const DevicesDetailModals = {
         const ctx = this._pickerCtx;
         const device = DevicesPage._findDevice(ctx.deviceId);
         if (!device) return '';
-        const options = this[ctx.optionsCatalogKey] || [];
+        // Edition filter, applied HERE so it covers every picker rather than
+        // each caller remembering. ctx.category+key is exactly the key shape
+        // FAMILY_ONLY_OPTIONS uses (e.g. 'display.layoutMode' → drops 'widgets',
+        // the family dashboard, from the published build).
+        const options = FeatureGate.filterOptions(
+            `${ctx.category}.${ctx.key}`, this[ctx.optionsCatalogKey] || []);
         // Default chain: stored value → caller-supplied default → first
         // option. Falling all the way through to options[0] is what made
         // Widget Zoom show "50%" when the device hadn't yet broadcast
@@ -834,7 +845,7 @@ const DevicesDetailModals = {
             </div>
             <div style="font-size: var(--font-size-sm); color: var(--text-muted);">
                 “Account default” follows the voice set on the <a href="#voice-ai" onclick="event.preventDefault(); App.navigate('voice-ai')">Voice &amp; AI</a> page; picking one here overrides it for this device only.
-                Premium voices cost about 4× the default Dashie voice per reply.
+                Premium voices cost about 4× the default ${BRAND.assistantName} voice per reply.
             </div>`;
         return this._modal('Voice', body, 'DevicesDetailModals.closeVoiceVoice()', this._applyToAllFooter());
     },
@@ -883,12 +894,16 @@ const DevicesDetailModals = {
     // logged in, so the cloud/drive sources are always offered.
     _photoSourceOptions(device) {
         const haEnabled = device?.settings?.home_assistant?.core?.haEnabled === true;
-        return [
+        // The edition filter drops `supabase` (Dashie Cloud albums — family
+        // product) and `google_drive` (needs the Google Drive OAuth scope, which
+        // the HA edition deliberately does not request) from the published build.
+        // HA Media / Immich / Unsplash stay — screensaver albums are core here.
+        return FeatureGate.filterOptions('photos.sourceType', [
             ...(haEnabled ? [['ha_media', 'Home Assistant'], ['immich', 'Immich']] : []),
             ['google_drive', 'Google Drive'],
-            ['supabase', 'Dashie Cloud'],
+            ['supabase', BRAND.cloudName],
             ['unsplash', 'Unsplash'],
-        ];
+        ]);
     },
 
     renderPhotosModal() {
@@ -929,7 +944,7 @@ const DevicesDetailModals = {
                 ${albumPicker}
                 ${noPicker ? `
                     <div style="font-size: var(--font-size-sm); color: var(--text-muted);">
-                        Album selection is available for the Dashie Cloud and Immich sources. Other
+                        Album selection is available for the ${BRAND.cloudName} and Immich sources. Other
                         sources use their own configuration on the device.
                     </div>` : ''}
             </div>

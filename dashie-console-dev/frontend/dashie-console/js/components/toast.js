@@ -78,7 +78,7 @@ const Toast = {
             return "You've been signed out. Refresh to sign back in.";
         }
         if (lower.includes('subscription') || lower.includes('403')) {
-            return "An active Dashie subscription is required for this action.";
+            return `An active ${BRAND.productName} subscription is required for this action.`;
         }
         if (lower.includes('402') || lower.includes('insufficient_credits')) {
             return "You're out of credits. Add more from the Account page.";

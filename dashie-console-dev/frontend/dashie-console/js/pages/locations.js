@@ -3,9 +3,24 @@
    ============================================================ */
 
 const LocationsPage = {
+    // Demo data — this alpha-gated page isn't wired to Supabase yet.
+    // (Moved from the old MockData blocks when mock-data.js slimmed to
+    // the identity store, 2026-07.)
+    _settings: {
+        trackingEnabled: true,
+        travelTimes: true,
+        trafficModel: 'Best Guess',
+        earlyArrival: 5,
+    },
+    _locations: [
+        { id: '1', name: 'Home', icon: '🏠', address: '123 Main St, Anytown' },
+        { id: '2', name: 'School', icon: '🏫', address: '456 Oak Ave, Anytown' },
+        { id: '3', name: 'Work', icon: '💼', address: '789 Business Blvd' },
+    ],
+
     render() {
-        const settings = MockData.locationsSettings;
-        const locations = MockData.savedLocations;
+        const settings = this._settings;
+        const locations = this._locations;
 
         const locationItems = locations.map(l => ({
             title: `${l.icon}  ${l.name}`,
@@ -29,6 +44,6 @@ const LocationsPage = {
     },
 
     topBarTitle() { return 'Locations'; },
-    topBarSubtitle() { return `${MockData.savedLocations.length} saved locations`; },
+    topBarSubtitle() { return `${this._locations.length} saved locations`; },
     topBarActions() { return `<button class="btn btn-primary">+ Add Location</button>`; },
 };

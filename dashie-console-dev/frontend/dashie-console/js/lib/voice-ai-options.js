@@ -26,10 +26,25 @@
    ============================================================ */
 
 const VoiceAiOptions = {
-    // Strong swatch (tags, legend) + light row-background tint.
+    // Strong swatch (tags, legend) + light row-background tint. One build-
+    // independent palette: cloud locality is Dashie orange everywhere. (Until
+    // 2026-07-30 the published build swapped in Chickadee's wing-blue — both
+    // builds are Dashie now, so there is nothing to branch on.)
     COLOR: { cloud: '#f97316', local: '#16a34a' },
     BG: { cloud: 'rgba(249, 115, 22, 0.08)', local: 'rgba(22, 163, 74, 0.10)' },
     LABEL: { cloud: 'Cloud', local: 'Local' },
+
+    // Who actually runs the hosted engines. Stated ONCE, here, and rendered as a
+    // note on the Voice & AI page — deliberately not baked into the option labels,
+    // where a supplier we later switch away from becomes a lie nobody notices
+    // (TTS has already changed once). Same facts in the repo README.
+    // Both builds show this: "which vendor hears my audio" is not a brand
+    // question, and a self-hosting reader checking the cloud claim should be
+    // able to find the answer without leaving the console.
+    CLOUD_SUPPLIERS: [
+        { stage: 'Speech-to-text', vendors: 'Deepgram' },
+        { stage: 'Text-to-speech', vendors: 'Inworld, ElevenLabs for personality voices' },
+    ],
 
     // ── pipeline presets (Open Brain plan §6) ─────────────────
     // The top-level Voice & AI selector: three Dashie Intelligence presets
@@ -88,6 +103,12 @@ const VoiceAiOptions = {
      */
     WAKE_WORDS: [
         { id: 'hey_dashie',      label: 'Hey Dashie' },
+        // Standalone keyword, real in-house microWakeWord model (v0 dual-engine).
+        // Predates the 2026-07-30 brand consolidation and is no longer any build's
+        // default — kept because the weights ship and the id is a persisted wire
+        // value (Kotlin WakeWordModel + wake_models/chickadee.*): removing it would
+        // silently unset the wake word for anyone who chose it.
+        { id: 'chickadee',       label: 'Chickadee' },
         { id: 'mww_okay_nabu',   label: 'Okay Nabu' },
         { id: 'mww_hey_jarvis',  label: 'Hey Jarvis' },
         { id: 'mww_hey_mycroft', label: 'Hey Mycroft' },
@@ -159,7 +180,7 @@ const VoiceAiOptions = {
             // swap the model behind the brain — local Ollama/llama.cpp or any
             // OpenAI-compatible endpoint (remote URLs OK; add a key for remote).
             // Unlisted models bill $0 (managed STT/TTS still metered).
-            description: 'Point the brain at your own model — local Ollama / llama.cpp or any OpenAI-compatible endpoint. Dashie keeps its cards, tools & dialog; only the model changes.',
+            description: `Point the brain at your own model — local Ollama / llama.cpp or any OpenAI-compatible endpoint. ${BRAND.productName} keeps its cards, tools & dialog; only the model changes.`,
             locality: 'local',
             cost: 'Free',
             // `required` fields keep the picker open on select until filled
@@ -184,7 +205,7 @@ const VoiceAiOptions = {
             id: 'hermes',
             label: 'Hermes Agent (self-hosted)',
             group: 'Local',
-            description: 'Nous Research’s open-source personal agent behind Dashie’s brain — persistent memory and self-built skills, running on your own hardware. Add its API key under API Keys.',
+            description: `Nous Research’s open-source personal agent behind ${BRAND.productName}’s brain — persistent memory and self-built skills, running on your own hardware. Add its API key under API Keys.`,
             locality: 'local',
             cost: 'Free',
             ...this._hermesRowExtras(detection),
@@ -226,7 +247,13 @@ const VoiceAiOptions = {
     // engine-direct row (ha_engine, labeled "Whisper (Home Assistant)") is
     // injected by sttOptions() when /api/voice/engines finds a Whisper engine.
     STT: [
-        { id: 'dashie_cloud', label: 'Dashie Cloud STT', locality: 'cloud', cost: '$0.036/min · ~0.3¢/command',
+        // Supplier names deliberately NOT in the label — suppliers change (TTS
+        // already has once) and a stale vendor name in a picker is worse than no
+        // vendor name. Who currently processes cloud audio is disclosed in the
+        // repo README and on the Voice & AI page's suppliers note.
+        { id: 'dashie_cloud',
+          label: `${BRAND.cloudName} STT`,
+          locality: 'cloud', cost: '$0.036/min · ~0.3¢/command',
           description: 'Streaming, premium accuracy.' },
         { id: 'local_stt_url', label: 'Local Whisper (your box)', locality: 'local', cost: 'Free',
           description: 'Whisper server on your own box (OpenAI-compatible, LAN, direct).',
@@ -235,8 +262,15 @@ const VoiceAiOptions = {
           ] },
         { id: 'va_default', label: 'Home Assistant', locality: 'local', cost: 'Free', haOnly: true,
           description: "Your Home Assistant voice pipeline's speech-to-text." },
-        { id: 'android_voice', label: 'Android voice', locality: 'local', cost: 'Free',
-          description: 'Built-in Android / browser speech recognition.' },
+        // "On-Device" family (grouped in the picker). Native = the OS SpeechRecognizer
+        // (Google-services devices only, plays a chime); Fast/Accurate = bundled sherpa-onnx,
+        // fully offline, no chime, works on Amazon Fire / Echo / de-Googled devices too.
+        { id: 'android_voice', label: 'On-Device (Native)', locality: 'local', cost: 'Free',
+          description: 'Built-in device speech recognizer.' },
+        { id: 'sherpa_moonshine_tiny', label: 'On-Device (Fast)', locality: 'local', cost: 'Free',
+          description: 'Bundled offline STT — faster & lighter.' },
+        { id: 'sherpa_moonshine_base', label: 'On-Device (Accurate)', locality: 'local', cost: 'Free',
+          description: 'Bundled offline STT — higher accuracy.' },
     ],
 
     // Base TTS rows that always exist. The detected engine-direct row (ha_engine,
@@ -247,8 +281,11 @@ const VoiceAiOptions = {
         // the server's margined rate card. Two engines behind one row: the
         // default Dashie voice runs on Inworld (~4× cheaper per character);
         // personality voices are premium ElevenLabs.
-        { id: 'dashie_cloud', label: 'Dashie Cloud TTS', locality: 'cloud', cost: '$0.09–0.33/1k chars · ~0.5–1.9¢/reply',
-          description: 'The default Dashie voice is the most economical; personality voices are premium.' },
+        // Supplier names deliberately NOT in the label — see the STT row above.
+        { id: 'dashie_cloud',
+          label: `${BRAND.cloudName} TTS`,
+          locality: 'cloud', cost: '$0.09–0.33/1k chars · ~0.5–1.9¢/reply',
+          description: `The default ${BRAND.assistantName} voice is the most economical; personality voices are premium.` },
         { id: 'local_url', label: 'Local TTS (your box)', locality: 'local', cost: 'Free',
           description: 'Kokoro / OpenAI-compatible TTS on your own box (LAN, direct).',
           configFields: [
@@ -258,8 +295,8 @@ const VoiceAiOptions = {
           ] },
         { id: 'va_default', label: 'Home Assistant', locality: 'local', cost: 'Free', haOnly: true,
           description: "Your Home Assistant voice pipeline's text-to-speech." },
-        { id: 'android_voice', label: 'Android voice', locality: 'local', cost: 'Free',
-          description: 'Built-in Android text-to-speech.' },
+        { id: 'android_voice', label: 'On-Device (Native)', locality: 'local', cost: 'Free',
+          description: 'Built-in device text-to-speech.' },
     ],
 
     // ── detection-gated option builders ──────────────────────
@@ -344,8 +381,10 @@ const VoiceAiOptions = {
      *  pipeline, Android. */
     ttsOptions(detection) {
         const base = Object.fromEntries(this.TTS.map(o => [o.id, o]));
-        const out = [base.dashie_cloud, this._piperOption(detection), this._localUrlOption(base.local_url, detection),
-                     base.va_default, base.android_voice];
+        // Order mirrors STT: cloud → On-Device → HA → +Add local voice (bottom). local_url is
+        // the inline "+ Add a local voice" row, so putting it last lands the Add row at the bottom.
+        const out = [base.dashie_cloud, base.android_voice, this._piperOption(detection),
+                     base.va_default, this._localUrlOption(base.local_url, detection)];
         return this.withSavedEngines('tts', out.filter(Boolean), 'local_url');
     },
 
@@ -353,8 +392,12 @@ const VoiceAiOptions = {
      *  HA pipeline, Android. */
     sttOptions(detection) {
         const base = Object.fromEntries(this.STT.map(o => [o.id, o]));
-        const out = [base.dashie_cloud, this._whisperOption(detection), base.local_stt_url,
-                     base.va_default, base.android_voice];
+        // Order: cloud → On-Device family (Fast/Accurate/Native) → HA → +Add local (bottom).
+        // local_stt_url is the inline "+ Add local speech-to-text" row (withSavedEngines swaps
+        // it in place), so putting it last lands the Add row at the bottom.
+        const out = [base.dashie_cloud,
+                     base.sherpa_moonshine_tiny, base.sherpa_moonshine_base, base.android_voice,
+                     this._whisperOption(detection), base.va_default, base.local_stt_url];
         return this.withSavedEngines('stt', out.filter(Boolean), 'local_stt_url');
     },
 
@@ -530,7 +573,7 @@ const VoiceAiOptions = {
     },
 
     SEARCH: [
-        { id: 'dashie', label: 'Dashie Cloud Search', locality: 'cloud', cost: '$0.0096/search',
+        { id: 'dashie', label: `${BRAND.cloudName} Search`, locality: 'cloud', cost: '$0.0096/search',
           description: 'Managed web search — no setup.' },
         // SearXNG hidden for MVP (John, 2026-07-12): it's a "your box"-style
         // self-hosted install (no HA add-on to deep-link, no detection) and isn't

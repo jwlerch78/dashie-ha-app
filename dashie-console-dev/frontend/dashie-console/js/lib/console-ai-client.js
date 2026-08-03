@@ -546,7 +546,7 @@ const ConsoleAiClient = {
             const turn = await resp.json().catch(() => ({}));
             if (!resp.ok || turn.ok === false) {
                 const err = (isLocal && resp.status === 403)
-                    ? (turn.message || 'The Dashie add-on is not signed in.')
+                    ? (turn.message || `The ${BRAND.productName} add-on is not signed in.`)
                     : (turn.error || turn.message || `HTTP ${resp.status}`);
                 return { ok: false, error: err, latency_ms: Math.round(performance.now() - t0), stages: turn.stages || [] };
             }

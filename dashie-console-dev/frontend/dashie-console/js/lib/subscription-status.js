@@ -11,9 +11,13 @@
    FeatureGate.hasEntitlement() / SubscribeGate.isRequired().
 
    Loaded as a script-tag global after feature-gate.js.
+
+   DELTA MODULE: attached to window so core callers (sidebar) can reach it
+   via guarded `window.SubscriptionStatus?.` — the open-core console ships
+   without this file and those call sites no-op.
    ============================================================ */
 
-const SubscriptionStatus = {
+window.SubscriptionStatus = {
     /** The current check-subscription response, or null if not loaded yet. */
     _state() {
         return (typeof FeatureGate !== 'undefined' && FeatureGate._subscriptionState) || null;
@@ -77,5 +81,39 @@ const SubscriptionStatus = {
             default:
                 return null;
         }
+    },
+
+    /**
+     * Trial/subscription status pill for the sidebar footer (above credits +
+     * version). Trial countdown + Subscribe while trialing; grace/past-due
+     * nudge otherwise; nothing for active/complimentary or before state loads.
+     * Called (guarded) from Sidebar._renderTrialPill; re-renders with the
+     * sidebar whenever FeatureGate.setSubscriptionState fires App.renderPage().
+     */
+    renderSidebarPill() {
+        // Published build: credits-metered voice only — no plan/trial surface.
+        if (typeof FeatureGate !== 'undefined' && FeatureGate.isPublishedBuild()) return '';
+        const chip = this.chip();
+        if (!chip) return '';
+
+        const warn = chip.tone === 'warn';
+        const color = warn ? 'var(--status-warning, #b45309)' : 'var(--text-secondary, #555)';
+        const bg = warn ? 'rgba(180,83,9,0.10)' : 'var(--bg-subtle, #f1f3f5)';
+        const ctaStyle = 'display:block; width:100%; margin-top:6px; background: var(--accent, #ffaa00);'
+            + ' color:#fff; border:none; border-radius:6px; padding:5px 10px; font-size:12px;'
+            + ' font-weight:700; cursor:pointer;';
+        let cta = '';
+        if (chip.showSubscribe) {
+            cta = `<button onclick="AccountPage.subscribe && AccountPage.subscribe()" style="${ctaStyle}">Subscribe</button>`;
+        } else if (chip.showManage) {
+            cta = `<button onclick="AccountPage.openBillingPortal && AccountPage.openBillingPortal()" style="${ctaStyle}">Fix payment</button>`;
+        }
+        return `
+            <div class="sidebar-trial"
+                 style="margin-bottom:10px; padding:8px 10px; border-radius:8px; background:${bg};
+                        color:${color}; text-align:center;">
+                <div style="font-size:12px; font-weight:600;">${chip.label}</div>
+                ${cta}
+            </div>`;
     },
 };

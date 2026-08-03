@@ -68,14 +68,14 @@ const AutorefillModal = {
             <div style="border:1px solid var(--border,#e5e7eb); border-left:3px solid var(--accent,#ffaa00);
                         border-radius:6px; padding:12px 14px; margin-bottom:18px; font-size:13px; line-height:1.6;">
                 <div style="margin-bottom:8px;">
-                    Dashie will charge <strong>${this._escape(this._describeCard(card))}</strong>
+                    ${BRAND.productName} will charge <strong>${this._escape(this._describeCard(card))}</strong>
                     ${chargeLine} automatically whenever your credit balance
                     falls below <strong>$${Number(threshold).toFixed(2)}</strong>.
                 </div>
                 <ul style="margin:0; padding-left:18px; color: var(--text-muted);">
                     <li>At most <strong>${per}</strong> — so it can't run away.</li>
                     <li>We'll email you every time it charges.</li>
-                    <li>Cancel anytime — here, or on any Dashie under Settings → Account.</li>
+                    <li>Cancel anytime — here, or on any ${BRAND.productName} under Settings → Account.</li>
                 </ul>
             </div>`;
     },

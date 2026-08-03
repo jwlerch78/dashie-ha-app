@@ -115,8 +115,8 @@ const VideoFeedsPage = {
                 <div class="empty-state-icon">📹</div>
                 <div class="empty-state-text">Video feeds are managed from Home Assistant.</div>
                 <div style="color: var(--text-muted); font-size: var(--font-size-sm); margin-top: 8px; max-width: 480px; margin-left: auto; margin-right: auto;">
-                    Feed definitions live in your local Home Assistant. Open the Dashie
-                    Console add-on inside Home Assistant to add cameras, triggers, and
+                    Feed definitions live in your local Home Assistant. Open the ${BRAND.consoleName}
+                    add-on inside Home Assistant to add cameras, triggers, and
                     alert settings shared by all your devices.
                 </div>
             </div>
@@ -149,7 +149,7 @@ const VideoFeedsPage = {
                     <div class="empty-state-icon">📹</div>
                     <div class="empty-state-text">No video feeds yet.</div>
                     <div style="color: var(--text-muted); font-size: var(--font-size-sm); margin: 8px 0 16px; max-width: 440px; margin-left: auto; margin-right: auto;">
-                        Add a camera feed once and every Dashie device in the household
+                        Add a camera feed once and every ${BRAND.productName} device in the household
                         can show it — on demand or automatically when a sensor triggers.
                     </div>
                     <div style="display: flex; gap: 8px; justify-content: center;">

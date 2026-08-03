@@ -22,9 +22,13 @@
    full dashboard on its own — no device-side work needed.
 
    Loaded as a script-tag global before app.js.
+
+   DELTA MODULE: attached to window so core callers (sidebar) can reach it
+   via guarded `window.DashboardTrial?.` — the open-core console ships
+   without this file and those call sites no-op.
    ============================================================ */
 
-const DashboardTrial = {
+window.DashboardTrial = {
     _starting: false,
 
     /** True when the signed-in account still has the dashboard trial available. */
@@ -37,10 +41,10 @@ const DashboardTrial = {
         if (this._starting || !this.isAvailable()) return;
 
         const ok = await ConfirmModal.confirm({
-            title: 'Start your 30-day Dashie Cloud trial',
+            title: `Start your 30-day ${BRAND.cloudName} trial`,
             messageHtml: `
-                <p style="margin:0 0 10px;">Your account is set up for <strong>Dashie voice &amp; AI on Home
-                Assistant</strong>. The free trial adds the full Dashie dashboard on top: family calendar,
+                <p style="margin:0 0 10px;">Your account is set up for <strong>${BRAND.productName} voice &amp; AI on Home
+                Assistant</strong>. The free trial adds the full ${BRAND.productName} dashboard on top: family calendar,
                 photos, chores &amp; rewards — on any tablet or TV in the house.</p>
                 <p style="margin:0 0 10px;">Your voice &amp; AI setup is untouched, and your HA dashboards
                 keep working. Nothing to cancel: after 30 days the account simply returns to HA-only unless
@@ -58,7 +62,7 @@ const DashboardTrial = {
 
             if (res?.started) {
                 const days = res.trial_days || 30;
-                Toast.success(`Your ${days}-day Dashie Cloud trial has started 🎉`);
+                Toast.success(`Your ${days}-day ${BRAND.cloudName} trial has started 🎉`);
                 // Re-read the subscription so the sidebar's Dashie Cloud section
                 // unhides on this tick (setSubscriptionState re-renders).
                 await this._refreshSubscription();
@@ -70,8 +74,8 @@ const DashboardTrial = {
                     title: 'Trial already used',
                     messageHtml: `
                         <p style="margin:0 0 10px;">This email or one of your devices has already used the
-                        free Dashie Cloud trial, so we can't start another one.</p>
-                        <p style="margin:0;">You can subscribe any time — or keep using Dashie voice &amp; AI
+                        free ${BRAND.cloudName} trial, so we can't start another one.</p>
+                        <p style="margin:0;">You can subscribe any time — or keep using ${BRAND.productName} voice &amp; AI
                         on Home Assistant exactly as you are now.</p>`,
                     confirmLabel: 'Subscribe',
                     cancelLabel: 'Not now',
@@ -83,7 +87,7 @@ const DashboardTrial = {
             // not_eligible (already trialing/subscribed — e.g. a second tab beat us):
             // resync rather than argue with the user.
             await this._refreshSubscription();
-            Toast.info('Your account already has Dashie Cloud access.');
+            Toast.info(`Your account already has ${BRAND.cloudName} access.`);
         } catch (e) {
             console.warn('[DashboardTrial] start failed:', e?.message || e);
             Toast.error(`Couldn't start the trial: ${String(e?.message || e)}`);
@@ -100,5 +104,25 @@ const DashboardTrial = {
         } catch (e) {
             console.warn('[DashboardTrial] subscription refresh failed:', e?.message || e);
         }
+    },
+
+    /**
+     * "Start free trial" sidebar entry — the ha_only → dashboard opt-in.
+     * For an ha_only account every other item in the Dashie Cloud section is
+     * gated off, so instead of collapsing to nothing the section shows the one
+     * thing that IS available: the unspent 30-day trial. Highlighted (accent)
+     * because it's a CTA, not navigation. Called (guarded) from
+     * Sidebar._startTrialNavItem.
+     */
+    renderStartTrialNavItem() {
+        if (!this.isAvailable()) return '';
+        return `
+            <div class="sidebar-nav-item" onclick="DashboardTrial.promptAndStart()"
+                 style="color: var(--accent, #ffaa00); font-weight: 600;"
+                 title="30 days of the full ${BRAND.productName} dashboard — free, no card">
+                <span class="nav-icon"><img src="assets/icons/icon-star.svg" alt="Start free trial"></span>
+                <span class="nav-label">Start free trial</span>
+            </div>
+        `;
     },
 };

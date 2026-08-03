@@ -747,7 +747,7 @@ const DevicesDetail = {
             // Display Options modal existed.)
             { role: 'hide_sidebar',           label: 'Hide Sidebar',             description: 'Maximize widget area' },
             { role: 'hide_tabs',              label: 'Hide Tabs',                description: 'Remove dashboard tabs' },
-            { role: 'start_on_boot',          label: 'Start on Boot',            description: 'Launch Dashie when the device powers on' },
+            { role: 'start_on_boot',          label: 'Start on Boot',            description: `Launch ${BRAND.productName} when the device powers on` },
             { role: 'camera_software_encoding', label: 'Camera Software Encoding', description: 'Use software codec (older devices)', requiresCamera: true },
         ].filter(s => {
             if (controls[s.role] === undefined) return false;
@@ -804,8 +804,8 @@ const DevicesDetail = {
         // Each entry: role, label, description, destructive (confirm + red)
         const actions = [
             { role: 'refresh',             label: 'Refresh WebView',       description: 'Hard-refresh the dashboard' },
-            { role: 'relaunch',            label: 'Relaunch App',          description: 'Restart Dashie on the device' },
-            { role: 'bring_to_foreground', label: 'Bring to Foreground',   description: 'Pull Dashie back to the top' },
+            { role: 'relaunch',            label: 'Relaunch App',          description: `Restart ${BRAND.productName} on the device` },
+            { role: 'bring_to_foreground', label: 'Bring to Foreground',   description: `Pull ${BRAND.productName} back to the top` },
             { role: 'clear_cache',         label: 'Clear Cache',           description: 'Wipe cached data (logs in again)', destructive: true },
             { role: 'clear_storage',       label: 'Clear Storage',         description: 'Wipe all app data on this device', destructive: true },
             { role: 'reboot',              label: 'Reboot Device',         description: 'Restart the entire device', destructive: true },

@@ -1,7 +1,12 @@
 /* ============================================================
-   Feature Gate — beta visibility rules for the Dashie Console.
+   Feature Gate — per-EDITION visibility rules for the console.
+   One shared console, two editions: the PUBLISHED build (the
+   inspectable core that ships in the Dashie for Home Assistant
+   add-on) and the FULL build (published core + the closed family
+   delta: calendar, chores, family, photos, …).
 
-   See .reference/FEATURE_GATING.md for the canonical model.
+   Renamed from a brand axis to an edition axis on 2026-07-30 —
+   same boundary, correct name. See CONSOLE_ISOLATION.md.
 
    Rules (composable, per-feature key):
 
@@ -38,6 +43,159 @@ const FeatureGate = {
     /** Truthy when running embedded inside the HA add-on (Ingress). */
     isAddonMode() {
         return typeof DashieAuth !== 'undefined' && DashieAuth.isAddonMode === true;
+    },
+
+    /**
+     * Truthy in the PUBLISHED console build — the inspectable core shipped by
+     * the Dashie for Home Assistant add-on, whose brand.js declares
+     * `build: 'published'`. The full (family) build declares `build: 'full'`.
+     *
+     * FAILS CLOSED. Before 2026-07-30 the full build's brand.js simply had no
+     * `build` field, so "unknown" resolved to false → full-build behaviour →
+     * every family page visible. That is the wrong direction to fail on the one
+     * invariant that matters most here (I1: no family pages in the published
+     * build), and it made a typo or a half-generated brand.js indistinguishable
+     * from a deliberate full build. Both brand.js files now state it, and
+     * anything unrecognised is treated as published (restrictive) with a loud
+     * DROP so it can't be silent.
+     */
+    isPublishedBuild() {
+        const build = (typeof BRAND !== 'undefined' && BRAND?.build) || null;
+        if (build === 'published') return true;
+        if (build === 'full') return false;
+        if (!this._warnedUnknownBuild) {
+            this._warnedUnknownBuild = true;
+            console.warn(
+                `DROP: unknown BRAND.build ${JSON.stringify(build)} — expected ` +
+                `'published' or 'full'. Treating this as the PUBLISHED build, so the ` +
+                `closed family pages stay hidden. Fix the brand.js this console was ` +
+                `built with; do not rely on this fallback.`
+            );
+        }
+        return true;
+    },
+
+    /** One-shot latch so the unknown-build DROP doesn't spam every re-render. */
+    _warnedUnknownBuild: false,
+
+    /**
+     * The CLOSED DELTA: pages that do not exist in the published console at all
+     * — the family product (and Dashie device management). Checked FIRST in
+     * isPageEnabled, so a published build never shows these regardless of
+     * account tier or entitlement.
+     *
+     * "Closed delta", not "hidden": in the published build these page modules
+     * are ABSENT from the tree (check-console-tree.sh enforces it), and absent
+     * is the stronger claim.
+     */
+    CLOSED_DELTA_PAGES: new Set([
+        // 'devices' left this set on 2026-07-30 — the HA edition manages Dashie
+        // devices too. Its family-only OPTIONS (theme, the widgets layout, cloud
+        // photo sources) are gated by FAMILY_ONLY_OPTIONS instead, a finer grain.
+        'family', 'calendar', 'chores', 'rewards',
+        'locations', 'photos',
+        // 'video-feeds' and 'preferences' LEFT this set on 2026-07-31 (single
+        // add-on collapse). Both are now core-owned page modules in this tree.
+        // Their visibility rules differ and are deliberate — see LOCAL_MODE_PAGES:
+        // video feeds is an HA capability (no account), Preferences is
+        // account-wide Dashie settings (account required, either build).
+    ]),
+
+    /**
+     * LOCAL MODE whitelist — the ONLY pages reachable in the published console
+     * when there is no account (`DashieAuth.isLocalMode`). Everything works
+     * against the box: engine config, BYO keys, and the settings store that
+     * Stage 1 moved onto /data.
+     *
+     * A WHITELIST, deliberately, and never to be inverted into a blocklist:
+     * a page added to this console later is account-only until someone puts it
+     * here on purpose. The failure mode of the other polarity is exposing an
+     * account page to a signed-out user, which is the one thing this must not do.
+     *
+     * Not here, and why: `account`/`credits`/`account-usage` are account BY
+     * DEFINITION; `scheduled-actions` renders but every operation is a cloud
+     * dbRequest (contract #31), so it would show a feature that cannot save.
+     */
+    LOCAL_MODE_PAGES: new Set([
+        'voice-ai', 'local-engines', 'api-keys',
+        // video-feeds (2026-07-31): HA camera feeds belong to the HA user, not to
+        // a Dashie account. Every /api/feeds/* route proxies to the integration's
+        // feed_registry over the add-on's OWN HA token and touches no account —
+        // which is why `requireSignedIn` came off those routes in the same change.
+        // Listing it here without that server change would render the page for a
+        // signed-out user and 401 all six calls.
+        //
+        // NOT here, deliberately: 'preferences'. It reads/writes account-wide
+        // Dashie settings via DashieAuth (user_settings), so signed out there is
+        // nothing to show or save. Visible in BOTH builds once signed in.
+        'video-feeds',
+    ]),
+
+    /**
+     * FAMILY-ONLY OPTIONS — a finer grain than CLOSED_DELTA_PAGES.
+     *
+     * Publishing the Devices pages (2026-07-30) surfaced a case the page-level
+     * gate can't express: sections that belong in BOTH editions but offer an
+     * option that only exists in the family product. The section stays; the
+     * option goes. Registered here rather than as four ad-hoc isPublishedBuild()
+     * branches, for the same reason CLOSED_DELTA_PAGES is a Set and not four
+     * scattered checks — one place to read, one place to audit.
+     *
+     *   '*'      → the whole control is family-only
+     *   [values] → those option values are family-only; the rest stay
+     */
+    FAMILY_ONLY_OPTIONS: {
+        // Seasonal theme families (Halloween, Christmas). Decided family-only
+        // 2026-07-06. NOTE Dark/Light is a SEPARATE control (device card Quick
+        // Controls) and is unaffected.
+        'display.themeFamily': '*',
+        // 'widgets' IS the family dashboard — calendar/chores/photos widgets.
+        // The Layout row itself stays: the HA edition uses single_panel/kiosk.
+        'display.layoutMode': ['widgets'],
+        // supabase = Dashie Cloud photo albums (family product).
+        // google_drive = needs the Google Drive OAuth scope, which the HA
+        // edition deliberately does NOT request (brand `dashie_ha` asks for
+        // identity only) — so it could not work here even if offered.
+        // HA Media / Immich / Unsplash stay: screensaver albums are core here.
+        'photos.sourceType': ['supabase', 'google_drive'],
+    },
+
+    /**
+     * Is `value` of setting `key` offered in this build? `value` omitted asks
+     * about the whole control. True in the family build always — this gate only
+     * ever REMOVES options from the published one.
+     */
+    optionAllowed(key, value) {
+        if (!this.isPublishedBuild()) return true;
+        const rule = this.FAMILY_ONLY_OPTIONS[key];
+        if (rule === undefined) return true;
+        if (rule === '*') return false;
+        return !rule.includes(value);
+    },
+
+    /** Filter a [value, label] option list down to what this build offers. */
+    filterOptions(key, options) {
+        return (options || []).filter(o => this.optionAllowed(key, Array.isArray(o) ? o[0] : o));
+    },
+
+    /**
+     * True when `page` needs an account that the current session doesn't have.
+     * Always false outside local mode — signed-in users and the family build
+     * are governed by the tier/entitlement rules below, not by this.
+     */
+    requiresAccount(page) {
+        if (typeof DashieAuth === 'undefined' || !DashieAuth.isLocalMode) return false;
+        return !this.LOCAL_MODE_PAGES.has(page);
+    },
+
+    /**
+     * FEATURE_RULES overrides for the published build. Voice/AI and the
+     * Dashie Cloud credits meter ARE the product there, so the family
+     * beta-cohort gate ('beta-only') doesn't apply.
+     */
+    PUBLISHED_RULE_OVERRIDES: {
+        voiceAi: true,
+        credits: true,
     },
 
     /**
@@ -113,10 +271,17 @@ const FeatureGate = {
         // Voice / AI features (Dashie Cloud token spend) — the hand-selected BETA
         // cohort. Moved alpha→beta in the 2026-07-03 access-tier restructure.
         voiceAi:    'beta-only',
-        // Video Feeds — STANDARD access (2026-07-22): HA camera feeds are a core HA
-        // capability, not a metered cloud product, so it's visible to all users (an
-        // account without HA simply has no feeds to show). Was 'beta-only'.
-        videoFeeds: true,
+        // Video Feeds — ADD-ON ONLY (2026-07-31, John). Same shape as apiKeys and
+        // localEngines: every operation goes through the add-on. FeedsApi._request
+        // throws outright when !DashieAuth.isAddonMode, so on the standalone console
+        // this page could only ever render an error.
+        //
+        // Supersedes the 2026-07-22 `true` and its reasoning ("an account without HA
+        // simply has no feeds to show"). That framing was about ACCOUNTS; the real
+        // constraint is the TRANSPORT — no add-on, no feed registry to reach. Access
+        // tier does not enter into it: inside the add-on this is free to every HA
+        // user, signed in or not (see LOCAL_MODE_PAGES).
+        videoFeeds: 'addon',
 
         // Credits / token-bank / BYOK — the beta cohort meters cloud voice/AI and
         // gets starter credits, so it's a beta gate now (was alpha).
@@ -148,7 +313,10 @@ const FeatureGate = {
     },
 
     shouldShow(key) {
-        const rule = this.FEATURE_RULES[key];
+        let rule = this.FEATURE_RULES[key];
+        if (this.isPublishedBuild() && key in this.PUBLISHED_RULE_OVERRIDES) {
+            rule = this.PUBLISHED_RULE_OVERRIDES[key];
+        }
         if (rule === undefined) return true;        // unknown key → visible (safer)
         if (rule === true)  return true;
         if (rule === false) return false;
@@ -234,6 +402,18 @@ const FeatureGate = {
 
     /** True if the given page route should be visible in the current env. */
     isPageEnabled(page) {
+        // Local mode (published build, no account) — checked FIRST and for every
+        // build, so the whitelist governs the sidebar, `_isRoutable`, navigate()
+        // and hash routing from this single point.
+        if (this.requiresAccount(page)) return false;
+        if (this.isPublishedBuild()) {
+            if (this.CLOSED_DELTA_PAGES.has(page)) return false;
+            const key = this.PAGE_FEATURE[page];
+            // Dashie plan/trial entitlement gating doesn't exist in the open
+            // build — visibility is the feature rules only; credits are
+            // enforced server-side per metered call.
+            return !(key && !this.shouldShow(key));
+        }
         const key = this.PAGE_FEATURE[page];
         if (key && !this.shouldShow(key)) return false;
         if (this.isHaOnly() && this.HA_ONLY_HIDDEN_PAGES.has(page)) return false;

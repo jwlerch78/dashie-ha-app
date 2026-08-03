@@ -1,11 +1,12 @@
 /* ============================================================
    Account Page
    ------------------------------------------------------------
-   Profile, plan/subscription, and account deletion. Credits
-   (balance, usage, transactions) moved to the Credits page in the
-   2026-07 Manage-nav restructure — this page keeps subscribe() and
-   openBillingPortal() because other components (top-bar menu,
-   sidebar trial pill) call them by name.
+   Profile and account deletion (the web-discoverable deletion path).
+   Credits (balance, usage, transactions) live on the Credits page.
+   Plan/subscription surfaces (plan box, subscribe banner, portal
+   access) live in the account-plan.js delta module — a Dashie-only
+   file that attaches its actions onto this page; open-core builds
+   ship without it and every delegate below renders ''.
    ============================================================ */
 
 const AccountPage = {
@@ -34,27 +35,10 @@ const AccountPage = {
     topBarTitle() { return 'Account'; },
     topBarSubtitle() { return ''; },
 
-    /** Top-bar action buttons. Hidden when expired — the page already has
-     *  a Subscribe banner up top and a Subscribe button in the Subscription
-     *  Status card; a third in the header would just be noise. */
+    /** Top-bar action buttons (delta — subscription management in Dashie
+     *  builds; open-core renders none). */
     topBarActions() {
-        const expired = typeof SubscribeGate !== 'undefined' && SubscribeGate.isRequired(this._data);
-        if (expired) return '';
-        return `
-            <button class="btn btn-primary" onclick="AccountPage.openBillingPortal()" id="manage-subscription-btn">
-                Manage Subscription
-            </button>
-        `;
-    },
-
-    /** Navigate to the subscribe page. Self-auth on subscribe.html picks
-     *  up identity from the active Supabase session; we also pass the
-     *  user/email explicitly as belt-and-suspenders. */
-    subscribe() {
-        const user = DashieAuth.user || {};
-        const id = encodeURIComponent(user.id || '');
-        const email = encodeURIComponent(user.email || '');
-        window.location.href = `/subscribe.html?user=${id}&email=${email}`;
+        return window.AccountPlan?.topBarActions?.(this._data) ?? '';
     },
 
     // =========================================================
@@ -141,25 +125,10 @@ const AccountPage = {
         const user = DashieAuth.user;
         const d = this._data || {};
 
-        const expired = typeof SubscribeGate !== 'undefined' && SubscribeGate.isRequired(d);
-        const isCancel = d.subscription_status === 'canceled';
-        const bannerCopy = isCancel
-            ? 'Your subscription has ended. Subscribe to keep using Dashie’s calendar, photos, family sharing, and more.'
-            : 'Your trial has ended. Subscribe to keep using Dashie’s calendar, photos, family sharing, and more.';
-
-        const banner = expired ? `
-            <div class="card" style="margin-bottom: 16px; border-left: 4px solid var(--accent, #ffaa00); background: var(--bg-card-emphasis, #fff8e6);">
-                <div class="card-body" style="display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap;">
-                    <div style="flex: 1; min-width: 240px;">
-                        <div style="font-weight: 600; font-size: 16px; margin-bottom: 4px;">Subscribe to Dashie</div>
-                        <div style="color: var(--text-secondary); font-size: 14px; line-height: 1.5;">${bannerCopy}</div>
-                    </div>
-                    <button class="btn btn-primary" onclick="AccountPage.subscribe()" style="flex-shrink: 0;">
-                        Subscribe
-                    </button>
-                </div>
-            </div>
-        ` : '';
+        // Plan/subscription surfaces (subscribe banner, Plan box) are delta —
+        // Dashie builds only. Open-core: identity + danger zone.
+        const banner = window.AccountPlan?.expiredBannerCard?.(d) ?? '';
+        const planSection = window.AccountPlan?.planBoxSection?.(d) ?? '';
 
         return `
             <div style="max-width: 800px;">
@@ -168,158 +137,26 @@ const AccountPage = {
                     ${user.email} · Signed in via Google
                 </div>
 
-                <div class="stat-cards">
-                    ${this._renderPlanBox(d)}
-                </div>
+                ${planSection}
 
                 <div class="section-header" style="color: var(--status-error, #c00); margin-top: 32px;">Danger Zone</div>
                 <div class="card" style="border-color: var(--status-error, #c00);">
                     <div class="card-body">
-                        <div style="font-weight: 500; margin-bottom: 6px;">Delete your Dashie account</div>
+                        <div style="font-weight: 500; margin-bottom: 6px;">Delete your ${BRAND.productName} account</div>
                         ${d.deletion_scheduled_at ? `
                         <div style="color: var(--text-secondary); font-size: var(--font-size-sm); line-height: 1.5;">
                             Your account is already scheduled for deletion — use the banner at the top of this page to keep it.
                         </div>` : `
                         <div style="color: var(--text-secondary); font-size: var(--font-size-sm); line-height: 1.5; margin-bottom: 16px;">
-                            Schedules your Dashie account for deletion in 15 days. Billing stops now; your data (calendars, photos, chores, rewards, family members, OAuth tokens, voice profiles, devices) is removed when the 15 days are up. You can cancel any time before then with “Keep account.”
+                            Schedules your ${BRAND.productName} account for deletion in 15 days. Billing stops now; your data (calendars, photos, chores, rewards, family members, OAuth tokens, voice profiles, devices) is removed when the 15 days are up. You can cancel any time before then with “Keep account.”
                         </div>
                         <button class="btn btn-danger" id="delete-account-btn" onclick="AccountPage.handleDeleteAccount()">Delete Account</button>`}
                     </div>
                 </div>
             </div>
         `;
-        // Manage Subscription moved to topBarActions; Sign Out moved to the
-        // top-bar avatar dropdown menu (TopBar._renderMenu).
-    },
-
-    /** Single "Plan" box: tier (e.g. Core) + a renews/expires date, with a
-     *  "Manage subscription" button (opens the Stripe billing portal — where you
-     *  can change the plan or cancel) on the right. Replaces the separate Plan +
-     *  Tier stat cards. The renewal date for an active sub comes from Stripe
-     *  (current_period_end via get_transactions) since tier_expires_at is null. */
-    _renderPlanBox(d) {
-        const status = d.subscription_status;
-        // ha_only (voice-only) accounts show a dedicated "HA Basic" plan name
-        // rather than the raw tier ("Basic") — they intentionally have no
-        // dashboard trial. No renewal date (tier_expires_at is null) and no
-        // Subscribe/Manage button (canSubscribe/manageable are both false below).
-        const tier = status === 'ha_only' ? 'HA Basic' : this._formatTier(d.tier);
-        const date = this._subRenewsAt || d.tier_expires_at;
-        const verb = status === 'trialing' ? 'trial ends'
-            : status === 'canceled' ? 'expires'
-            : 'renews on';
-        const sub = date ? `${verb} ${this._formatDate(date)}` : '';
-        // A trialing (or no-subscription) user has no paid subscription to
-        // manage yet — offer a proactive "Subscribe" that converts them via
-        // subscribe.html, rather than "Manage subscription" (which opens an
-        // empty Stripe portal). Active/canceled users still get Manage.
-        const canSubscribe = status === 'trialing' || !status;
-        const manageable = status === 'active' || status === 'canceled';
-        const actionBtn = canSubscribe
-            ? `<button class="btn btn-primary btn-sm" onclick="AccountPage.subscribe()" style="flex-shrink:0;">Subscribe</button>`
-            : manageable
-            ? `<button class="btn btn-primary btn-sm" onclick="AccountPage.openBillingPortal()" style="flex-shrink:0;">Manage subscription</button>`
-            : '';
-        return `
-            <div class="stat-card" style="display:flex; justify-content:space-between; align-items:flex-start; gap:12px;">
-                <div>
-                    <div class="stat-card-label">Plan</div>
-                    <div class="stat-card-value">${this._escape(tier)}</div>
-                    ${sub ? `<div class="stat-card-detail">${this._escape(sub)}</div>` : ''}
-                </div>
-                ${actionBtn}
-            </div>`;
-    },
-
-    /**
-     * Send the user to Stripe's hosted Customer Portal where they can
-     * update payment methods, cancel, view invoices, etc. Edge fn
-     * `create-portal-session` verifies the user's JWT, looks up their
-     * stripe_customer_id, and returns a one-time portal session URL.
-     *
-     * No customer on file (NO_STRIPE_CUSTOMER) → user has never been
-     * through Stripe Checkout; Toast directs them to subscribe first.
-     */
-    async openBillingPortal() {
-        const btn = document.getElementById('manage-subscription-btn');
-        const restore = btn ? () => { btn.disabled = false; btn.textContent = 'Manage Subscription'; } : () => {};
-        if (btn) { btn.disabled = true; btn.textContent = 'Opening…'; }
-        try {
-            const res = await DashieAuth.edgeFunctionRequest('create-portal-session', {
-                return_url: window.location.origin + window.location.pathname + '#account',
-            });
-            if (res?.url) {
-                if (DashieAuth.isAddonMode) {
-                    // Stripe's portal refuses to be framed — in HA ingress a same-frame
-                    // redirect just hangs. Pop out to a new tab via a user-tap anchor.
-                    ExternalLinkModal.open({
-                        url: res.url,
-                        title: 'Manage subscription',
-                        cta: 'Open billing portal →',
-                        note: 'Opens Stripe in a new tab. Manage your plan or cancel there.',
-                    });
-                    restore();
-                } else {
-                    window.location.href = res.url;
-                }
-                return;
-            }
-            throw new Error('No portal URL returned');
-        } catch (e) {
-            console.error('[AccountPage] openBillingPortal failed:', e);
-            const msg = String(e?.message || e);
-            if (msg.includes('NO_STRIPE_CUSTOMER') || msg.includes('start a checkout')) {
-                Toast.info('No subscription on file yet. Start a subscription to manage billing.');
-            } else {
-                Toast.error(`Could not open billing portal: ${msg}`);
-            }
-            restore();
-        }
-    },
-
-    _formatStatus(status, expiresAt) {
-        const statusMap = {
-            trialing: { label: 'Trial Active', detail: expiresAt ? `Ends ${this._formatDate(expiresAt)}` : '' },
-            active: { label: 'Active', detail: expiresAt ? `Renews ${this._formatDate(expiresAt)}` : '' },
-            trial_expired: { label: 'Trial Ended', detail: 'Subscribe to continue' },
-            past_due: { label: 'Payment Issue', detail: 'Update at dashieapp.com/account' },
-            canceled: { label: 'Canceled', detail: expiresAt ? `Expires ${this._formatDate(expiresAt)}` : '' },
-            complimentary: { label: 'Complimentary', detail: 'Comp account' },
-        };
-        return statusMap[status] || { label: status || 'Unknown', detail: '' };
-    },
-
-    _formatPlan(plan) {
-        if (!plan) return '';
-        const planMap = {
-            dashie_monthly: '$2.99/month',
-            dashie_annual: '$29.99/year',
-        };
-        return planMap[plan] || plan;
-    },
-
-    _formatTier(tier) {
-        if (!tier) return 'Unknown';
-        return tier.charAt(0).toUpperCase() + tier.slice(1);
-    },
-
-    _formatTrialReason(reason) {
-        const reasonMap = {
-            voice_license_purchase: 'Voice license bonus',
-            voice_license_retroactive: 'Voice license bonus',
-            standard: 'Standard trial',
-        };
-        return reasonMap[reason] || reason;
-    },
-
-    _formatDate(isoDate) {
-        if (!isoDate) return '—';
-        try {
-            const d = new Date(isoDate);
-            return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
-        } catch (e) {
-            return isoDate;
-        }
+        // Subscription management lives in topBarActions (delta); Sign Out is
+        // in the top-bar avatar dropdown menu (TopBar._renderMenu).
     },
 
     // =========================================================
@@ -329,7 +166,7 @@ const AccountPage = {
         // renders an unstyled "<host> says" system dialog.
         const confirmed = await ConfirmModal.confirm({
             title: 'Sign out?',
-            message: 'Sign out of the Dashie Console?',
+            message: `Sign out of the ${BRAND.consoleName}?`,
             confirmLabel: 'Sign Out',
             cancelLabel: 'Cancel',
         });

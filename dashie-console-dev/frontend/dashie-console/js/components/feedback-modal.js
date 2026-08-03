@@ -47,7 +47,7 @@ const FeedbackModal = {
         const context = (prompt || response) ? `
             <div style="background: var(--surface-muted, #f7f7f8); border-radius: 8px; padding: 10px 12px; margin: 0 0 16px; font-size: 13px; line-height: 1.4;">
                 ${prompt ? `<div style="margin: 0 0 4px;"><span style="color: var(--text-muted); font-size: 10px; text-transform: uppercase; letter-spacing: 0.5px;">You said</span><div>${this._escape(prompt)}</div></div>` : ''}
-                ${response ? `<div><span style="color: var(--text-muted); font-size: 10px; text-transform: uppercase; letter-spacing: 0.5px;">Dashie said</span><div>${this._escape(response)}</div></div>` : ''}
+                ${response ? `<div><span style="color: var(--text-muted); font-size: 10px; text-transform: uppercase; letter-spacing: 0.5px;">${BRAND.assistantName} said</span><div>${this._escape(response)}</div></div>` : ''}
             </div>` : '';
 
         const chips = this.REASONS.map(([r, label]) =>

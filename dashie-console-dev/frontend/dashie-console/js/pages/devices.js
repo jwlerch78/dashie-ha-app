@@ -159,8 +159,8 @@ const DevicesPage = {
         const previewBtn = (typeof DashieAuth !== 'undefined' && DashieAuth.isAddonMode)
             ? ''
             : `<button class="btn btn-secondary" onclick="DevicesPage.openPreview()"
-                       title="Open the Dashie dashboard in a new browser tab">
-                   Preview Dashie in Browser ↗
+                       title="Open the ${BRAND.productName} dashboard in a new browser tab">
+                   Preview ${BRAND.productName} in Browser ↗
                </button>`;
         // Screenshot / Camera sub-toggles are only useful in Details view (Overview
         // doesn't render those panels at all). Hide them in Overview to keep the header tidy.
@@ -414,6 +414,22 @@ const DevicesPage = {
             console.warn('[DevicesPage] /api/ha/status unavailable:', e.message);
             this._haStatus = null;
         } finally {
+            // Stamp the attempt on FAILURE too, not just success.
+            //
+            // _maybeRefreshAddonStatus() gates on `Date.now() - _haStatusFetchedAt`.
+            // While this only advanced on success, a failing endpoint left it at 0 —
+            // permanently "stale" — and the render path is circular:
+            //   _renderList → _maybeRefreshAddonStatus → _fetchAddonStatus
+            //     → .then(App.renderPage) → _renderList → …
+            // _haStatusFetching is cleared in this finally, BEFORE that .then() runs,
+            // so it serialized nothing. The result was a tight loop bounded only by
+            // localhost RTT: ~20,000 requests in seconds, which buried the add-on log
+            // (2000/2000 lines were the same DROP marker) on 2026-07-31.
+            //
+            // Not merge-specific — any transient 500, or the add-on restarting under
+            // a open Devices tab, hits the same loop. Backing off on failure the same
+            // 15s we back off on success is the fix.
+            this._haStatusFetchedAt = Date.now();
             this._haStatusFetching = false;
         }
     },
@@ -660,7 +676,7 @@ const DevicesPage = {
                     <div class="empty-state-icon">📱</div>
                     <div class="empty-state-text">No devices registered yet.</div>
                     <div style="color: var(--text-muted); font-size: var(--font-size-sm); margin-top: 8px;">
-                        Sign in to Dashie on a tablet or Fire TV to register it — or, if HA
+                        Sign in to ${BRAND.productName} on a tablet or Fire TV to register it — or, if HA
                         sees one of your devices, add it from the banner above.
                     </div>
                 </div>

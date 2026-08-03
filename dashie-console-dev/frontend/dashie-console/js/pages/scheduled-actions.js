@@ -135,7 +135,7 @@ const ScheduledActionsPage = {
                     <div class="empty-state-icon"><img src="assets/icons/icon-bell.svg" alt="" style="width:44px;height:44px;opacity:0.35;"></div>
                     <div class="empty-state-text">No scheduled actions.</div>
                     <div style="color: var(--text-muted); font-size: var(--font-size-sm); margin-top: 8px;">
-                        Say "Hey Dashie, remind me…" on a device to create one.
+                        Say "${BRAND.wakePhrase}, remind me…" on a device to create one.
                     </div>
                 </div>
             `;

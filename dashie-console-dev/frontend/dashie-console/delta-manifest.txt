@@ -1,0 +1,49 @@
+# Devices moved to the PUBLISHED core on 2026-07-30 (dashie-ha-console).
+# The HA edition manages Dashie devices too; its family-only OPTIONS are
+# gated by FeatureGate.FAMILY_ONLY_OPTIONS, not by this manifest.
+# Dashie delta manifest — files that exist ONLY in the Dashie build.
+#
+# The console core is developed in the PUBLIC repo
+# (github.com/jwlerch78/dashie-ha-console, dashie-ha/frontend/console). This
+# private repo carries the family delta: the files listed here, plus this
+# edition's own brand.js and brand assets. The vendor script (scripts/vendor-core.sh)
+# overwrites every file NOT listed here from the public core and injects
+# this manifest's <script> tags into index.html's DELTA-SCRIPTS block.
+#
+# Rules:
+# - One repo-relative path per line; # comments and blank lines ignored.
+# - A file may be delta-owned OR core-owned, never both — the vendor
+#   script errors if a listed path also exists in the public core.
+# - Core reaches delta modules ONLY via guarded window access
+#   (`window.SubscribeGate?.`, typeof-guarded page registry entries).
+#   Adding a delta file that core must call = add the guarded hook in the
+#   public repo first.
+# - Script order: delta tags load after all core pages, before app.js
+#   (account-plan.js Object.assigns onto AccountPage and must follow it).
+
+# Plan / subscription surfaces (Dashie product paywall)
+js/lib/subscribe-gate.js
+js/lib/subscription-status.js
+js/lib/dashboard-trial.js
+js/components/external-link-modal.js
+js/pages/account-plan.js
+
+# Family-product pages (FeatureGate.CLOSED_DELTA_PAGES)
+# video-feeds{,-edit,-discover}.js and preferences.js LEFT this manifest on
+# 2026-07-31 (single add-on collapse) — they are CORE-owned now, in the public
+# dashie-ha-console tree. A path must not be listed here AND exist in the core;
+# vendor-core.sh errors if it is.
+js/pages/family.js
+js/pages/calendar.js
+js/pages/calendar-edit.js
+js/pages/calendar-options.js
+js/pages/calendar-add.js
+js/pages/chores.js
+js/pages/rewards.js
+js/pages/locations.js
+js/pages/photos.js
+js/pages/photos-upload.js
+js/pages/photos-album-edit.js
+
+# Brand identity (each side keeps its own; never vendored)
+js/lib/brand.js

@@ -441,10 +441,101 @@ const VoiceAiPage = {
         // Accounts that don't see the credits feature aren't metered from the
         // console's perspective — don't lock their presets.
         if (typeof FeatureGate !== 'undefined' && !FeatureGate.shouldShow('credits')) return true;
+        // A BYO provider key unlocks a cloud-AI preset in EVERY mode, including
+        // local: the key lives on the box (/data/api-keys.json) and the brain runs
+        // BYOK without an account. Checked before the local-mode bail below on
+        // purpose — "no account" must not lock a user out of their own key.
         if (this._keyStatus && Object.values(this._keyStatus).some(Boolean)) return true;
+        // Local mode: no account, therefore no credit balance to spend. This is
+        // the one place the answer is a definite NO rather than the optimistic
+        // default below — and it must not fall through to the balance check,
+        // whose "still loading → true" would flash the presets as available.
+        if (typeof DashieAuth !== 'undefined' && DashieAuth.isLocalMode) return false;
         const bal = window.CreditsService?.balance();
         if (!bal || typeof bal.balance !== 'number') return true;   // still loading → optimistic
         return bal.balance > 0;
+    },
+
+    /** Why a Cloud/Hybrid card is locked, for the card's own copy. */
+    _lockedPresetReason() {
+        if (typeof DashieAuth !== 'undefined' && DashieAuth.isLocalMode) {
+            return `Needs a ${BRAND.productName} account — or add your own AI key`;
+        }
+        return null;   // signed in: the existing out-of-credits treatment applies
+    },
+
+    /**
+     * An UNAVAILABLE Cloud/Hybrid card was clicked — try the one-time starter grant
+     * before sending the user off to buy credits.
+     *
+     * Mirrors the tablet's blocked-preset tap (Android SettingsCallbackWiring →
+     * StarterGrantClient). A household can activate voice from either surface, and the
+     * grant is keyed to the ACCOUNT server-side (`credit_grants.source_ref` unique
+     * index), so whichever surface gets there first wins and the other reports
+     * `already_claimed` — there is no double-grant to defend against here, and no local
+     * "claimed" flag to keep in sync between console and tablet.
+     *
+     * Falls back to today's behaviour — the Credits page — on anything but a fresh
+     * grant, INCLUDING a thrown request. A failure must never leave the click silent
+     * (the picker's standing rule) and must never assert credits we can't substantiate.
+     */
+    async tryStarterGrant(id) {
+        const O = window.VoiceAiOptions;
+        if (!O.PRESETS.some(p => p.id === id)) return;
+        // Local mode: the grant is keyed to an ACCOUNT server-side, so there is
+        // nothing to claim and dbRequest would 401. The click still must not be
+        // silent (the picker's standing rule) — route to the door instead.
+        if (typeof DashieAuth !== 'undefined' && DashieAuth.isLocalMode) {
+            App.startSignIn();
+            return;
+        }
+        let res = null;
+        try {
+            res = await DashieAuth.dbRequest('claim_starter_grant', {});
+        } catch (e) {
+            console.warn('[VoiceAiPage] starter-grant claim failed:', e.message);
+        }
+
+        if (res?.granted) {
+            // Refresh the balance BEFORE selectPreset — it re-checks _presetAvailable()
+            // against CreditsService's cache, so without this the preset we just funded
+            // would still read as unavailable and the click would no-op.
+            await window.CreditsService?.fetch({ force: true });
+            const amount = this._formatUsd(res.amount);
+            // Bare "credits", not BRAND.cloudName — every other console surface (sidebar,
+            // credits page, expiry notice, buy modal) says plain "credits". Not rebranding
+            // the console's credits noun as a side effect of this feature; if that noun
+            // should change, it changes on its own. (The original reason was that cloudName
+            // differed per build; it no longer does, but "credits" is still the right word
+            // and still what every other surface says.)
+            await ConfirmModal.confirm({
+                title: 'Cloud Voice & AI',
+                message:
+                    `Cloud voice & AI runs on credits, which are billed as you use them.` +
+                    `\n\nWe've added ${amount} to your account so you can try it out. ` +
+                    `You can add more any time, or set up local AI & voice engines instead.`,
+                confirmLabel: 'Start using voice',
+                hideCancel: true,
+            });
+            this.selectPreset(id);
+            return;
+        }
+
+        // Already claimed but funded → the picker was reading a stale balance; just let
+        // them through rather than sending a user who has money to the buy page.
+        if (res && typeof res.balance === 'number' && res.balance > 0) {
+            await window.CreditsService?.fetch({ force: true });
+            this.selectPreset(id);
+            return;
+        }
+
+        App.navigate('credits');
+    },
+
+    /** "$0.50", "$1", "$1.25" — a trailing ".00" reads like a price tag on a free thing. */
+    _formatUsd(v) {
+        const n = Number(v) || 0;
+        return Number.isInteger(n) ? `$${n}` : `$${n.toFixed(2)}`;
     },
 
     /** Preset card clicked. Persists voice.pipelinePreset, keeps the runtime's
@@ -619,12 +710,13 @@ const VoiceAiPage = {
         if (presetId === 'hybrid') {
             const currentIsLocal = currentValid && current !== 'dashie_cloud';
             if (currentIsLocal) return;   // deliberate local choice — keep it
+            // Hybrid = cloud AI + on-device voice: default to the BUNDLED on-device engines
+            // (sherpa STT / built-in device TTS), not HA Whisper/Piper (John 2026-07-28). The
+            // device's provider chain falls back to HA/cloud where the engine isn't bundled.
             if (stageKey === 'tts') {
-                this._selectProvider('tts', hasHaEngine ? 'ha_engine' : 'android_voice');
-            } else if (hasHaEngine) {
-                this._selectProvider('stt', 'ha_engine');
-            } else if (!currentValid) {
-                this._selectProvider('stt', 'dashie_cloud');
+                this._selectProvider('tts', has('android_voice') ? 'android_voice' : 'dashie_cloud');
+            } else {
+                this._selectProvider('stt', has('sherpa_moonshine_tiny') ? 'sherpa_moonshine_tiny' : 'dashie_cloud');
             }
             return;
         }
@@ -807,7 +899,7 @@ const VoiceAiPage = {
         const p = this.getCustom(id);
         const ok = await ConfirmModal.confirm({
             title: 'Delete personality',
-            message: `"${p?.name || 'This personality'}" will be removed from your account. Any device using it falls back to Dashie.`,
+            message: `"${p?.name || 'This personality'}" will be removed from your account. Any device using it falls back to ${BRAND.assistantName}.`,
             confirmLabel: 'Delete',
             danger: true,
         });
@@ -850,7 +942,7 @@ const VoiceAiPage = {
         const source = String(this._defaults?.['voice.entitySource'] || 'dashboard');
         const options = [
             { id: 'dashboard', label: 'Everything on my dashboard',
-              description: 'The entities on the dashboard Dashie displays. Add or remove them by editing your dashboard.' },
+              description: `The entities on the dashboard ${BRAND.productName} displays. Add or remove them by editing your dashboard.` },
             { id: 'assist', label: 'My Home Assistant voice-assistant list',
               description: 'The entities you exposed to Assist in Home Assistant.' },
         ];
@@ -893,7 +985,7 @@ const VoiceAiPage = {
         // /data store. A fresh account is off by default.
         const enabled = this._defaults?.['voice.householdSharing'] === true;
         return `
-            <div class="section-header" style="margin-top: 32px;">Household Dashie Intelligence Sharing</div>
+            <div class="section-header" style="margin-top: 32px;">Household ${BRAND.productName} Intelligence Sharing</div>
             <div class="card">
                 <div class="card-body">
                     <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:16px; flex-wrap:wrap;">
@@ -904,7 +996,7 @@ const VoiceAiPage = {
                             </div>
                         </div>
                         <button class="btn ${enabled ? 'btn-primary' : 'btn-secondary'}" id="household-sharing-btn"
-                            onclick="VoiceAiPage.toggleHouseholdSharing(${!enabled})" style="flex-shrink:0;">
+                            onclick="VoiceAiPage.toggleHouseholdSharing(${enabled})" style="flex-shrink:0;">
                             ${enabled ? 'Sharing On' : 'Sharing Off'}
                         </button>
                     </div>
@@ -935,7 +1027,10 @@ const VoiceAiPage = {
                 confirmLabel: 'Enable now',
                 cancelLabel: 'Not now',
             });
-            if (ok) await this.toggleHouseholdSharing(true);
+            // setHouseholdSharing, NOT toggleHouseholdSharing: this modal carries an
+            // EXPLICIT intent ("Enable now"), so it states the value it wants rather than
+            // asserting what a button was rendered from.
+            if (ok) await this.setHouseholdSharing(true);
         } catch (e) {
             console.warn('[VoiceAiPage] household-sharing prompt failed (non-fatal):', e);
         }
@@ -958,6 +1053,17 @@ const VoiceAiPage = {
      * kills each session at its next refresh — worst case the token's remaining TTL.
      *
      * Only kiosks. A phone/TV/tablet the user deliberately signed in is untouched.
+     *
+     * ⚠️ 2026-07-29: this swept ZERO rows for a household with two live kiosks, because their
+     * rows had been re-created as `tablet_android` by the tablets' own `register_device` call
+     * (see the server-side HA-origin guard in database-operations/handlers/devices.ts). The
+     * server now refuses that insert and heals drifted rows back, so the `ha_kiosk` filter is
+     * sound again — but a zero-row sweep is the exact signature of that bug class returning, so
+     * it is now REPORTED rather than silently treated as success. Do not "fix" this by widening
+     * the filter to guess at kiosk-shaped rows: `ha_app` is the ADD-ON's own row and deleting it
+     * signs the add-on out of the account.
+     *
+     * @returns {Promise<{found:number, removed:number, listed:boolean}>}
      */
     async _signOutKiosksOnSharingOff() {
         let kiosks = [];
@@ -970,12 +1076,22 @@ const VoiceAiPage = {
             // session. Do not "simplify" this back to `{}`.
             const res = await DashieAuth.dbRequest('list_devices', { controllable_only: false });
             const devices = res?.devices || res || [];
-            kiosks = (Array.isArray(devices) ? devices : []).filter(d => d?.device_type === 'ha_kiosk');
+            const all = Array.isArray(devices) ? devices : [];
+            kiosks = all.filter(d => d?.device_type === 'ha_kiosk');
+            if (!kiosks.length) {
+                // Loud, and with the evidence needed to triage it: which types WERE on the
+                // account. A silent zero here is what let two signed-in tablets look swept.
+                console.warn(
+                    '[VoiceAiPage] DROP: sharing-off sweep matched ZERO ha_kiosk rows. If any wall ' +
+                    'tablet is still signed in, its row was re-created under the wrong device_type. ' +
+                    'Device types seen: ' + JSON.stringify(all.map(d => d?.device_type))
+                );
+            }
         } catch (e) {
             console.warn('[VoiceAiPage] could not list devices to sign kiosks out:', e.message);
-            return 0;
+            return { found: 0, removed: 0, listed: false };
         }
-        if (!kiosks.length) return 0;
+        if (!kiosks.length) return { found: 0, removed: 0, listed: true };
 
         let removed = 0;
         for (const k of kiosks) {
@@ -989,10 +1105,59 @@ const VoiceAiPage = {
                 console.warn(`[VoiceAiPage] could not remove kiosk ${k.device_id}:`, e.message);
             }
         }
-        return removed;
+        if (removed < kiosks.length) {
+            console.warn(`[VoiceAiPage] DROP: sweep removed ${removed}/${kiosks.length} kiosk rows — the rest keep their sessions`);
+        }
+        return { found: kiosks.length, removed, listed: true };
     },
 
-    async toggleHouseholdSharing(enabled) {
+    /**
+     * BUTTON entry point. `renderedAs` is an ASSERTION about the state this button was
+     * drawn from — deliberately NOT the value to write.
+     *
+     * It used to pass `${!enabled}`, i.e. the intended new value, computed at RENDER time.
+     * That makes a stale render invert the user's intent, and for this particular control
+     * that is a security bug rather than a cosmetic one: a page still holding
+     * `householdSharing:false` while the account holds `true` draws "Sharing Off" and wires
+     * the click to write TRUE — re-affirming sharing and skipping the D6 kiosk sweep (which
+     * only runs `if (!enabled)`). The user cannot turn sharing off from that screen at all,
+     * and nothing tells them. Observed 2026-07-31 on two accounts; kiosks had been
+     * provisioning against an account the console reported as not sharing.
+     *
+     * So: re-read the account value at CLICK time, and act only if reality still matches
+     * what the user was looking at. On a mismatch, correct the UI and stop — the click is
+     * not reinterpreted, because "the user clicked a button labelled X" tells us nothing
+     * about what they wanted once X turns out to have been wrong. Fails toward LESS
+     * sharing: this path can never enable sharing off a stale render.
+     */
+    async toggleHouseholdSharing(renderedAs) {
+        let current;
+        try {
+            const fresh = await VoiceAiApi.loadAiDefaults();
+            current = fresh['voice.householdSharing'] === true;
+            if (this._defaults) this._defaults['voice.householdSharing'] = current;
+        } catch (e) {
+            // Never guess on a security control — a failed read must not become a write.
+            console.warn('DROP: household-sharing re-read failed; not toggling:', e.message);
+            Toast.error('Could not confirm the current sharing setting — nothing was changed.');
+            return;
+        }
+
+        if (current !== (renderedAs === true)) {
+            App.renderPage();
+            Toast.error(
+                `This page was out of date — sharing is actually ${current ? 'ON' : 'OFF'}. ` +
+                `Nothing was changed; the button now shows the real setting.`
+            );
+            return;
+        }
+
+        return this.setHouseholdSharing(!current);
+    },
+
+    /** The actual writer. Explicit intent — callers state the value they want.
+     *  Reached from the verified button path above and from the first-open prompt. */
+    async setHouseholdSharing(enabled) {
         try {
             // D6: warn BEFORE flipping — the user is about to sign tablets out of the account.
             if (!enabled) {
@@ -1013,7 +1178,7 @@ const VoiceAiPage = {
                         message:
                             `${count} Home Assistant kiosk ${one ? 'tablet' : 'tablets'} will be signed out of ` +
                             `this account. ${one ? 'It' : 'They'} will keep showing Home Assistant, but will ` +
-                            `lose access to your calendars, chores and Dashie voice. ` +
+                            `lose access to your calendars, chores and ${BRAND.productName} voice. ` +
                             `Turning sharing back on lets ${one ? 'it' : 'them'} re-authorize automatically.`,
                         confirmLabel: `Sign out ${one ? 'tablet' : 'tablets'}`,
                         cancelLabel: 'Cancel',
@@ -1030,9 +1195,15 @@ const VoiceAiPage = {
             // a tablet that re-provisions in this window is refused by jwt-auth's sharing gate
             // (the authoritative one) rather than racing us back onto the account.
             if (!enabled) {
-                const removed = await this._signOutKiosksOnSharingOff();
-                if (removed > 0) {
-                    Toast.success(`Sharing off — ${removed} kiosk ${removed === 1 ? 'device' : 'devices'} signed out.`);
+                const sweep = await this._signOutKiosksOnSharingOff();
+                if (sweep.removed > 0) {
+                    Toast.success(`Sharing off — ${sweep.removed} kiosk ${sweep.removed === 1 ? 'device' : 'devices'} signed out.`);
+                } else if (sweep.listed) {
+                    // Say so out loud. Reporting "off" while a tablet stays signed in is the
+                    // failure this whole path exists to prevent (field report 2026-07-29).
+                    Toast.success('Sharing off — no kiosk devices were on the account.');
+                } else {
+                    Toast.error('Sharing off, but the device list could not be read — kiosks may still be signed in.');
                 }
             }
             // Then tell the add-on to drop its cached account config and push a voice-config
@@ -1108,7 +1279,7 @@ const VoiceAiPage = {
         // source-card option instead. Selection maps webSearchEnabled + source.
         const searchOptions = [
             ...(isGeminiAiModel ? this._googleSearchOption() : filtered('search', O.SEARCH)),
-            { id: 'none', label: 'None', cost: '', description: 'Web search off — Dashie answers without searching the web.' },
+            { id: 'none', label: 'None', cost: '', description: `Web search off — ${BRAND.assistantName} answers without searching the web.` },
         ];
         const searchSelected = !searchOn ? 'none' : (isGeminiAiModel ? 'google' : String(d['voice.searchSource']));
         // Voice split out of the TTS card (John, 2026-07-12): the voice-id
@@ -1134,9 +1305,9 @@ const VoiceAiPage = {
         const body = isHaAssist ? `
             ${P.renderHaAssistCard()}
             ${P.renderCustomizeRow(customPipeline, true)}
+            ${showPipeline ? card('Speech-to-text', 'stt', this._applyProbed(filtered('stt', O.sttOptions(this._engines))), sttSelectedId) : ''}
             ${showPipeline ? card('Text-to-speech', 'tts', ttsCardOpts, ttsSelectedId) : ''}
-            ${showPipeline && voiceField ? this._renderVoiceRow(voiceField, d) : ''}
-            ${showPipeline ? card('Speech-to-text', 'stt', this._applyProbed(filtered('stt', O.sttOptions(this._engines))), sttSelectedId) : ''}` : `
+            ${showPipeline && voiceField ? this._renderVoiceRow(voiceField, d) : ''}` : `
             ${P.renderCustomizeRow(customPipeline, true)}
             ${card('AI Model', 'model', this._markKeyed(this._applyProbed(this._modelOptions(preset))), this._selectedModelId(agentMode))}
             ${D.renderWakeWordCard({
@@ -1150,9 +1321,9 @@ const VoiceAiPage = {
             })}
             ${isLive ? this._renderLiveVoiceRow(d) : ''}
             ${showPipeline ? this._renderEngineDetectionRow() : ''}
+            ${showStt ? card(isLive ? 'Speech-to-text*' : 'Speech-to-text', 'stt', this._applyProbed(isLive ? this._haFilter(O.sttOptions(this._engines)) : filtered('stt', O.sttOptions(this._engines))), sttSelectedId) + (isLive ? this._renderLiveSttNote() : '') : ''}
             ${showPipeline ? card('Text-to-speech', 'tts', ttsCardOpts, ttsSelectedId) : ''}
             ${showPipeline && voiceField ? this._renderVoiceRow(voiceField, d) : ''}
-            ${showStt ? card(isLive ? 'Speech-to-text*' : 'Speech-to-text', 'stt', this._applyProbed(isLive ? this._haFilter(O.sttOptions(this._engines)) : filtered('stt', O.sttOptions(this._engines))), sttSelectedId) + (isLive ? this._renderLiveSttNote() : '') : ''}
             ${showPipeline ? card('Web search source', 'search', this._markKeyed(searchOptions), searchSelected) : ''}
             ${showEntities ? this._renderEntitySourceCard() : ''}`;
             // Sports source card hidden for now (John, 2026-07-11) — ESPN is the
@@ -1169,7 +1340,9 @@ const VoiceAiPage = {
                 selectedId: preset,
                 available: (id) => this._presetAvailable(id),
                 isAddonMode: DashieAuth.isAddonMode,
+                localMode: DashieAuth.isLocalMode,
             })}
+            ${this._renderCloudSuppliers()}
             ${body}
 
             ${isHaAssist ? '' : `
@@ -1191,7 +1364,7 @@ const VoiceAiPage = {
      *  commands). Explains why the STT picker is present in Live mode. */
     _renderLiveSttNote() {
         return `<div style="font-size: 12px; color: var(--text-muted); margin: 2px 4px 12px; line-height: 1.45;">
-            * Dashie transcribes the first request to decide whether to handle locally or send to Live.
+            * ${BRAND.assistantName} transcribes the first request to decide whether to handle locally or send to Live.
         </div>`;
     },
 
@@ -1342,7 +1515,7 @@ const VoiceAiPage = {
             if (!r.ok) {
                 // The endpoint 404s on an add-on older than this feature — say so plainly
                 // rather than reporting a bogus engine failure.
-                if (r.status === 404) { Toast.error('Update the Dashie add-on to preview voices.'); restore(); return; }
+                if (r.status === 404) { Toast.error(`Update the ${BRAND.productName} add-on to preview voices.`); restore(); return; }
                 const err = await r.json().catch(() => ({}));
                 Toast.error(`Couldn't play a sample — ${err.message || `HTTP ${r.status}`}`);
                 restore();
@@ -1498,7 +1671,7 @@ const VoiceAiPage = {
             <div class="setting-row" style="align-items: flex-start; padding: 10px 0;">
                 <div style="flex: 1; padding-right: 12px;">
                     <div class="setting-row-label">Conversation dialog ${saving ? '<span style="color: var(--text-muted);">· saving…</span>' : ''}</div>
-                    <div style="font-size: 12px; color: var(--text-muted); margin-top: 2px;">Keep the mic open after a reply so you can keep talking — no wake word needed. Off = one response per “Hey Dashie”.</div>
+                    <div style="font-size: 12px; color: var(--text-muted); margin-top: 2px;">Keep the mic open after a reply so you can keep talking — no wake word needed. Off = one response per “${BRAND.wakePhrase}”.</div>
                 </div>
                 <label class="toggle">
                     <input type="checkbox" ${dialogOn ? 'checked' : ''}
@@ -1506,7 +1679,7 @@ const VoiceAiPage = {
                     <span class="toggle-slider"></span>
                 </label>
             </div>
-            ${dialogOn && KEEP_DIALOG_OPEN_UI ? this._toggleRow('Open dialog after commands', 'Keep listening after every command — not just questions — without saying “Hey Dashie” again.', 'voice.alwaysOpenDialog', d['voice.alwaysOpenDialog']) : ''}`;
+            ${dialogOn && KEEP_DIALOG_OPEN_UI ? this._toggleRow('Open dialog after commands', `Keep listening after every command — not just questions — without saying “${BRAND.wakePhrase}” again.`, 'voice.alwaysOpenDialog', d['voice.alwaysOpenDialog']) : ''}`;
     },
 
     /** The AI Model card's option list for the active preset: Live models
@@ -1604,6 +1777,23 @@ const VoiceAiPage = {
             <div style="display:flex; gap: 16px; font-size: 12px; color: var(--text-secondary);">
                 ${dot(O.COLOR.cloud, 'Cloud')}
                 ${dot(O.COLOR.local, 'Local')}
+            </div>`;
+    },
+
+    /** Who runs the hosted engines. These names used to live inside the STT/TTS
+     *  option labels; they were moved here on 2026-07-30 so a supplier switch is
+     *  one edit instead of a stale vendor name sitting in a picker. Moving them
+     *  off the labels must not mean losing them — this is where they went.
+     *  Suppressed on the Local preset, where no cloud engine is in play. */
+    _renderCloudSuppliers() {
+        const rows = window.VoiceAiOptions?.CLOUD_SUPPLIERS || [];
+        if (!rows.length) return '';
+        const esc = (s) => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+        const list = rows.map(r => `${esc(r.stage)}: ${esc(r.vendors)}`).join(' · ');
+        return `
+            <div style="margin: 8px 2px 0; font-size: 12px; color: var(--text-muted); line-height: 1.5;">
+                ${esc(BRAND.cloudName)} engines are currently run by — ${list}.
+                Suppliers can change; local and hybrid presets never send audio to them.
             </div>`;
     },
 
