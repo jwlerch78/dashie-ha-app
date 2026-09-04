@@ -505,11 +505,14 @@ Deno.test('calculator → server-templated EXACT arithmetic, no pass-2 (declared
   // 2026-09-03 before this arm existed: the prompt said "MANDATORY, call the calculator" and the
   // brain dropped the call. This test is the only thing that fails if that regresses.
   //
-  // The value is the one the deployed model actually got wrong: 7 × 23 answered as 162.
+  // ⚠️ The comment here first said 7 × 23 was "the value the deployed model actually got wrong,
+  // answered as 162". That was the bench's own parser defect, not the model (corrected 2026-09-03).
+  // The assertion is still exactly right for THIS test — it proves the turn carries the TOOL's
+  // exact value and not something the model re-derived — so only the false claim is removed.
   const m = makeIO(['{"type":"info_request","tool":"calculator","query":{"expression":"7*23"}}']);
   const turn = await runOrchestration(deps(), m.io);
   assert(turn.voice && /\b161\b/.test(turn.voice), `expected the exact answer 161 — got: ${turn.voice}`);
-  assert(!/162/.test(turn.voice!), `must not carry the model's wrong value — got: ${turn.voice}`);
+  assert(!/162/.test(turn.voice!), `must carry the tool's exact value, not a near-miss — got: ${turn.voice}`);
   assertEquals(m.gatewayCalls(), 1); // tier-1 template: pass-1 only, no pass-2
 });
 

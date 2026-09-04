@@ -62,6 +62,7 @@ import { currentTimeTool } from '../_shared/tools/current_time.ts';
 import { dashieHelpTool } from '../_shared/tools/dashie-help.ts';
 import { calculatorTool } from '../_shared/tools/calculator.ts';
 import { convertUnitsTool } from '../_shared/tools/convert_units.ts';
+import { wikipediaTool } from '../_shared/tools/wikipedia.ts';
 import type { ToolContext } from '../_shared/tools/types.ts';
 import { retainFields } from './retention.ts';
 import { templateWeather, weatherResultToReading } from './weather-synth.ts';
@@ -1348,6 +1349,36 @@ async function orchestrate(deps: OrchestrationDeps, io: OrchestratorIO, voiceCtx
       question: hq,
     };
     return await secondPass(io, deps, t0, 'dashie-help', helpData, [p1Stage, fetchStage], pass1, provider, modelId, context, sessionId, retain, route);
+  }
+
+  // ── info_request → wikipedia (SERVER-fetched + pass-2) ────
+  // Pass-2, NOT templated like calculator/convert_units above — and the difference is the point.
+  // Those return one exact value that must reach the user unaltered. Wikipedia returns
+  // ENCYCLOPAEDIC PROSE, which answers "who was Ada Lovelace" and "when was she born" with the
+  // same paragraph; reading the extract aloud verbatim would answer neither well. So the same
+  // shape as dashie_help: retrieved text in, spoken answer out.
+  //
+  // The miss carries an explicit DO-NOT-INVENT note for the same reason dashie_help's does — a
+  // bare found:false invites the model to fall back on its own recollection, which is the exact
+  // failure the tool was added to remove.
+  if (p1Parsed.type === 'info_request' && p1Parsed.tool === 'wikipedia') {
+    await logPass(io, deps, REQUEST_TYPE, req.endpoint_id, sessionId, p1Prompt, pass1);
+    const wq = (typeof p1Parsed.query === 'object' && p1Parsed.query)
+      ? String((p1Parsed.query as Record<string, unknown>).query ?? req.text)
+      : (typeof p1Parsed.query === 'string' && p1Parsed.query ? p1Parsed.query : req.text);
+    const tFetch = Date.now();
+    const wiki = await wikipediaTool.execute({ query: wq }, { timezone: req.timezone } as ToolContext);
+    const wikiResult = (wiki?.result ?? { found: false }) as { found?: boolean };
+    const fetchStage: Stage = {
+      name: 'fetch_wikipedia', latency_ms: Date.now() - tFetch, result_count: wikiResult.found ? 1 : 0,
+    };
+    const wikiData = wikiResult.found ? wikiResult : {
+      found: false,
+      note: 'No Wikipedia article matched. Do NOT answer from your own knowledge instead — say ' +
+        'you could not find anything on that.',
+      query: wq,
+    };
+    return await secondPass(io, deps, t0, 'wikipedia', wikiData, [p1Stage, fetchStage], pass1, provider, modelId, context, sessionId, retain, route);
   }
 
   // ── info_request → personalities (self-fulfilled: catalog read + synthesis) ────

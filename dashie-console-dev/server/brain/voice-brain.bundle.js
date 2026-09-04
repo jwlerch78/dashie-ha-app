@@ -4,7 +4,7 @@
    The voice-conversation brain core, bundled for the Node add-on (on-prem L3).
    ONE core, TWO runtimes: the cloud Deno edge fn runs the TS source directly;
    this CJS bundle is the add-on's copy of the SAME source. Never hand-edit.
-   Source git SHA: 2c2b1eabe169774d0ce99114b30d9ade1ae3326b
+   Source git SHA: 3ed990ff97d733161d5c4a178324e39f81a71b2f
    Regenerate:  node scripts/build-node-brain.mjs && ./sync-brain-bundle.sh
    Contract:    supabase/functions/voice-conversation/README.md
    ============================================================ */
@@ -1802,6 +1802,7 @@ var AVAILABLE_TOOLS_LIST = `- calendar_events: query: {time_range: "today|tomorr
 - get_current_time: query: {} - The CURRENT local date, time, and day of week. Call for "what time is it", "what's the date", "what day is it", AND to anchor any today/tomorrow/this-week/next reasoning. Authoritative \u2014 use it instead of your own clock, which is UTC and wrong for the user.
 - calculator: query: {expression: "0.15*80"} - Arithmetic, computed exactly. MANDATORY for any sum, product, division, percentage, bill split or recipe scaling \u2014 NEVER do the arithmetic yourself, you get it wrong silently. Write the ask as a plain expression: "15% of 80"\u2192"0.15*80", "split 87 three ways"\u2192"87/3". Supports + - * / % ^ and parentheses. found:false (including divide-by-zero) means say you could not work it out \u2014 never guess a number
 - convert_units: query: {value: 350, from: "fahrenheit", to: "celsius"} - Unit conversion: cooking measures (tsp/tbsp/cup/pint/quart/gallon/ml/l), weight, length, temperature, time, speed, area, energy, power, pressure, data, angle. MANDATORY for any "how many X in a Y" or "what is N X in Y" \u2014 never convert yourself. Pass fractions as decimals (two thirds of a cup \u2192 value 0.667, from "cup"). found:false means the unit is unknown or the two measure different things (cups to miles) \u2014 say you could not convert it, never invent a number
+- wikipedia: query: {query: "Ada Lovelace"} - STABLE encyclopaedic facts: a person, place, organisation, historical event, species, work. Use for "who is/was X", "what is X", "tell me about X" when the answer does not change day to day. NEVER for anything CURRENT \u2014 news, prices, scores, who currently holds an office or job, this week's anything \u2014 those go to web_search, because Wikipedia lags live events invisibly. Free and one call, so prefer it over web_search for settled facts. found:false means say you could not find it
 - music: query: {action: "now_playing|search|play|pause|resume|stop|next|previous|volume_up|volume_down", query?: "song/artist/album text (for search or play)", uri?: "exact uri from a prior search result (for play)", speaker?: "speaker name, ONLY if the user names one"} - Music: what's playing now (action "now_playing" \u2014 "what song is this", "who sings this"), find music ("search" \u2014 returns matches to disambiguate), play it ("play" with the chosen uri, or a query), and transport \u2014 "stop the music"\u2192stop, "pause"\u2192pause, "turn it up/down"\u2192volume_up/volume_down, "next/skip"\u2192next. NEVER use "search" for a transport phrase
 - video_feeds: query: {action: "show|hide|show_all|hide_all|playback", camera?: "the camera name the user said, e.g. \\"pool\\" or \\"front door\\"", time?: "for playback ONLY \u2014 the user's own words for WHEN, e.g. \\"10 minutes ago\\", \\"at 10:30pm\\", \\"last night\\""} - Cameras: show a live feed ("show" + camera), hide it ("hide"), all of them ("show_all"/"hide_all"), or play back RECORDED footage from a past moment ("playback" + camera + time \u2014 "what happened at the front door around 3pm", "show me the pool camera 10 minutes ago"). Pass the user's own words through as "time" \u2014 the device resolves them in its own timezone. Use "show" (live) when no past time is mentioned
 - open_app: query: {app: "the app name the user said, e.g. \\"Netflix\\", \\"YouTube TV\\", \\"Prime Video\\", \\"Spotify\\""} - Open/launch a whole app on this screen: "open Netflix", "put on YouTube TV", "launch Spotify", "go to Prime Video". Pass the app name the user said through as "app"; the device matches it against installed apps. Use ONLY for opening an app \u2014 NOT for playing a specific song (use music) or showing cameras (use video_feeds)
@@ -2426,7 +2427,8 @@ function normalizeParsedShape(parsed) {
     "schedule_action",
     "personalities",
     "calculator",
-    "convert_units"
+    "convert_units",
+    "wikipedia"
   ]);
   const TERMINAL_TYPES = /* @__PURE__ */ new Set(["response", "action", "info_request", "multi"]);
   const tool = parsed.type && KNOWN_TOOLS.has(parsed.type) && parsed.type !== "info_request" ? parsed.type : typeof parsed.tool === "string" && KNOWN_TOOLS.has(parsed.tool) && !TERMINAL_TYPES.has(parsed.type) ? parsed.tool : null;
@@ -4406,6 +4408,60 @@ var convertUnitsTool = {
   }
 };
 
+// supabase/functions/_shared/tools/wikipedia.ts
+var API = "https://en.wikipedia.org/w/api.php";
+var UA = "DashieVoiceAssistant/1.0 (https://dashieapp.com; support@dashieapp.com)";
+function trimForSpeech(extract, maxSentences = 2, maxChars = 400) {
+  const clean = extract.replace(/\s+/g, " ").trim();
+  if (!clean) return "";
+  const sentences = clean.match(/[^.!?]+[.!?]+(\s|$)/g) ?? [clean];
+  let out = "";
+  for (const s of sentences.slice(0, maxSentences)) {
+    if (out.length + s.length > maxChars) break;
+    out += s;
+  }
+  return (out || clean.slice(0, maxChars)).trim();
+}
+var wikipediaTool = {
+  name: "wikipedia",
+  description: `Look up a STABLE encyclopaedic fact \u2014 a person, place, organisation, historical event, species, work of art. Use this for "who is/was X", "what is X", "tell me about X" when the answer does not change day to day, instead of answering from memory. Do NOT use it for anything current or time-sensitive \u2014 news, prices, scores, who currently holds a job or office, this week's anything \u2014 use web_search for those, because Wikipedia lags live events. Returns { found: false } when there is no clear article; say you could not find it rather than filling the gap yourself.`,
+  parameters: {
+    type: "object",
+    properties: {
+      query: { type: "string", description: 'The subject to look up, e.g. "Ada Lovelace" or "Mount Rainier".' }
+    },
+    required: ["query"]
+  },
+  async execute(args, _ctx) {
+    const query = String(args?.query ?? "").trim();
+    if (!query) return { result: { found: false } };
+    const url = `${API}?action=query&format=json&origin=*&redirects=1&generator=search&gsrsearch=${encodeURIComponent(query)}&gsrlimit=1&prop=extracts&exintro=1&explaintext=1`;
+    const resp = await fetch(url, {
+      headers: { "User-Agent": UA, Accept: "application/json" },
+      signal: AbortSignal.timeout(1e4)
+    }).catch((e) => ({ ok: false, status: 0, _e: String(e) }));
+    if (!resp.ok) {
+      await resp.text?.().catch(() => "");
+      console.warn(`DROP: wikipedia HTTP ${resp.status} for "${query.slice(0, 60)}"`);
+      return { result: { found: false } };
+    }
+    const body = await resp.json().catch(() => null);
+    const pages = body?.query?.pages;
+    if (!pages) return { result: { found: false } };
+    const page = Object.values(pages)[0];
+    const summary = trimForSpeech(String(page?.extract ?? ""));
+    if (!page?.title || !summary) return { result: { found: false } };
+    return {
+      result: {
+        found: true,
+        title: page.title,
+        summary,
+        source: `https://en.wikipedia.org/wiki/${encodeURIComponent(page.title.replace(/ /g, "_"))}`
+      }
+    };
+  }
+};
+
 // supabase/functions/voice-conversation/retention.ts
 function retainFields(persist, userText, responseText, subtext) {
   if (!persist) return {};
@@ -5502,6 +5558,24 @@ ${p1PromptBase}` : p1PromptBase;
     };
     return await secondPass(io, deps, t0, "dashie-help", helpData, [p1Stage, fetchStage], pass1, provider, modelId, context, sessionId, retain, route);
   }
+  if (p1Parsed.type === "info_request" && p1Parsed.tool === "wikipedia") {
+    await logPass(io, deps, REQUEST_TYPE, req.endpoint_id, sessionId, p1Prompt, pass1);
+    const wq = typeof p1Parsed.query === "object" && p1Parsed.query ? String(p1Parsed.query.query ?? req.text) : typeof p1Parsed.query === "string" && p1Parsed.query ? p1Parsed.query : req.text;
+    const tFetch = Date.now();
+    const wiki = await wikipediaTool.execute({ query: wq }, { timezone: req.timezone });
+    const wikiResult = wiki?.result ?? { found: false };
+    const fetchStage = {
+      name: "fetch_wikipedia",
+      latency_ms: Date.now() - tFetch,
+      result_count: wikiResult.found ? 1 : 0
+    };
+    const wikiData = wikiResult.found ? wikiResult : {
+      found: false,
+      note: "No Wikipedia article matched. Do NOT answer from your own knowledge instead \u2014 say you could not find anything on that.",
+      query: wq
+    };
+    return await secondPass(io, deps, t0, "wikipedia", wikiData, [p1Stage, fetchStage], pass1, provider, modelId, context, sessionId, retain, route);
+  }
   if (p1Parsed.type === "info_request" && p1Parsed.tool === "personalities") {
     await logPass(io, deps, REQUEST_TYPE, req.endpoint_id, sessionId, p1Prompt, pass1);
     const tFetch = Date.now();
@@ -5904,4 +5978,4 @@ function toolMeta(parsed, route, caps) {
   voicePromisesPicture,
   wantsGameDetail
 });
-module.exports.BRAIN_SOURCE_SHA = "2c2b1eabe169774d0ce99114b30d9ade1ae3326b";
+module.exports.BRAIN_SOURCE_SHA = "3ed990ff97d733161d5c4a178324e39f81a71b2f";
