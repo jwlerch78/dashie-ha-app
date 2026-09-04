@@ -308,6 +308,14 @@ export interface OrchestratorIO {
   // (Node add-on shell without it / older tests) → the weather branch falls back to handing
   // the query to the caller via `client_tool`, unchanged. See weather.ts / weather-synth.ts.
   getWeather?: (loc: WeatherLocation) => Promise<WeatherResult>;
+  // Google Maps tools (place_search / directions). They call the BILLABLE maps-gateway, so they
+  // take the turn's user JWT exactly as runSports does — the gateway attributes, rate-limits and
+  // debits against that identity. Routed through the IO seam rather than called directly for the
+  // same reason sports is: the brain core must not assume a runtime, and the Node add-on injects
+  // its own IO. OPTIONAL (the getWeather precedent) — a shell without them degrades to a clean
+  // "couldn't look that up", never to a fabricated address or drive time.
+  runPlaceSearch?: (query: string, authToken?: string) => Promise<unknown>;
+  runDirections?: (args: { origin: string; destination: string; mode?: string }, authToken?: string) => Promise<unknown>;
   resolvePersonality: (supabase: unknown, userId: string, endpointId: string, explicitId?: string | null) => Promise<Personality | null>;
   // D3 (voice follows personality): resolve the personality's voiceKey → concrete TTS voice id
   // returned in the Turn. OPTIONAL — absent IO (Node shell / older tests) → no voice_id (client
@@ -1379,6 +1387,51 @@ async function orchestrate(deps: OrchestrationDeps, io: OrchestratorIO, voiceCtx
       query: wq,
     };
     return await secondPass(io, deps, t0, 'wikipedia', wikiData, [p1Stage, fetchStage], pass1, provider, modelId, context, sessionId, retain, route);
+  }
+
+  // ── info_request → place_search / directions (SERVER-fetched via maps-gateway + pass-2) ────
+  // Pass-2, not templated: both answer several different questions from one payload ("where is
+  // it", "is it open", "how far", "how long"), so the spoken answer has to be built against what
+  // was actually asked. Same shape as dashie_help and wikipedia.
+  //
+  // The IO methods are OPTIONAL. When a runtime does not supply them the branch returns a clean
+  // miss with an explicit do-not-invent note — an address or a drive time guessed from memory is
+  // exactly the failure class these tools exist to close.
+  if (p1Parsed.type === 'info_request' && (p1Parsed.tool === 'place_search' || p1Parsed.tool === 'directions')) {
+    await logPass(io, deps, REQUEST_TYPE, req.endpoint_id, sessionId, p1Prompt, pass1);
+    const q = (typeof p1Parsed.query === 'object' && p1Parsed.query ? p1Parsed.query : {}) as Record<string, unknown>;
+    const isPlaces = p1Parsed.tool === 'place_search';
+    const tFetch = Date.now();
+    let payload: unknown = null;
+    try {
+      if (isPlaces && io.runPlaceSearch) {
+        payload = await io.runPlaceSearch(String(q.query ?? req.text), token);
+      } else if (!isPlaces && io.runDirections) {
+        payload = await io.runDirections({
+          origin: String(q.origin ?? ''), destination: String(q.destination ?? ''),
+          mode: q.mode ? String(q.mode) : undefined,
+        }, token);
+      } else {
+        console.warn(`DROP: ${p1Parsed.tool} unavailable — this runtime injects no IO for it`);
+      }
+    } catch (e) {
+      console.warn(`DROP: ${p1Parsed.tool} lookup failed — ${(e as Error).message}`);
+    }
+    const result = (payload as { found?: boolean } | null) ?? null;
+    const fetchStage: Stage = {
+      name: `fetch_${p1Parsed.tool}`, latency_ms: Date.now() - tFetch,
+      result_count: result?.found ? 1 : 0,
+    };
+    const data = result?.found ? result : {
+      found: false,
+      note: isPlaces
+        ? 'No matching place was found. Do NOT invent a business, address or opening hours — say you could not find it.'
+        : 'No route could be worked out. Do NOT estimate a distance or drive time yourself — say you could not work it out.',
+    };
+    // inquiryType must match the INQUIRY_BY_TYPE key (hyphenated), NOT the tool name — a
+    // mismatch silently discards the retrieved data (see the DROP marker in prompt.ts).
+    const inquiryType = isPlaces ? 'place-search' : 'directions';
+    return await secondPass(io, deps, t0, inquiryType, data, [p1Stage, fetchStage], pass1, provider, modelId, context, sessionId, retain, route);
   }
 
   // ── info_request → personalities (self-fulfilled: catalog read + synthesis) ────
