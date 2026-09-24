@@ -7,7 +7,7 @@
 //   - /api/internal/voice-config → the route the integration should take (M7)
 //
 // The "is this account on a local model?" decision lives here: ai.model === 'local' (the generic
-// "My own AI" endpoint row) or 'hermes' (the dedicated Hermes Agent row, WS-I) → route 'local';
+// "My own AI" endpoint row) → route 'local';
 // anything else → 'cloud'. Both are local-family sentinels: the model runs on the user's own
 // hardware and the cloud edge fn can't reach it.
 
@@ -65,7 +65,7 @@ function _readCachedConfig() {
 // user_settings read failure would write customizePipeline=false + alwaysOpenDialog=false
 // onto every kiosk in the house. Null → /voice-config omits `pipeline` → the integration
 // forwards nothing → the applier leaves the kiosk alone. (Audit 2026-07-13, #4.)
-const SAFE_DEFAULT = { model: null, route: 'cloud', localLlmUrl: '', localLlmModel: '', localLlmKey: '', hermesUrl: '', retainTranscripts: false, agentMode: '', retrievePictures: null, webSearchEnabled: null, zipCode: '', defaultPersonalityId: '', defaultVoiceKey: '', defaultWakeWord: '', householdSharing: false, pipeline: null };
+const SAFE_DEFAULT = { model: null, route: 'cloud', localLlmUrl: '', localLlmModel: '', localLlmKey: '', retainTranscripts: false, agentMode: '', retrievePictures: null, webSearchEnabled: null, zipCode: '', defaultPersonalityId: '', defaultVoiceKey: '', defaultWakeWord: '', householdSharing: false, pipeline: null };
 
 /** Coerce a settings value to a string, '' when absent/non-string. */
 function str(v) { return typeof v === 'string' ? v : ''; }
@@ -103,9 +103,14 @@ async function getAccountVoiceConfig() {
           // endpoint. Console-only key (user_settings.voice.localLlmKey); passed to
           // node-io.js. Blank for keyless local Ollama/llama.cpp.
           localLlmKey: settings?.voice?.localLlmKey || '',
-          // Hermes Agent endpoint (dedicated row, ai.model='hermes'). Its API key is
-          // NOT in user_settings — it lives in the on-box key store ('hermes' provider).
-          hermesUrl: settings?.voice?.hermesUrl || '',
+          // 🗑️ hermesUrl REMOVED 2026-09-24 — John: "Hermes is not in use. We csn disable
+          // or strip." It read user_settings.voice.hermesUrl, a key NOTHING has written
+          // since the Hermes row was soft-removed (2026-07-17) and then fully stripped from
+          // the console core (2026-08-23, John: "Hermes is not a brain"). This add-on sat
+          // between those two decisions, so the read survived as deliberately-dormant
+          // plumbing — which lint:kiosk-mirror correctly flagged as a key with no writer.
+          // The on-box key store's 'hermes' provider slot and voice-engines.js's add-on
+          // detection are LEFT: they never read user_settings and are independent of this.
           retainTranscripts: row.retain_transcripts === true,
           // Household conversation agent mode (live|dialog|single) — the console's Voice & AI
           // page writes user_settings.voice.agentMode (ACCOUNT_VOICE_KEYS). Carried to

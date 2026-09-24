@@ -13,7 +13,6 @@
 const express = require('express');
 const auth = require('../auth');
 const { getAccountVoiceConfig } = require('../account-config');
-const keyStore = require('../key-store');
 const providers = require('../brain/providers');
 const { createNodeIO } = require('../brain/node-io');
 const brain = require('../brain/voice-brain.bundle.js');
@@ -28,10 +27,11 @@ const router = express.Router();
 const ENV_ENDPOINT = process.env.LOCAL_LLM_ENDPOINT || 'http://localhost:11434';
 const ENV_MODEL = process.env.LOCAL_LLM_MODEL || 'qwen2.5:3b';
 
-// Hermes Agent (ai.model='hermes', WS-I): its OpenAI-compat API server takes the fixed
-// model id 'hermes-agent' (docs: website/docs/user-guide/features/api-server.md) and
-// requires a bearer (API_SERVER_KEY) — read from the on-box key store, not user_settings.
-const HERMES_MODEL_ID = 'hermes-agent';
+// 🗑️ The Hermes target (ai.model='hermes', WS-I) was removed 2026-09-24 — John: "Hermes is
+// not in use. We csn disable or strip." It resolved its endpoint from
+// user_settings.voice.hermesUrl, which nothing has written since the console row was
+// soft-removed (07-17) and stripped (08-23). The branch was unreachable: no surface can
+// select ai.model='hermes' any more, so it could only ever have resolved 'hermes_unconfigured'.
 
 /** Resolve the inference target for the account: the dedicated Hermes row, a BYOK cloud
  *  provider (Open Brain §5 — the account's cloud model + the box's stored key), or the
@@ -39,14 +39,6 @@ const HERMES_MODEL_ID = 'hermes-agent';
  *  BYOK with the key deleted between routing and the turn → source 'byok_key_missing'
  *  (explicit 503 in the handler — degradation rule WS-I.8, never a silent cloud fallback). */
 function resolveLanTarget(acct) {
-  if (acct.model === 'hermes') {
-    return {
-      endpoint: acct.hermesUrl || '',
-      model: HERMES_MODEL_ID,
-      key: keyStore.readKeys().hermes?.key || '',
-      source: acct.hermesUrl ? 'hermes' : 'hermes_unconfigured',
-    };
-  }
   if (acct.model && acct.model !== 'local') {
     // A concrete cloud model id reached the local brain — that only happens when the route
     // resolver saw a BYO key for its provider (providers.js). Re-resolve it fresh.
