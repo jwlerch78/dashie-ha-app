@@ -1975,3 +1975,47 @@ Deno.test('open_app + not declared → spoken decline, no client_tool', async ()
   assertEquals(turn.unsupported_tool, undefined);
   assertEquals(turn.voice, "I can't open apps on this device.");
 });
+
+// ── Kid "Talk to a friend" (Thread VH, 2026-10-04) ───────────────────────────────────────────────
+// The session row decides persona + child; a refusal is terminal with metadata.kid_code and no AI call.
+
+Deno.test('kid turn: persona comes from the SESSION, not options.personality_id; child named in the prompt', async () => {
+  const m = makeIO(['{"type":"response","voice":"Ahoy Ava"}']);
+  let askedFor: string | null | undefined;
+  m.io.resolvePersonality = (_s, _u, _e, id) => { askedFor = id; return Promise.resolve(null); };
+  m.io.resolveKidTurn = () => Promise.resolve({ ok: true as const, personalityId: 'pirate', childName: 'Ava' });
+  const turn = await runOrchestration(deps({ kid_session_id: 's1', options: { personality_id: 'bad_santa' } }), m.io);
+  assertEquals(turn.voice, 'Ahoy Ava');
+  assertEquals(askedFor, 'pirate');
+  assert(m.lastPrompt()!.includes('You are talking with Ava, a child in this family.'));
+});
+
+Deno.test('kid turn control: an ordinary turn still uses options.personality_id and has no child line', async () => {
+  const m = makeIO(['{"type":"response","voice":"Hi"}']);
+  let askedFor: string | null | undefined;
+  m.io.resolvePersonality = (_s, _u, _e, id) => { askedFor = id; return Promise.resolve(null); };
+  m.io.resolveKidTurn = () => { throw new Error('must not be called without kid_session_id'); };
+  await runOrchestration(deps({ options: { personality_id: 'santa' } }), m.io);
+  assertEquals(askedFor, 'santa');
+  assert(!m.lastPrompt()!.includes('You are talking with'));
+});
+
+for (const code of ['kid_cap_reached', 'kid_session_expired', 'kid_session_invalid', 'kid_cap_unconfigured']) {
+  Deno.test(`kid turn refused (${code}) → terminal, metadata.kid_code, no AI call, no log`, async () => {
+    const m = makeIO(['{"type":"response","voice":"should not run"}']);
+    m.io.resolveKidTurn = () => Promise.resolve({ ok: false as const, code });
+    const turn = await runOrchestration(deps({ kid_session_id: 's1' }), m.io);
+    assertEquals(turn.metadata?.kid_code, code);
+    assertEquals(turn.route, 'kid_refused');
+    assertEquals(turn.voice, '');
+    assertEquals(m.gatewayCalls(), 0);
+    assertEquals(m.logs.length, 0);
+  });
+}
+
+Deno.test('kid turn with NO resolveKidTurn IO → refused as invalid, never served as an ordinary turn', async () => {
+  const m = makeIO(['{"type":"response","voice":"should not run"}']);
+  const turn = await runOrchestration(deps({ kid_session_id: 's1' }), m.io);
+  assertEquals(turn.metadata?.kid_code, 'kid_session_invalid');
+  assertEquals(m.gatewayCalls(), 0);
+});

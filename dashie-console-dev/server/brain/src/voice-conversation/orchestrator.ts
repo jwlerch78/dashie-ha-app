@@ -401,6 +401,11 @@ export interface OrchestratorIO {
   // CR3: per-account rate-limit backstop. OPTIONAL — absent IO → always
   // allowed. Inert until `voice_rate_limit_enabled`. Atomic + fail-open (abuse guard only).
   checkRateLimit?: (supabase: unknown, userId: string) => Promise<{ allowed: boolean; retryAfterSeconds: number }>;
+  // Kid "Talk to a friend" session → persona + child from the server row, turn counted against the
+  // household cap. OPTIONAL — absent IO (Node shell / tests) → a kid turn is refused as invalid, never
+  // silently served as an ordinary turn. Bound in default-io.ts (kid-session.ts).
+  resolveKidTurn?: (supabase: unknown, userId: string, sessionId: string, endpointId: string) =>
+    Promise<{ ok: true; personalityId: string; childName: string | null } | { ok: false; code: string }>;
   // BYOK (Open Brain WS-I): 'byok' = the AI tokens run on the USER'S OWN key/model
   // (add-on brain), so out-of-credits must NOT reject the turn — the AI costs Dashie
   // nothing. Instead the DASHIE-FUNDED tools (web search / image search) are disabled
@@ -555,10 +560,21 @@ async function orchestrate(deps: OrchestrationDeps, io: OrchestratorIO, voiceCtx
   // (no voice) so nothing is spoken/re-heard; no AI call, no credit.
   if (isEndIntent(req.text)) return endIntentTurn(t0);
 
+  // Kid "Talk to a friend" turn: the persona and the child come from the SESSION row, and the turn is
+  // counted against the household's monthly cap (atomic). A refusal is terminal and costs no AI call.
+  let kid: { personalityId: string; childName: string | null } | null = null;
+  if (req.kid_session_id) {
+    const r = io.resolveKidTurn
+      ? await timed('prep_kid_session', prep, () => io.resolveKidTurn!(supabase, userId, req.kid_session_id!, req.endpoint_id))
+      : { ok: false as const, code: 'kid_session_invalid' };
+    if (!r.ok) return kidRefusedTurn(t0, r.code);
+    kid = r;
+  }
+
   // ai_interactions.session_id is NOT NULL — always supply one (conversation_id when present).
   const sessionId = req.conversation_id || crypto.randomUUID();
   const [personality, retainEnabled, spend, account, rateLimit] = await timed('prep_gather', prep, () => Promise.all([
-    io.resolvePersonality(supabase, userId, req.endpoint_id, req.options?.personality_id),
+    io.resolvePersonality(supabase, userId, req.endpoint_id, kid ? kid.personalityId : req.options?.personality_id),
     io.readRetainTranscripts(supabase, userId),
     // CR1 pre-flight credit gate — folded into the existing parallel reads (no added
     // latency). Absent IO (Node shell / tests) → always spendable. Inert until the
@@ -767,6 +783,7 @@ async function orchestrate(deps: OrchestrationDeps, io: OrchestratorIO, voiceCtx
   };
   const context = {
     customPersonalityConfig: personality,
+    kidName: kid?.childName ?? null,
     chatHistory: formatHistory(req.history),
     language: req.language || 'system',
     timezone: req.timezone,   // client IANA zone → correct "today" in the prompt (server is UTC)
@@ -2064,6 +2081,29 @@ function insufficientCreditsTurn(t0: number, balance: number): Turn {
     route: 'insufficient_credits',
     stages: [{ name: 'insufficient_credits', latency_ms: 0 }],
     metadata: { degraded: 'insufficient_credits', balance },
+  };
+}
+
+/** Terminal kid "Talk to a friend" refusal — session expired/invalid or the household's monthly cap
+ *  reached. No AI call, no log, empty voice; `metadata.kid_code` is what the talk screen branches on
+ *  (distinct child-facing messages — see _shared/kid-friend-policy.ts KID_CODES). */
+function kidRefusedTurn(t0: number, code: string): Turn {
+  return {
+    ok: true,
+    type: 'response',
+    voice: '',
+    text: null,
+    action: null,
+    parsed_ok: true,
+    raw_content: '',
+    usage: { input_tokens: 0, output_tokens: 0, total_tokens: 0 },
+    model: '',
+    provider: '',
+    latency_ms: 0,
+    total_latency_ms: Date.now() - t0,
+    route: 'kid_refused',
+    stages: [{ name: 'kid_refused', latency_ms: 0 }],
+    metadata: { kid_code: code },
   };
 }
 

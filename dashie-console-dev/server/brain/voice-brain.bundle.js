@@ -4,7 +4,7 @@
    The voice-conversation brain core, bundled for the Node add-on (on-prem L3).
    ONE core, TWO runtimes: the cloud Deno edge fn runs the TS source directly;
    this CJS bundle is the add-on's copy of the SAME source. Never hand-edit.
-   Source git SHA: f92769f50a3456637cefb6188fec5b1199046025
+   Source git SHA: 271237d2bc9cc83e6aa2a60fa32090240776a3bd
    Regenerate:  node scripts/build-node-brain.mjs && ./sync-brain-bundle.sh
    Contract:    supabase/functions/voice-conversation/README.md
    ============================================================ */
@@ -2367,6 +2367,11 @@ function buildPrompt({ userRequest, inquiryType, retrievedData, context = {} }) 
   let prompt = fillTemplate(BASE_CONTEXT, baseValues);
   if (personalityConfig) {
     prompt = (personalityConfig.responsePrefix || "") + "\n\n" + prompt;
+  }
+  if (context.kidName) {
+    prompt += `
+
+You are talking with ${context.kidName}, a child in this family. Talk to them by name.`;
   }
   if (!inquiryType && context.providedSports) {
     prompt += "\n\n" + PROVIDED_SPORTS_BLOCK.replace("{{PROVIDED_SPORTS}}", JSON.stringify(context.providedSports, null, 2));
@@ -5143,9 +5148,15 @@ async function orchestrate(deps, io, voiceCtx) {
     return noiseTurn(t0);
   }
   if (isEndIntent(req.text)) return endIntentTurn(t0);
+  let kid = null;
+  if (req.kid_session_id) {
+    const r = io.resolveKidTurn ? await timed("prep_kid_session", prep, () => io.resolveKidTurn(supabase, userId, req.kid_session_id, req.endpoint_id)) : { ok: false, code: "kid_session_invalid" };
+    if (!r.ok) return kidRefusedTurn(t0, r.code);
+    kid = r;
+  }
   const sessionId = req.conversation_id || crypto.randomUUID();
   const [personality, retainEnabled, spend, account, rateLimit] = await timed("prep_gather", prep, () => Promise.all([
-    io.resolvePersonality(supabase, userId, req.endpoint_id, req.options?.personality_id),
+    io.resolvePersonality(supabase, userId, req.endpoint_id, kid ? kid.personalityId : req.options?.personality_id),
     io.readRetainTranscripts(supabase, userId),
     // CR1 pre-flight credit gate — folded into the existing parallel reads (no added
     // latency). Absent IO (Node shell / tests) → always spendable. Inert until the
@@ -5212,6 +5223,7 @@ async function orchestrate(deps, io, voiceCtx) {
   };
   const context = {
     customPersonalityConfig: personality,
+    kidName: kid?.childName ?? null,
     chatHistory: formatHistory(req.history),
     language: req.language || "system",
     timezone: req.timezone,
@@ -6216,6 +6228,25 @@ function insufficientCreditsTurn(t0, balance) {
     metadata: { degraded: "insufficient_credits", balance }
   };
 }
+function kidRefusedTurn(t0, code) {
+  return {
+    ok: true,
+    type: "response",
+    voice: "",
+    text: null,
+    action: null,
+    parsed_ok: true,
+    raw_content: "",
+    usage: { input_tokens: 0, output_tokens: 0, total_tokens: 0 },
+    model: "",
+    provider: "",
+    latency_ms: 0,
+    total_latency_ms: Date.now() - t0,
+    route: "kid_refused",
+    stages: [{ name: "kid_refused", latency_ms: 0 }],
+    metadata: { kid_code: code }
+  };
+}
 function rateLimitedTurn(t0, retryAfterSeconds) {
   return {
     ok: true,
@@ -6406,4 +6437,4 @@ function toolMeta(parsed, route, caps) {
   voicePromisesPicture,
   wantsGameDetail
 });
-module.exports.BRAIN_SOURCE_SHA = "f92769f50a3456637cefb6188fec5b1199046025";
+module.exports.BRAIN_SOURCE_SHA = "271237d2bc9cc83e6aa2a60fa32090240776a3bd";
