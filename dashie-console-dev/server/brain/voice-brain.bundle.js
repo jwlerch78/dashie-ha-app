@@ -4,7 +4,7 @@
    The voice-conversation brain core, bundled for the Node add-on (on-prem L3).
    ONE core, TWO runtimes: the cloud Deno edge fn runs the TS source directly;
    this CJS bundle is the add-on's copy of the SAME source. Never hand-edit.
-   Source git SHA: 8b300885fe9f602b174cf9861efd7b86e1eaf605
+   Source git SHA: 64620fbda76addcda9695b79d750875ef3b2a6d0
    Regenerate:  node scripts/build-node-brain.mjs && ./sync-brain-bundle.sh
    Contract:    supabase/functions/voice-conversation/README.md
    ============================================================ */
@@ -29,6 +29,7 @@ var __toCommonJS = (mod) => __copyProps(__defProp({}, "__esModule", { value: tru
 // supabase/functions/voice-conversation/orchestrator.ts
 var orchestrator_exports = {};
 __export(orchestrator_exports, {
+  SCHEDULE_UNSUPPORTED_REPLY: () => SCHEDULE_UNSUPPORTED_REPLY,
   amendUnkeptPicturePromise: () => amendUnkeptPicturePromise,
   looksLikeSportsAsk: () => looksLikeSportsAsk,
   looksLikeWeatherAsk: () => looksLikeWeatherAsk,
@@ -4989,6 +4990,7 @@ async function dispatchMultiTurn(steps, deps) {
 }
 
 // supabase/functions/voice-conversation/orchestrator.ts
+var SCHEDULE_UNSUPPORTED_REPLY = "I can't set up a scheduled check from this screen yet.";
 var KNOWN_DEVICE_TOOL_DECLINES = {
   // NB: calendar_events is intentionally NOT here — it's now offered to every caller and its
   // decline is self-fulfilled in the calendar branch (a non-claiming kiosk routes to it and gets
@@ -5713,6 +5715,34 @@ ${p1PromptBase}` : p1PromptBase;
     });
   }
   if (p1Parsed.type === "info_request" && p1Parsed.tool === "schedule_action") {
+    const scheduleCaps = req.client_fulfilled_tools;
+    if (Array.isArray(scheduleCaps) && !scheduleCaps.includes("schedule_action")) {
+      const declineVoice = SCHEDULE_UNSUPPORTED_REPLY;
+      const decline = { type: "response", voice: declineVoice, text: null, action: null };
+      await logPass(
+        io,
+        deps,
+        prep,
+        REQUEST_TYPE,
+        req.endpoint_id,
+        sessionId,
+        p1Prompt,
+        pass1,
+        retainFields(retain.serverPersist, retain.userText, declineVoice, null),
+        turnMeta
+      );
+      return finalize({
+        t0,
+        parsed: decline,
+        raw: pass1.raw,
+        stages: [p1Stage],
+        usage: pass1.raw.usage,
+        latency: pass1.latency_ms,
+        retain,
+        sessionId,
+        route
+      });
+    }
     await logPass(io, deps, prep, REQUEST_TYPE, req.endpoint_id, sessionId, p1Prompt, pass1, deviceFulfilledRetain(), turnMeta);
     return finalize({
       t0,
@@ -6322,6 +6352,7 @@ function toolMeta(parsed, route, caps) {
 }
 // Annotate the CommonJS export names for ESM import in node:
 0 && (module.exports = {
+  SCHEDULE_UNSUPPORTED_REPLY,
   amendUnkeptPicturePromise,
   looksLikeSportsAsk,
   looksLikeWeatherAsk,
@@ -6333,4 +6364,4 @@ function toolMeta(parsed, route, caps) {
   voicePromisesPicture,
   wantsGameDetail
 });
-module.exports.BRAIN_SOURCE_SHA = "8b300885fe9f602b174cf9861efd7b86e1eaf605";
+module.exports.BRAIN_SOURCE_SHA = "64620fbda76addcda9695b79d750875ef3b2a6d0";

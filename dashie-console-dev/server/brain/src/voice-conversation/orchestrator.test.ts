@@ -3,7 +3,7 @@
 // Run: deno test orchestrator.test.ts
 
 import { assert, assertEquals } from 'https://deno.land/std@0.224.0/assert/mod.ts';
-import { amendUnkeptPicturePromise, looksLikeSportsAsk, type OrchestratorIO, promisedPictureQuery, runOrchestration } from './orchestrator.ts';
+import { amendUnkeptPicturePromise, looksLikeSportsAsk, type OrchestratorIO, promisedPictureQuery, runOrchestration, SCHEDULE_UNSUPPORTED_REPLY } from './orchestrator.ts';
 // Contract shapes come from published modules, not the Deno-coupled impls — so this
 // test ships runnable with the open brain source. See io-contracts.ts.
 import type { LogData } from './io-contracts.ts';
@@ -1929,4 +1929,29 @@ Deno.test('a genuinely TWO-PASS turn logs prep on its terminal row', async () =>
   assert(Array.isArray(trace?.prep), 'the TERMINAL row of a two-pass turn must carry prep');
   assert(trace.prep!.some((s) => s.name === 'prep_total'), 'including its total');
   assert(trace.prep!.some((s) => s.name === 'prep_unattributed'), 'and its remainder');
+});
+
+// ── schedule_action capability decline (VH 2026-10-03, kitchen Mio "null") ──────────────────
+const schedReq = '{"type":"info_request","tool":"schedule_action","query":{"time":"21:00","kind":"prompt","prompt":"check if the garage door is open","label":"check the garage door"}}';
+
+Deno.test('schedule_action + declared capability → client_tool (native lane unchanged)', async () => {
+  const m = makeIO([schedReq]);
+  const turn = await runOrchestration(deps({ text: 'tell me if the garage door is open at 9pm', client_fulfilled_tools: ['weather', 'schedule_action', 'multi'] }), m.io);
+  assertEquals(turn.client_tool?.tool, 'schedule_action');
+  assertEquals(m.gatewayCalls(), 1);
+});
+
+Deno.test('schedule_action + list WITHOUT it (full-mode JS lane) → spoken decline, no client_tool', async () => {
+  const m = makeIO([schedReq]);
+  const turn = await runOrchestration(deps({ text: 'tell me if the garage door is open at 9pm', client_fulfilled_tools: ['calendar', 'weather', 'calendar_write', 'multi'] }), m.io);
+  assertEquals(turn.type, 'response');
+  assertEquals(turn.client_tool, undefined);
+  assertEquals(turn.voice, SCHEDULE_UNSUPPORTED_REPLY);
+  assertEquals(m.gatewayCalls(), 1);
+});
+
+Deno.test('schedule_action + NO list (legacy caller) → client_tool kept (absent-means-fulfilled)', async () => {
+  const m = makeIO([schedReq]);
+  const turn = await runOrchestration(deps({ text: 'tell me if the garage door is open at 9pm' }), m.io);
+  assertEquals(turn.client_tool?.tool, 'schedule_action');
 });

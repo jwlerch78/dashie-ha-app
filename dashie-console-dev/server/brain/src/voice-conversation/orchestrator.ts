@@ -27,6 +27,9 @@ import { resolveBenchPromptPrefix, logBenchOverride, readEnvSafe } from './bench
 // Spoken decline per KNOWN tool a caller wasn't offered (see the clarify-path refinement in
 // runOrchestration). Only tools a device can legitimately lack belong here — server tools are
 // always offered. Deterministic English v1 (matches the clarify sentinel's precedent).
+/** Spoken when a caller's declared tool list lacks schedule_action (see the schedule_action branch). */
+export const SCHEDULE_UNSUPPORTED_REPLY = "I can't set up a scheduled check from this screen yet.";
+
 const KNOWN_DEVICE_TOOL_DECLINES: Record<string, string> = {
   // NB: calendar_events is intentionally NOT here — it's now offered to every caller and its
   // decline is self-fulfilled in the calendar branch (a non-claiming kiosk routes to it and gets
@@ -1384,7 +1387,25 @@ async function orchestrate(deps: OrchestrationDeps, io: OrchestratorIO, voiceCtx
   // path). Same shape as calendar/music: pass-1 extracts {time, recurrence,
   // prompt, label}; ScheduleActionDirective.kt creates the action and speaks
   // the ack. Plan 20260710_VOICE_ID_CONDITION_ALERTS_PLAN.md WS5-a.
+  //
+  // CAPABILITY DECLINE (VH, 2026-10-03): a caller that SENDS a tool list without
+  // 'schedule_action' cannot run it — Android full mode's JS lane (brain-client.js
+  // deviceFulfilledTools) dropped it silently and showed "null" on the kitchen Mio
+  // (ai_interactions 126354a6). Same pattern as calendar_write above, with one deliberate
+  // difference: an ABSENT list keeps the client_tool (legacy absent-means-fulfilled), so no
+  // caller that predates the list — or a gateway that doesn't forward it — loses scheduling.
   if (p1Parsed.type === 'info_request' && p1Parsed.tool === 'schedule_action') {
+    const scheduleCaps = req.client_fulfilled_tools;
+    if (Array.isArray(scheduleCaps) && !scheduleCaps.includes('schedule_action')) {
+      const declineVoice = SCHEDULE_UNSUPPORTED_REPLY;
+      const decline = { type: 'response', voice: declineVoice, text: null, action: null } as ReturnType<typeof parseContent>;
+      await logPass(io, deps, prep, REQUEST_TYPE, req.endpoint_id, sessionId, p1Prompt, pass1,
+        retainFields(retain.serverPersist, retain.userText, declineVoice, null), turnMeta);
+      return finalize({
+        t0, parsed: decline, raw: pass1.raw, stages: [p1Stage], usage: pass1.raw.usage,
+        latency: pass1.latency_ms, retain, sessionId, route,
+      });
+    }
     await logPass(io, deps, prep, REQUEST_TYPE, req.endpoint_id, sessionId, p1Prompt, pass1, deviceFulfilledRetain(), turnMeta);
     return finalize({
       t0, parsed: p1Parsed, raw: pass1.raw, stages: [p1Stage], usage: pass1.raw.usage,
