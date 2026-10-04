@@ -4,7 +4,7 @@
    The voice-conversation brain core, bundled for the Node add-on (on-prem L3).
    ONE core, TWO runtimes: the cloud Deno edge fn runs the TS source directly;
    this CJS bundle is the add-on's copy of the SAME source. Never hand-edit.
-   Source git SHA: 3edf116952c4f6dcf04ab5828aad259517c1eee4
+   Source git SHA: 8b300885fe9f602b174cf9861efd7b86e1eaf605
    Regenerate:  node scripts/build-node-brain.mjs && ./sync-brain-bundle.sh
    Contract:    supabase/functions/voice-conversation/README.md
    ============================================================ */
@@ -3253,7 +3253,7 @@ function clockTime(startTime, tz) {
 }
 function scheduleWhen(g, tz) {
   const day = relativeDay(g.startTime, tz);
-  const time = clockTime(g.startTime, tz);
+  const time = g.allDay === true ? "" : clockTime(g.startTime, tz);
   if (day && time) return `${day}, ${time}`;
   if (day) return day;
   const d = tidyDetail(g.detail);
@@ -3261,7 +3261,7 @@ function scheduleWhen(g, tz) {
 }
 function scheduleWhenSpoken(g, tz) {
   const day = relativeDaySpoken(g.startTime, tz);
-  const time = clockTime(g.startTime, tz);
+  const time = g.allDay === true ? "" : clockTime(g.startTime, tz);
   if (day && time) return `${day}, ${time}`;
   if (day) return day;
   const d = tidyDetail(g.detail);
@@ -6333,4 +6333,4 @@ function toolMeta(parsed, route, caps) {
   voicePromisesPicture,
   wantsGameDetail
 });
-module.exports.BRAIN_SOURCE_SHA = "3edf116952c4f6dcf04ab5828aad259517c1eee4";
+module.exports.BRAIN_SOURCE_SHA = "8b300885fe9f602b174cf9861efd7b86e1eaf605";
