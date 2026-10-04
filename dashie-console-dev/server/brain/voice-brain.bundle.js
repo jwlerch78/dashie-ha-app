@@ -4,7 +4,7 @@
    The voice-conversation brain core, bundled for the Node add-on (on-prem L3).
    ONE core, TWO runtimes: the cloud Deno edge fn runs the TS source directly;
    this CJS bundle is the add-on's copy of the SAME source. Never hand-edit.
-   Source git SHA: 64620fbda76addcda9695b79d750875ef3b2a6d0
+   Source git SHA: f92769f50a3456637cefb6188fec5b1199046025
    Regenerate:  node scripts/build-node-brain.mjs && ./sync-brain-bundle.sh
    Contract:    supabase/functions/voice-conversation/README.md
    ============================================================ */
@@ -5714,6 +5714,48 @@ ${p1PromptBase}` : p1PromptBase;
       route
     });
   }
+  if (p1Parsed.type === "info_request" && p1Parsed.tool === "open_app") {
+    const appCaps = req.client_fulfilled_tools;
+    if (!Array.isArray(appCaps) || !appCaps.includes("open_app")) {
+      const declineVoice = KNOWN_DEVICE_TOOL_DECLINES.open_app;
+      const decline = { type: "response", voice: declineVoice, text: null, action: null };
+      await logPass(
+        io,
+        deps,
+        prep,
+        REQUEST_TYPE,
+        req.endpoint_id,
+        sessionId,
+        p1Prompt,
+        pass1,
+        retainFields(retain.serverPersist, retain.userText, declineVoice, null),
+        turnMeta
+      );
+      return finalize({
+        t0,
+        parsed: decline,
+        raw: pass1.raw,
+        stages: [p1Stage],
+        usage: pass1.raw.usage,
+        latency: pass1.latency_ms,
+        retain,
+        sessionId,
+        route
+      });
+    }
+    await logPass(io, deps, prep, REQUEST_TYPE, req.endpoint_id, sessionId, p1Prompt, pass1, deviceFulfilledRetain(), turnMeta);
+    return finalize({
+      t0,
+      parsed: p1Parsed,
+      raw: pass1.raw,
+      stages: [p1Stage],
+      usage: pass1.raw.usage,
+      latency: pass1.latency_ms,
+      client_tool: { tool: "open_app", query: p1Parsed.query },
+      sessionId,
+      route
+    });
+  }
   if (p1Parsed.type === "info_request" && p1Parsed.tool === "schedule_action") {
     const scheduleCaps = req.client_fulfilled_tools;
     if (Array.isArray(scheduleCaps) && !scheduleCaps.includes("schedule_action")) {
@@ -6364,4 +6406,4 @@ function toolMeta(parsed, route, caps) {
   voicePromisesPicture,
   wantsGameDetail
 });
-module.exports.BRAIN_SOURCE_SHA = "64620fbda76addcda9695b79d750875ef3b2a6d0";
+module.exports.BRAIN_SOURCE_SHA = "f92769f50a3456637cefb6188fec5b1199046025";

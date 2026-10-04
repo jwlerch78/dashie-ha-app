@@ -1381,6 +1381,31 @@ async function orchestrate(deps: OrchestrationDeps, io: OrchestratorIO, voiceCtx
     });
   }
 
+  // ── info_request → open_app (DEVICE-fulfilled) ────────────────────────────
+  // Launch an installed app by spoken name ({app}). Before 2026-10-03 there was NO branch here,
+  // so a routed open_app fell to the unsupported-tool path and the device spoke its generic
+  // apology instead of opening the app (VH unification audit, B4). Prompt-gated like video_feeds
+  // (DEVICE_ONLY_TOOLS: offered only to callers declaring it); the runtime check below is the
+  // defense for a model that emits it anyway.
+  if (p1Parsed.type === 'info_request' && p1Parsed.tool === 'open_app') {
+    const appCaps = req.client_fulfilled_tools;
+    if (!Array.isArray(appCaps) || !appCaps.includes('open_app')) {
+      const declineVoice = KNOWN_DEVICE_TOOL_DECLINES.open_app;
+      const decline = { type: 'response', voice: declineVoice, text: null, action: null } as ReturnType<typeof parseContent>;
+      await logPass(io, deps, prep, REQUEST_TYPE, req.endpoint_id, sessionId, p1Prompt, pass1,
+        retainFields(retain.serverPersist, retain.userText, declineVoice, null), turnMeta);
+      return finalize({
+        t0, parsed: decline, raw: pass1.raw, stages: [p1Stage], usage: pass1.raw.usage,
+        latency: pass1.latency_ms, retain, sessionId, route,
+      });
+    }
+    await logPass(io, deps, prep, REQUEST_TYPE, req.endpoint_id, sessionId, p1Prompt, pass1, deviceFulfilledRetain(), turnMeta);
+    return finalize({
+      t0, parsed: p1Parsed, raw: pass1.raw, stages: [p1Stage], usage: pass1.raw.usage,
+      latency: pass1.latency_ms, client_tool: { tool: 'open_app', query: p1Parsed.query }, sessionId, route,
+    });
+  }
+
   // ── info_request → schedule_action (DEVICE-fulfilled) ─────────────────────
   // AI callbacks (WS5-a): the alarm + store + fire-time pipeline injection all
   // live on the device (AlarmManager owns firing — cloud is never the firing

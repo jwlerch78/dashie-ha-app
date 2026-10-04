@@ -1955,3 +1955,23 @@ Deno.test('schedule_action + NO list (legacy caller) → client_tool kept (absen
   const turn = await runOrchestration(deps({ text: 'tell me if the garage door is open at 9pm' }), m.io);
   assertEquals(turn.client_tool?.tool, 'schedule_action');
 });
+
+// ── open_app (VH 2026-10-03, unification B4): had no branch → unsupported_tool → device apology ──
+const openAppReq = '{"type":"info_request","tool":"open_app","query":{"app":"Netflix"}}';
+
+Deno.test('open_app + declared → client_tool open_app with the app name (was unsupported_tool)', async () => {
+  const m = makeIO([openAppReq]);
+  const turn = await runOrchestration(deps({ text: 'put netflix on', client_fulfilled_tools: ['weather', 'open_app'] }), m.io);
+  assertEquals(turn.client_tool?.tool, 'open_app');
+  assertEquals((turn.client_tool?.query as Record<string, unknown>)?.app, 'Netflix');
+  assertEquals(turn.unsupported_tool, undefined);
+  assertEquals(m.gatewayCalls(), 1);
+});
+
+Deno.test('open_app + not declared → spoken decline, no client_tool', async () => {
+  const m = makeIO([openAppReq]);
+  const turn = await runOrchestration(deps({ text: 'put netflix on', client_fulfilled_tools: ['weather'] }), m.io);
+  assertEquals(turn.client_tool, undefined);
+  assertEquals(turn.unsupported_tool, undefined);
+  assertEquals(turn.voice, "I can't open apps on this device.");
+});
