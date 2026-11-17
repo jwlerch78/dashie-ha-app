@@ -3,6 +3,7 @@
 // Run: deno test orchestrator.test.ts
 
 import { assert, assertEquals } from 'https://deno.land/std@0.224.0/assert/mod.ts';
+import { CALENDAR_VOICE_OFF_DECLINE } from './calendar-write-decline.ts';
 import { amendUnkeptPicturePromise, looksLikeSportsAsk, type OrchestratorIO, promisedPictureQuery, runOrchestration, SCHEDULE_UNSUPPORTED_REPLY } from './orchestrator.ts';
 // Contract shapes come from published modules, not the Deno-coupled impls — so this
 // test ships runnable with the open brain source. See io-contracts.ts.
@@ -286,10 +287,12 @@ Deno.test('tool logging: a tool turn → tool_used + REDACTED free-text args on 
 });
 
 Deno.test('tool logging: an image on a direct response → show_image, searchTerms redacted, resolved kept', async () => {
-  // "Show me a picture" answers directly but ATTACHES an image card — that IS a tool use. The card
-  // resolver hits the network (no --allow-net here → resolves false), but the tool + terms still log.
+  // "Show me a picture" answers directly but ATTACHES an image card — that IS a tool use. The resolver is
+  // forced to miss (force_image_fail): this used to rely on running WITHOUT --allow-net, so under `deno test -A`
+  // it really resolved Harry Kane and read resolved=true (red since at least 10-15; fixed 11-14). The tool + terms
+  // still log either way.
   const m = makeIO(['{"type":"response","voice":"Here is a picture.","image":{"searchTerms":"Harry Kane"}}']);
-  await runOrchestration(deps({ retrieve_pictures: true }), m.io);
+  await runOrchestration(deps({ retrieve_pictures: true, options: { force_image_fail: true } }), m.io);
   const log = m.logs.at(-1)!;
   assertEquals(log.tool_used, 'show_image');
   assertEquals((log.tool_trace as { route?: string }).route, 'image');
@@ -993,18 +996,20 @@ Deno.test('calendar_write + list present but tool NOT declared (headless gateway
 });
 
 // ── calendar.writeAccess VOICE gate (household policy over the family calendar) ──
-Deno.test('calendar_write + writeAccess UNSET (default touch = voice off) → policy decline, calendar_write NOT offered', async () => {
+Deno.test('🔴 calendar_write + writeAccess UNSET (default touch = voice off) → the setting-naming decline, tool STILL offered', async () => {
   // No account setting → the 'touch' default → voice writes off. Even a fully-capable client is
-  // declined at the household-policy layer BEFORE the capability check, and calendar_write is
-  // dropped from the offered tools list so the model shouldn't route here in the first place.
+  // declined at the household-policy layer BEFORE the capability check. calendar_write stays OFFERED
+  // (John 11-17: respond "intelligently that the calendar settings need to be updated") — so the model
+  // routes here and the decline names the setting instead of the model improvising.
   const m = makeIO([calWriteReq]);
   const turn = await runOrchestration(
     deps({ text: 'add dentist tuesday at 3', client_fulfilled_tools: ['calendar', 'calendar_write'] }), m.io);
   assertEquals(turn.type, 'response');
   assertEquals(turn.client_tool, undefined);
-  assert(turn.voice.includes('turned off'), turn.voice);
+  assertEquals(turn.voice, CALENDAR_VOICE_OFF_DECLINE);
+  assert(turn.voice.includes('Calendar Editing'), 'names the setting to change');
   const caps = (m.logs.at(-1)!.tool_trace as { caps?: { tools?: string[] } })?.caps;
-  assert(!caps?.tools?.includes('calendar_write'), `calendar_write should be dropped: ${caps?.tools}`);
+  assert(caps?.tools?.includes('calendar_write'), `calendar_write should stay offered while off: ${caps?.tools}`);
 });
 
 Deno.test("calendar_write + writeAccess 'touch' → policy decline (touch allows manual, not voice)", async () => {

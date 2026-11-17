@@ -100,11 +100,6 @@ export type ToolsContext = {
   announcement?: boolean;
   /** `client_fulfilled_tools` from the request — what this device/caller can actually run. */
   clientTools?: string[];
-  /** Household calendar-write policy, VOICE dimension (calendar.writeAccess ∈ voice|both).
-   *  false → omit calendar_write so the model can't route to it (voice writes off / not opted
-   *  in). undefined → keep (unchanged for callers that don't set it). The orchestrator + client
-   *  keep hard guards. Mutating a real family calendar must be opt-in. */
-  calendarWriteEnabled?: boolean;
 };
 
 /**
@@ -309,7 +304,6 @@ function toolsListFor(context: ToolsContext): string {
   const drop: string[] = [];
   if (context.webSearchEnabled === false) drop.push('- web_search:');
   if (context.announcement === true) drop.push('- schedule_action:');
-  if (context.calendarWriteEnabled === false) drop.push('- calendar_write:');
   if (Array.isArray(context.clientTools)) {
     for (const tool of DEVICE_ONLY_TOOLS) {
       if (!context.clientTools.includes(tool)) drop.push(`- ${tool}:`);

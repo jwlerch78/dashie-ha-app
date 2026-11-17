@@ -21,6 +21,7 @@
 // (gateway/gather/personality/logging/config + readRetainTranscripts) are imported TYPE-ONLY
 // here and provided at call time via OrchestratorIO. Deno wires them in default-io.ts; the Node
 // add-on wires its own. Keep it this way — see README "Dual-runtime sync contract" + §13.16.
+import { CALENDAR_VOICE_OFF_DECLINE } from './calendar-write-decline.ts';
 import { buildPrompt, effectiveWebGuidance, offeredToolNames, resolveWebGuidance } from './prompt.ts';
 import { resolveBenchPromptPrefix, logBenchOverride, readEnvSafe } from './bench-override.ts';
 
@@ -732,8 +733,10 @@ async function orchestrate(deps: OrchestrationDeps, io: OrchestratorIO, voiceCtx
   // Calendar-write VOICE gate (household policy, calendar.writeAccess). Voice may CUD calendar
   // entries only when the account chose 'voice' or 'both'. null/unset/'none'/'touch' → OFF (the
   // 'touch' default). Opt-in by construction so voice can't mutate a real family calendar until the
-  // household turns it on. Gates BOTH the tool declaration (below, so the model can't route to it)
-  // AND the calendar_write fulfillment branch (defense in depth).
+  // household turns it on. THE boundary is the fulfillment branch below (info_request + calendar_write
+  // ⇒ a spoken decline and `return` BEFORE any client_tool). The tool stays OFFERED while off (John
+  // 11-17: respond "intelligently that the calendar settings need to be updated") — a model never told
+  // the capability exists cannot say it is turned off, it improvises. Omission was never the boundary.
   const voiceCalendarWrites = account.calendarWriteAccess === 'voice' || account.calendarWriteAccess === 'both';
   // Single account-level opt-in; retain_mode splits WHERE the text lands (§17).
   const callerMode = req.options?.retain_mode === 'caller';
@@ -858,7 +861,7 @@ async function orchestrate(deps: OrchestrationDeps, io: OrchestratorIO, voiceCtx
     picture_source: picture.source,
     grounding: geminiGrounds,
     multi: multiEnabled,
-    tools: offeredToolNames({ webSearchEnabled: promptWebSearch, announcement: isAnnouncement, clientTools, calendarWriteEnabled: voiceCalendarWrites }),
+    tools: offeredToolNames({ webSearchEnabled: promptWebSearch, announcement: isAnnouncement, clientTools }),
     // Contamination tag — see CapsSnapshot. Only ever true on staging for an allowlisted bench
     // caller; omitted entirely on real turns so the common row shape is unchanged.
     ...(benchOverride.active ? { bench_prompt_override: true } : {}),
@@ -882,7 +885,6 @@ async function orchestrate(deps: OrchestrationDeps, io: OrchestratorIO, voiceCtx
     announcement: isAnnouncement,
     clientTools,   // → toolsListFor drops device-only tools this caller can't fulfill
     multiEnabled,  // → buildPrompt appends the capability-gated multi-emission block when true
-    calendarWriteEnabled: voiceCalendarWrites,   // → toolsListFor drops calendar_write when voice writes off
     // false → buildPrompt appends the image-unavailable instruction so the model can't
     // claim to show a picture the enrichment layer will drop.
     retrievePicturesEnabled: retrievePictures,
@@ -1486,11 +1488,11 @@ async function orchestrate(deps: OrchestrationDeps, io: OrchestratorIO, voiceCtx
   // that EXPLICITLY declare 'calendar_write' get the client_tool; everyone else gets a
   // graceful spoken decline.
   if (p1Parsed.type === 'info_request' && p1Parsed.tool === 'calendar_write') {
-    // Household calendar-write VOICE gate (calendar.writeAccess ∉ {voice, both}). The prompt already
-    // omits calendar_write when this is off, so the model normally can't route here — this is the
-    // defense-in-depth decline for a model that emits it anyway (training priors) or an old bundle.
+    // Household calendar-write VOICE gate (calendar.writeAccess ∉ {voice, both}). calendar_write stays
+    // OFFERED while off (11-17), so THIS is where every off-household write request lands: the decline
+    // names the setting, and nothing reaches the client.
     if (!voiceCalendarWrites) {
-      const declineVoice = "Making calendar changes by voice is turned off. You can turn it on in Calendar settings.";
+      const declineVoice = CALENDAR_VOICE_OFF_DECLINE; // the MAIN path while off, not just a misbehaving model's
       const decline = { type: 'response', voice: declineVoice, text: null, action: null } as ReturnType<typeof parseContent>;
       await logPass(io, deps, prep, REQUEST_TYPE, req.endpoint_id, sessionId, p1Prompt, pass1,
         retainFields(retain.serverPersist, retain.userText, declineVoice, null), turnMeta);

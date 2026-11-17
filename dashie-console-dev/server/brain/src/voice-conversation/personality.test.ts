@@ -124,32 +124,43 @@ Deno.test('resolveVoiceId: voiceKey → {voiceId, provider}', async () => {
   const supa = fakeSupabase({
     tts_voices: [{ key: 'JERRY', provider: 'elevenlabs', is_available: true, provider_voice_id: 'rHWSYoq8UlV0YIBKMryp' }],
   });
-  assertEquals(await resolveVoiceId(supa, 'JERRY'), { voiceId: 'rHWSYoq8UlV0YIBKMryp', provider: 'elevenlabs' });
+  assertEquals(await resolveVoiceId(supa, 'JERRY'), { voiceId: 'rHWSYoq8UlV0YIBKMryp', provider: 'elevenlabs', altVoiceId: null, altProvider: null });
 });
 
 Deno.test('resolveVoiceId: inworld voice → provider=inworld', async () => {
   const supa = fakeSupabase({
     tts_voices: [{ key: 'ASHLEY', provider: 'inworld', is_available: true, provider_voice_id: 'Ashley' }],
   });
-  assertEquals(await resolveVoiceId(supa, 'ASHLEY'), { voiceId: 'Ashley', provider: 'inworld' });
+  assertEquals(await resolveVoiceId(supa, 'ASHLEY'), { voiceId: 'Ashley', provider: 'inworld', altVoiceId: null, altProvider: null });
 });
 
 Deno.test('resolveVoiceId: null/blank voiceKey → nulls (default voice)', async () => {
   const supa = fakeSupabase({ tts_voices: [{ key: 'JERRY', provider: 'elevenlabs', is_available: true, provider_voice_id: 'x' }] });
-  assertEquals(await resolveVoiceId(supa, null), { voiceId: null, provider: null });
-  assertEquals(await resolveVoiceId(supa, ''), { voiceId: null, provider: null });
+  assertEquals(await resolveVoiceId(supa, null), { voiceId: null, provider: null, altVoiceId: null, altProvider: null });
+  assertEquals(await resolveVoiceId(supa, ''), { voiceId: null, provider: null, altVoiceId: null, altProvider: null });
 });
 
 Deno.test('resolveVoiceId: unknown key → nulls', async () => {
   const supa = fakeSupabase({ tts_voices: [{ key: 'JERRY', provider: 'elevenlabs', is_available: true, provider_voice_id: 'x' }] });
-  assertEquals(await resolveVoiceId(supa, 'NOPE'), { voiceId: null, provider: null });
+  assertEquals(await resolveVoiceId(supa, 'NOPE'), { voiceId: null, provider: null, altVoiceId: null, altProvider: null });
 });
 
 Deno.test('resolveVoiceId: unavailable voice → nulls', async () => {
   const supa = fakeSupabase({
     tts_voices: [{ key: 'JERRY', provider: 'elevenlabs', is_available: false, provider_voice_id: 'x' }],
   });
-  assertEquals(await resolveVoiceId(supa, 'JERRY'), { voiceId: null, provider: null });
+  assertEquals(await resolveVoiceId(supa, 'JERRY'), { voiceId: null, provider: null, altVoiceId: null, altProvider: null });
+});
+
+// Since 7c6602891 (2026-10-15) the row's ALTERNATE (the household-key voice) rides along. The five tests above
+// pinned the pre-10-15 shape and went red with that commit unnoticed for a month (found 11-14).
+Deno.test('resolveVoiceId: a row with an alternate returns it beside the primary', async () => {
+  const supa = fakeSupabase({
+    tts_voices: [{ key: 'BUTLER', provider: 'inworld', is_available: true, provider_voice_id: 'Clive',
+      alt_provider: 'elevenlabs', alt_provider_voice_id: 'alt-butler' }],
+  });
+  assertEquals(await resolveVoiceId(supa, 'BUTLER'),
+    { voiceId: 'Clive', provider: 'inworld', altVoiceId: 'alt-butler', altProvider: 'elevenlabs' });
 });
 
 // ── WS-G Round B (§13.2): account defaults + inherit sentinel + effective voice ──

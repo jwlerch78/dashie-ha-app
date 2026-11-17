@@ -4,7 +4,7 @@
    The voice-conversation brain core, bundled for the Node add-on (on-prem L3).
    ONE core, TWO runtimes: the cloud Deno edge fn runs the TS source directly;
    this CJS bundle is the add-on's copy of the SAME source. Never hand-edit.
-   Source git SHA: 4721be739db072e1a918b96526bb8ff1d1c9f3db
+   Source git SHA: b1ee836e291b758df6c577de31897e9ee675ba5d
    Regenerate:  node scripts/build-node-brain.mjs && ./sync-brain-bundle.sh
    Contract:    supabase/functions/voice-conversation/README.md
    ============================================================ */
@@ -43,6 +43,9 @@ __export(orchestrator_exports, {
   wantsGameDetail: () => wantsGameDetail
 });
 module.exports = __toCommonJS(orchestrator_exports);
+
+// supabase/functions/voice-conversation/calendar-write-decline.ts
+var CALENDAR_VOICE_OFF_DECLINE = "Calendar changes by voice are turned off for this home. You can turn them on in Calendar settings, under Calendar Editing \u2014 choose an option that includes voice.";
 
 // supabase/functions/voice-conversation/ha-devices-block.ts
 var CRITICAL_ANCHOR = "CRITICAL: Respond ONLY with raw JSON";
@@ -2201,7 +2204,6 @@ function toolsListFor(context) {
   const drop2 = [];
   if (context.webSearchEnabled === false) drop2.push("- web_search:");
   if (context.announcement === true) drop2.push("- schedule_action:");
-  if (context.calendarWriteEnabled === false) drop2.push("- calendar_write:");
   if (Array.isArray(context.clientTools)) {
     for (const tool of DEVICE_ONLY_TOOLS) {
       if (!context.clientTools.includes(tool)) drop2.push(`- ${tool}:`);
@@ -3186,6 +3188,7 @@ function scorersText(g) {
   const list = scorers.map((s) => `${s.player}${s.clocks.length ? ` (${s.clocks.join(", ")})` : ""}`).join(", ");
   return `Scorers: ${list}`;
 }
+var sideLabel = (abbr, name, fallback) => (abbr ?? "").trim() || (name ?? "").trim() || fallback;
 function soccerHighlights(g) {
   const scorers = groupScorers(g);
   if (!scorers.length) return [];
@@ -3194,8 +3197,8 @@ function soccerHighlights(g) {
   const home = scorers.filter((s) => s.side === "home");
   const away = scorers.filter((s) => s.side === "away");
   const neutral = scorers.filter((s) => !s.side);
-  if (home.length) out.push({ label: g.home || "Home", detail: fmt(home) });
-  if (away.length) out.push({ label: g.away || "Away", detail: fmt(away) });
+  if (home.length) out.push({ label: sideLabel(g.homeAbbr, g.home, "Home"), detail: fmt(home) });
+  if (away.length) out.push({ label: sideLabel(g.awayAbbr, g.away, "Away"), detail: fmt(away) });
   if (neutral.length) out.push({ label: "Scorers", detail: fmt(neutral) });
   return out;
 }
@@ -3204,14 +3207,14 @@ function leaderHighlights(g) {
   const line = (ls) => (ls || []).filter((l) => l.player).map((l) => `${l.player} ${l.line}`).join(" \xB7 ");
   const out = [];
   const h = line(g.homeLeaders), a = line(g.awayLeaders);
-  if (h) out.push({ label: g.home || "Home", detail: h });
-  if (a) out.push({ label: g.away || "Away", detail: a });
+  if (h) out.push({ label: sideLabel(g.homeAbbr, g.home, "Home"), detail: h });
+  if (a) out.push({ label: sideLabel(g.awayAbbr, g.away, "Away"), detail: a });
   return out;
 }
 function pitcherHighlights(g) {
   const out = [];
-  if (g.awayProbable) out.push({ label: g.away || "Away", detail: `${g.awayProbable} (P)` });
-  if (g.homeProbable) out.push({ label: g.home || "Home", detail: `${g.homeProbable} (P)` });
+  if (g.awayProbable) out.push({ label: sideLabel(g.awayAbbr, g.away, "Away"), detail: `${g.awayProbable} (P)` });
+  if (g.homeProbable) out.push({ label: sideLabel(g.homeAbbr, g.home, "Home"), detail: `${g.homeProbable} (P)` });
   return out;
 }
 var WEEKDAYS = {
@@ -5513,7 +5516,7 @@ async function orchestrate(deps, io, voiceCtx) {
     picture_source: picture.source,
     grounding: geminiGrounds,
     multi: multiEnabled,
-    tools: offeredToolNames({ webSearchEnabled: promptWebSearch, announcement: isAnnouncement, clientTools, calendarWriteEnabled: voiceCalendarWrites }),
+    tools: offeredToolNames({ webSearchEnabled: promptWebSearch, announcement: isAnnouncement, clientTools }),
     // Contamination tag — see CapsSnapshot. Only ever true on staging for an allowlisted bench
     // caller; omitted entirely on real turns so the common row shape is unchanged.
     ...benchOverride.active ? { bench_prompt_override: true } : {},
@@ -5541,8 +5544,6 @@ async function orchestrate(deps, io, voiceCtx) {
     // → toolsListFor drops device-only tools this caller can't fulfill
     multiEnabled,
     // → buildPrompt appends the capability-gated multi-emission block when true
-    calendarWriteEnabled: voiceCalendarWrites,
-    // → toolsListFor drops calendar_write when voice writes off
     // false → buildPrompt appends the image-unavailable instruction so the model can't
     // claim to show a picture the enrichment layer will drop.
     retrievePicturesEnabled: retrievePictures,
@@ -5975,7 +5976,7 @@ ${p1PromptBase}` : p1PromptBase;
   }
   if (p1Parsed.type === "info_request" && p1Parsed.tool === "calendar_write") {
     if (!voiceCalendarWrites) {
-      const declineVoice = "Making calendar changes by voice is turned off. You can turn it on in Calendar settings.";
+      const declineVoice = CALENDAR_VOICE_OFF_DECLINE;
       const decline = { type: "response", voice: declineVoice, text: null, action: null };
       await logPass(
         io,
@@ -6799,4 +6800,4 @@ function toolMeta(parsed, route, caps) {
   voicePromisesPicture,
   wantsGameDetail
 });
-module.exports.BRAIN_SOURCE_SHA = "4721be739db072e1a918b96526bb8ff1d1c9f3db";
+module.exports.BRAIN_SOURCE_SHA = "b1ee836e291b758df6c577de31897e9ee675ba5d";

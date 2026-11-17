@@ -84,15 +84,12 @@ Deno.test('offeredToolNames: music offered when the caller declares it', () => {
   assert(tools.includes('music'), 'music offered to a device that has Music Assistant');
 });
 
-Deno.test('offeredToolNames: calendar_write dropped when voice-write policy is off', () => {
-  const off = offeredToolNames({ calendarWriteEnabled: false });
-  assert(!off.includes('calendar_write'), 'calendar_write must not be offered when voice writes are off');
-  // Read tools are untouched by the write gate.
-  assert(off.includes('calendar_events'), 'calendar READ stays offered');
-  const on = offeredToolNames({ calendarWriteEnabled: true });
-  assert(on.includes('calendar_write'), 'calendar_write offered when opted in (voice|both)');
-  // undefined (caller does not set it) → unchanged (kept).
-  assert(offeredToolNames({}).includes('calendar_write'), 'absent flag keeps calendar_write (back-compat)');
+Deno.test('offeredToolNames: calendar_write is OFFERED regardless of the voice-write policy (John 11-17)', () => {
+  // The policy is enforced at fulfillment (orchestrator decline), not by hiding the tool: a model never
+  // told the capability exists cannot say it is turned off. The flag that hid it is gone.
+  const tools = offeredToolNames({});
+  assert(tools.includes('calendar_write'), 'calendar_write offered, so an off household hears the decline');
+  assert(tools.includes('calendar_events'), 'calendar READ stays offered');
 });
 
 Deno.test('offeredToolNames: headless caller ([]) gets no device-only tools', () => {

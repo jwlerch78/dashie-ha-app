@@ -277,6 +277,33 @@ function scorersText(g: Game): string | null {
   return `Scorers: ${list}`;
 }
 
+/**
+ * A highlight row's team label.
+ *
+ * ⚖️ John, 2026-11-17: *"On our calendar card stats we should use the team abbreviation instead of the
+ * full team name for better formatting."* He sent the pro game-card sheet with rows labelled
+ * NEW YORK GIANTS / WASHINGTON COMMANDERS, both wrapping to two lines, under a card header already
+ * reading Commanders / Giants. Asked which string, he chose the ABBREVIATION ("NYG"/"WAS") over the
+ * short name ("Giants"/"Commanders") — the tightest option, and the one that matches the logo plates.
+ *
+ * 🔴 IT IS SET HERE, IN THE PAYLOAD, AND NOT IN A RENDERER — because there are TWO renderers.
+ * `js/shared/sports/sports-card-view.js:183` draws these rows on the web and
+ * `VoiceSportsCardRenderer.kt:97` draws them natively, from the same `label`. Changing either one alone
+ * would have the phone say "NYG" and the tablet say "NEW YORK GIANTS", a divergence invisible until
+ * somebody holds both devices. One field, both surfaces (JS_KOTLIN_CONTRACTS row 105's neighbourhood).
+ *
+ * ⚠️ RENDER-ONLY, AND THAT WAS CHECKED RATHER THAN ASSUMED. This module also feeds the voice path, where
+ * "N-Y-G" read aloud would be a worse bug than the wrap. Swept every reader of `highlights` across
+ * `supabase/functions/` and `js/`: the only two that touch a label are the two CARD renderers above.
+ * Nothing turns it into speech — the voice-conversation hits are intent regexes that merely contain the
+ * word "highlights". If a spoken consumer is ever added, it must take the NAME, not this.
+ *
+ * ⚠️ Falls back through name to the side word, so a club or youth game with no abbreviation is
+ * completely unaffected rather than labelled "".
+ */
+const sideLabel = (abbr: string | undefined, name: string | undefined, fallback: string) =>
+  (abbr ?? '').trim() || (name ?? '').trim() || fallback;
+
 /** Soccer's contribution to the generic `highlights`: scorers grouped by team, so the
  *  card shows "Argentina: Messi (12') · Brazil: …". This is the per-sport population
  *  for soccer; other sports fill `highlights`/`lines` differently (baseball: HR + W/L/S
@@ -290,8 +317,8 @@ function soccerHighlights(g: Game): SportsHighlight[] {
   const home = scorers.filter((s) => s.side === 'home');
   const away = scorers.filter((s) => s.side === 'away');
   const neutral = scorers.filter((s) => !s.side);
-  if (home.length) out.push({ label: g.home || 'Home', detail: fmt(home) });
-  if (away.length) out.push({ label: g.away || 'Away', detail: fmt(away) });
+  if (home.length) out.push({ label: sideLabel(g.homeAbbr, g.home, 'Home'), detail: fmt(home) });
+  if (away.length) out.push({ label: sideLabel(g.awayAbbr, g.away, 'Away'), detail: fmt(away) });
   if (neutral.length) out.push({ label: 'Scorers', detail: fmt(neutral) });
   return out;
 }
@@ -309,8 +336,8 @@ function leaderHighlights(g: Game): SportsHighlight[] {
     (ls || []).filter((l) => l.player).map((l) => `${l.player} ${l.line}`).join(' · ');
   const out: SportsHighlight[] = [];
   const h = line(g.homeLeaders), a = line(g.awayLeaders);
-  if (h) out.push({ label: g.home || 'Home', detail: h });
-  if (a) out.push({ label: g.away || 'Away', detail: a });
+  if (h) out.push({ label: sideLabel(g.homeAbbr, g.home, 'Home'), detail: h });
+  if (a) out.push({ label: sideLabel(g.awayAbbr, g.away, 'Away'), detail: a });
   return out;
 }
 /** Pre-game baseball highlights = probable starting pitchers (records already show in the
@@ -318,8 +345,8 @@ function leaderHighlights(g: Game): SportsHighlight[] {
  *  game shows pitchers or nothing — never season stat lines. */
 function pitcherHighlights(g: Game): SportsHighlight[] {
   const out: SportsHighlight[] = [];
-  if (g.awayProbable) out.push({ label: g.away || 'Away', detail: `${g.awayProbable} (P)` });
-  if (g.homeProbable) out.push({ label: g.home || 'Home', detail: `${g.homeProbable} (P)` });
+  if (g.awayProbable) out.push({ label: sideLabel(g.awayAbbr, g.away, 'Away'), detail: `${g.awayProbable} (P)` });
+  if (g.homeProbable) out.push({ label: sideLabel(g.homeAbbr, g.home, 'Home'), detail: `${g.homeProbable} (P)` });
   return out;
 }
 
